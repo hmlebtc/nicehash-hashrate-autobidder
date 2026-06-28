@@ -14,7 +14,7 @@
  *   NICEHASH_API_SECRET=...     \
  *   NICEHASH_ORG_ID=...         \
  *   NICEHASH_BASE_URL=https://api-test.nicehash.com   # default; prod=https://api2.nicehash.com
- *   NICEHASH_ALGORITHM=SHA256   # default
+ *   NICEHASH_ALGORITHM=SHA256AsicBoost   # default (the target market)
  *   NICEHASH_MARKET=EU          # default
  *   NICEHASH_CURRENCY=TBTC      # testnet balance currency; prod=BTC
  *   pnpm smoke:nicehash
@@ -46,7 +46,7 @@ async function main() {
   const apiSecret = required('NICEHASH_API_SECRET');
   const orgId = required('NICEHASH_ORG_ID');
   const baseUrl = process.env.NICEHASH_BASE_URL ?? NICEHASH_TEST_BASE_URL;
-  const algorithm = process.env.NICEHASH_ALGORITHM ?? 'SHA256';
+  const algorithm = process.env.NICEHASH_ALGORITHM ?? 'SHA256AsicBoost';
   const market = process.env.NICEHASH_MARKET ?? 'EU';
   const currency = process.env.NICEHASH_CURRENCY ?? 'TBTC';
 
@@ -63,8 +63,19 @@ async function main() {
   const offset = await client.syncTime();
   console.log(`  clock offset vs NiceHash: ${offset} ms`);
 
-  console.log(`\n→ getAlgorithmSetting(${algorithm}) (public)`);
-  const algo = await client.getAlgorithmSetting(algorithm);
+  console.log(`\n→ getAlgorithms() then find "${algorithm}" (public)`);
+  const allAlgos = await client.getAlgorithms();
+  const codes = allAlgos.miningAlgorithms.map((a) => a.algorithm);
+  const algo = allAlgos.miningAlgorithms.find((a) => a.algorithm === algorithm);
+  if (!algo) {
+    // Exact code matters (e.g. casing). Surface the SHA256 family so we can
+    // pin the precise identifier NiceHash expects.
+    const family = codes.filter((c) => /sha256/i.test(c));
+    console.log(`  ✗ algorithm "${algorithm}" not found in /mining/algorithms`);
+    console.log(`  SHA256-family codes available: ${family.join(', ') || '(none)'}`);
+    console.log(`  all algorithm codes: ${codes.join(', ')}`);
+    process.exit(1);
+  }
   console.log(`  marketFactor=${algo.marketFactor} displayMarketFactor=${algo.displayMarketFactor}`);
   console.log(
     `  minOrder=${algo.minimalOrderAmount ?? '?'} BTC  minSpeed=${algo.minSpeedLimit ?? '?'}  maxSpeed=${algo.maxSpeedLimit ?? '?'}  priceDownStep=${algo.priceDownStep ?? '?'}`,
