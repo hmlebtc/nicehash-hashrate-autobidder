@@ -113,33 +113,59 @@ export interface MyOrdersResponse {
  * One resting competing BUY order in the hash-power order book. NiceHash is a
  * buyer-competition market: sellers deliver to the highest-priced live orders
  * first, so `price` here is what a competitor is willing to pay, not ask-side
- * supply. `limit` "0" means uncapped (the order will absorb whatever it can).
+ * supply.
+ *
+ * Confirmed against the live API (SHA256ASICBOOST): `price` is in the
+ * currency-bucket's `displayPriceFactor` units (BTC per EH per day for this
+ * algo), `limit`/`acceptedSpeed` are in `displayMarketFactor` units (PH/s).
+ * `limit` "0" means uncapped; an uncapped order's real draw is `acceptedSpeed`
+ * (an uncapped order with `acceptedSpeed` 0 is not actually consuming supply).
  */
 export interface OrderBookEntry {
   readonly id?: string;
-  readonly type?: CodeDescription | string;
-  /** Competitor's price, BTC per display unit per day, decimal string. */
+  /** "STANDARD" | "BUSINESS". */
+  readonly type?: string;
+  /** Competitor's price, BTC per displayPriceFactor per day, decimal string. */
   readonly price: string;
-  /** Competitor's speed cap in the display unit ("0" = uncapped). */
+  /** Competitor's speed cap in displayMarketFactor units ("0" = uncapped). */
   readonly limit: string;
-  readonly amount?: string;
-  readonly availableAmount?: string;
-  readonly payedAmount?: string;
+  /** Speed currently delivered to this order (displayMarketFactor units). */
+  readonly acceptedSpeed?: string;
+  readonly payingSpeed?: string;
   readonly rigsCount?: number;
   readonly alive?: boolean;
+  /** Paying currency of this order, e.g. "BTC". */
+  readonly currencyMarket?: string;
 }
 
-export interface OrderBookMarketStats {
-  readonly orders: readonly OrderBookEntry[];
-  /** Total live deliverable speed in this market, display unit, decimal string. */
+/**
+ * Order-book stats for one paying currency. The order book is keyed by
+ * currency ("BTC"), NOT by EU/USA market - confirmed against the live API.
+ */
+export interface OrderBookCurrencyStats {
+  readonly updatedTs?: string;
+  /** Total live deliverable speed, displayMarketFactor units, decimal string. */
   readonly totalSpeed?: string;
-  readonly updatedTs?: number;
+  /** Speed scale factor (e.g. "1000000000000000" = PH). */
+  readonly marketFactor?: string;
+  /** Speed display unit label (e.g. "PH"). */
+  readonly displayMarketFactor?: string;
+  /** Price scale factor (e.g. "1000000000000000000" = EH). */
+  readonly priceFactor?: string;
+  /** Price display unit label (e.g. "EH"). */
+  readonly displayPriceFactor?: string;
+  readonly orders: readonly OrderBookEntry[];
+  readonly pagination?: {
+    readonly size?: number;
+    readonly page?: number;
+    readonly totalPageCount?: number;
+  };
 }
 
 /** `GET /main/api/v2/hashpower/orderBook?algorithm=...` */
 export interface OrderBookResponse {
-  /** Per-market stats keyed by market code (e.g. "EU", "USA"). */
-  readonly stats: Readonly<Record<string, OrderBookMarketStats>>;
+  /** Keyed by paying currency (e.g. "BTC"), NOT by EU/USA market. */
+  readonly stats: Readonly<Record<string, OrderBookCurrencyStats>>;
 }
 
 /** A registered stratum pool. */

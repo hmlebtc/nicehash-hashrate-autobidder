@@ -54,9 +54,17 @@ export function computeMarketAnchor(
 
   // Walk competitors high -> low, consuming supply. The competitor that would
   // push the remaining supply below `target` is the one to outbid.
+  //
+  // A capped order can take up to its `limit`. An *uncapped* (limit 0) order is
+  // not assumed to swallow all supply - that would let an idle high-priced
+  // ceiling order (e.g. a BUSINESS order resting at a high price but delivering
+  // nothing) wrongly drag the anchor to the top. Instead an uncapped order is
+  // counted by its actual draw (`accepted_speed_units`), so an uncapped order
+  // delivering 0 consumes 0.
   let remaining = totalSpeedUnits;
   for (const o of valid) {
-    const consume = o.limit_units === 0 ? remaining : Math.min(o.limit_units, remaining);
+    const potential = o.limit_units > 0 ? o.limit_units : (o.accepted_speed_units ?? 0);
+    const consume = Math.min(potential, remaining);
     if (remaining - consume < targetUnits) {
       return { anchor_price_btc: o.price_btc, total_speed_units: totalSpeedUnits, thin: false };
     }

@@ -46,9 +46,21 @@ describe('computeMarketAnchor', () => {
     expect(a.thin).toBe(true);
   });
 
-  it('must outbid an uncapped (limit 0) competitor priced above', () => {
+  it('does not let an idle uncapped order (limit 0, no draw) drag the anchor up', () => {
+    // Mirrors the live testnet: a BUSINESS ceiling order resting high but
+    // delivering nothing must not force us to outbid it.
     const competitors: CompetingOrder[] = [
-      { price_btc: 0.0006, limit_units: 0 },
+      { price_btc: 0.1, limit_units: 0, accepted_speed_units: 0 },
+      { price_btc: 0.0102, limit_units: 5 },
+    ];
+    const a = computeMarketAnchor(competitors, 537, 4);
+    expect(a.anchor_price_btc).toBe(0.0102);
+    expect(a.thin).toBe(false);
+  });
+
+  it('must outbid an uncapped competitor that IS actively drawing supply', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.0006, limit_units: 0, accepted_speed_units: 8 },
       { price_btc: 0.0004, limit_units: 5 },
     ];
     const a = computeMarketAnchor(competitors, 10, 4);

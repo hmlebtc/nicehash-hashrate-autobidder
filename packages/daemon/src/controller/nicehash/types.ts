@@ -13,10 +13,16 @@ export type RunMode = 'DRY_RUN' | 'LIVE' | 'PAUSED';
 
 /** A competing BUY order resting in the NiceHash order book. */
 export interface CompetingOrder {
-  /** Price in BTC per display-unit per day. */
+  /** Price in BTC per price-display-unit per day (EH/day for SHA256 family). */
   readonly price_btc: number;
-  /** Speed cap in display units. 0 means uncapped (absorbs all it can). */
+  /** Speed cap in speed-display units (PH/s). 0 means uncapped. */
   readonly limit_units: number;
+  /**
+   * Speed currently delivered to this order (PH/s). For an uncapped (limit 0)
+   * order this is its real draw on supply; an uncapped order delivering 0 is
+   * not actually consuming anything (e.g. an idle BUSINESS ceiling order).
+   */
+  readonly accepted_speed_units?: number;
 }
 
 /**

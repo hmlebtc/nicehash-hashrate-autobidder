@@ -187,3 +187,85 @@ exactly as they do upstream.
 This project is **not affiliated with NiceHash Ltd.** or the upstream author. It
 automates real trades with real funds; the operator is responsible for their
 keys, spend, and local compliance.
+
+---
+
+## 6. Confirmed live findings (SHA256ASICBOOST testnet)
+
+Verified end-to-end against `api-test.nicehash.com` with a real testnet key
+(signing, clock sync, and signed reads all succeeded — see `scripts/smoke-nicehash.ts`).
+
+### Algorithm + currency
+
+- **Algorithm code:** `SHA256ASICBOOST` (all caps; the UI label is
+  "SHA256AsicBoost"). Do **not** use `SHA256` (different market) or
+  `SHA256ASICBOOST_USDT` (USDT-paid variant).
+- **Balance currency:** `TBTC` on testnet, `BTC` on production.
+
+### Units (important)
+
+The order book reports **two different scale factors**:
+
+| Quantity | Factor field | Value | Display unit |
+| --- | --- | --- | --- |
+| Speed (`limit`, `totalSpeed`, `acceptedSpeed`) | `marketFactor` / `displayMarketFactor` | `1e15` | **PH/s** |
+| Price (`price`) | `priceFactor` / `displayPriceFactor` | `1e18` | **BTC / EH / day** |
+
+So for this algorithm **speed is in PH/s but price is in BTC per EH per day**.
+The controller stays unit-agnostic by anchoring off the order book's own `price`
+values and submitting prices in the same scale; operator caps/overpay are
+expressed in those same BTC/EH/day units and surfaced on the dashboard.
+
+### Algorithm constants (from `/mining/algorithms`)
+
+| Field | Value |
+| --- | --- |
+| `minimalOrderAmount` | `0.001` BTC |
+| `minSpeedLimit` | `0.1` PH/s |
+| `maxSpeedLimit` | `100000` PH/s |
+| `priceDownStep` | `-0.1` |
+| `marketFactor` | `1000000000000000` (PH) |
+| `displayMarketFactor` | `PH` |
+
+`displayMarketFactor` is a **label string** ("PH"), not a number — it is echoed
+verbatim on order mutations alongside `marketFactor`, exactly as the official
+demo does.
+
+### Order book shape (the parser was fixed to match this)
+
+```
+stats: {
+  "BTC": {                       // keyed by paying currency, NOT EU/USA
+    totalSpeed, marketFactor, displayMarketFactor,
+    priceFactor, displayPriceFactor, updatedTs,
+    orders: [
+      { id, type: "STANDARD"|"BUSINESS", price, limit,   // limit "0" = uncapped
+        acceptedSpeed, payingSpeed, alive, currencyMarket }
+    ],
+    pagination
+  }
+}
+```
+
+There is **no EU/USA split in the order book** — it is a single currency bucket.
+(The `market` config still applies to `myOrders` and order creation.)
+
+`myOrders` returns its rows under the **`list`** field.
+
+### Anchor refinement driven by the live data
+
+The testnet book has an idle uncapped `BUSINESS` order resting at a high price
+(`0.10`, `limit 0`, `acceptedSpeed 0`) that delivers nothing. The anchor no
+longer treats an uncapped order as swallowing all supply; an uncapped order is
+counted by its actual `acceptedSpeed`, so an idle ceiling order does not drag
+the anchor up. Capped orders still count their full `limit`.
+
+### OPEN — must validate before any LIVE order
+
+The order-book `price` scale and the **create-order `price` scale** are assumed
+identical (anchor off the book, submit in the same scale). This is internally
+consistent but **not yet empirically confirmed** because the testnet account
+has zero balance. Before enabling LIVE trading: fund the testnet account with a
+small amount of TBTC, place one tiny STANDARD order at a known price, read it
+back via `myOrders`, and confirm the stored price matches what was submitted
+(and matches the book scale). Until then the controller stays in DRY-RUN.

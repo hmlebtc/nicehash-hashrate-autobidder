@@ -100,18 +100,31 @@ async function main() {
   // Shape probe: confirm the top-level field name (list vs orderList vs ...).
   console.log(`  myOrders top-level keys: ${Object.keys(mine ?? {}).join(', ')}`);
 
-  console.log(`\n→ getOrderBook(${algorithm})`);
+  console.log(`\n→ getOrderBook(${algorithm}) (keyed by paying currency)`);
   const book = await client.getOrderBook(algorithm);
-  // Shape probe: the order book is keyed differently than first assumed
-  // (saw "BTC", not "EU"). Dump the structure so the parser can be fixed.
-  const rawStats = (book as { stats?: Record<string, unknown> }).stats ?? {};
-  console.log(`  stats keys: ${Object.keys(rawStats).join(', ')}`);
-  for (const [k, v] of Object.entries(rawStats)) {
-    const nested = v && typeof v === 'object' ? Object.keys(v as Record<string, unknown>) : [];
-    console.log(`   stats[${k}] keys: ${nested.join(', ')}`);
+  const priceCurrency = process.env.NICEHASH_PRICE_CURRENCY ?? 'BTC';
+  const bucket = book.stats?.[priceCurrency];
+  if (!bucket) {
+    console.log(`  no "${priceCurrency}" bucket; available: ${Object.keys(book.stats ?? {}).join(', ')}`);
+  } else {
+    console.log(
+      `  totalSpeed=${bucket.totalSpeed} ${bucket.displayMarketFactor}/s   price unit=BTC/${bucket.displayPriceFactor}/day`,
+    );
+    const live = [...(bucket.orders ?? [])]
+      .filter((o) => o.alive !== false)
+      .sort((a, b) => parseDecimal(b.price) - parseDecimal(a.price));
+    console.log(`  live competing orders=${live.length}`);
+    for (const o of live.slice(0, 6)) {
+      console.log(
+        `   - ${o.type ?? '?'} price=${o.price} limit=${o.limit} accepted=${o.acceptedSpeed ?? '0'}`,
+      );
+    }
+    const standard = live.filter((o) => (o.type ?? '').toUpperCase() === 'STANDARD');
+    const cheapest = standard.at(-1);
+    if (cheapest) {
+      console.log(`  cheapest live STANDARD: price=${cheapest.price} limit=${cheapest.limit}`);
+    }
   }
-  console.log('  raw orderBook (truncated to 4000 chars):');
-  console.log(JSON.stringify(book, null, 2).slice(0, 4000));
 
   console.log('\n✓ Smoke test complete - signed NiceHash calls succeeded.');
 }

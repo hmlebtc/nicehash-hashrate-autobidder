@@ -34,37 +34,40 @@ export function availableBtcFromBalance(balance: AccountBalance): number {
 }
 
 /**
- * Build the competing-order set for a market from an order book, optionally
- * excluding our own resting orders by id (when the book entries carry ids).
+ * Build the competing-order set from an order book. The book is keyed by
+ * paying currency ("BTC"), not by EU/USA market. Dead orders (`alive === false`)
+ * and our own resting orders (by id) are excluded.
  */
 export function competingOrdersFromBook(
   book: OrderBookResponse,
-  market: string,
+  currency = 'BTC',
   ownOrderIds: ReadonlySet<string> = new Set(),
 ): { competitors: CompetingOrder[]; totalSpeedUnits: number } {
-  const stats = book.stats?.[market];
+  const stats = book.stats?.[currency];
   if (!stats) return { competitors: [], totalSpeedUnits: 0 };
   const competitors: CompetingOrder[] = [];
   for (const entry of stats.orders ?? []) {
+    if (entry.alive === false) continue;
     if (entry.id !== undefined && ownOrderIds.has(entry.id)) continue;
     competitors.push({
       price_btc: parseDecimal(entry.price),
       limit_units: parseDecimal(entry.limit),
+      accepted_speed_units: parseDecimal(entry.acceptedSpeed),
     });
   }
   return { competitors, totalSpeedUnits: parseDecimal(stats.totalSpeed) };
 }
 
 /**
- * Compute the pricing anchor for a market straight from an order book response.
+ * Compute the pricing anchor straight from an order book response.
  */
 export function marketAnchorFromBook(
   book: OrderBookResponse,
-  market: string,
   targetUnits: number,
   ownOrderIds: ReadonlySet<string> = new Set(),
+  currency = 'BTC',
 ): MarketAnchor {
-  const { competitors, totalSpeedUnits } = competingOrdersFromBook(book, market, ownOrderIds);
+  const { competitors, totalSpeedUnits } = competingOrdersFromBook(book, currency, ownOrderIds);
   return computeMarketAnchor(competitors, totalSpeedUnits, targetUnits);
 }
 
