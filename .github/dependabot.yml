@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    # All ongoing development lands on `develop`; `main` only advances
+    # at release time via an operator-initiated merge. Dependabot
+    # targets develop so dep bumps follow the same review path as
+    # feature work and ride into main with the next release.
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      production-deps:
+        dependency-type: production
+      dev-deps:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

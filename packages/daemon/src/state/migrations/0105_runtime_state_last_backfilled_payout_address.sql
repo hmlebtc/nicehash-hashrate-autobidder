@@ -1,0 +1,22 @@
+-- #240 follow-up: track which payout address was last historical-
+-- backfilled into reward_events so the daemon can detect on boot
+-- that the operator changed btc_payout_address mid-run and the
+-- stale reward_events rows belong to the OLD address.
+--
+-- Without this column there's no way to distinguish "reward_events
+-- is empty because we never scanned" from "reward_events has rows
+-- but they're from the previous address." Boot just trusts whatever
+-- is there - so after an address change followed by daemon restart,
+-- the P&L collected (now reading from reward_events.sum, see
+-- finance.ts) shows the OLD address's lifetime received until the
+-- operator manually triggers a backfill. We compare cfg.
+-- btc_payout_address to this column on boot, clear + re-backfill
+-- when mismatched, set this column to the current address after
+-- the backfill completes.
+--
+-- NULL = never backfilled (fresh install or pre-this-migration).
+-- Treated as a mismatch on first boot so the address is set after
+-- the first successful backfill regardless of whether the address
+-- actually changed.
+
+ALTER TABLE runtime_state ADD COLUMN last_backfilled_payout_address TEXT;

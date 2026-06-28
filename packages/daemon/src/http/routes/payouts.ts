@@ -1,0 +1,94 @@
+import type { FastifyInstance } from 'fastify';
+
+import type { PayoutObserver } from '../../services/payout-observer.js';
+
+export interface PayoutsResponse {
+  readonly address: string | null;
+  readonly total_unspent_sat: number | null;
+  readonly utxo_count: number | null;
+  readonly scanned_block_height: number | null;
+  readonly checked_at: number | null;
+  readonly last_error: string | null;
+  readonly source: 'electrs' | 'bitcoind' | null;
+}
+
+export async function registerPayoutsRoute(
+  app: FastifyInstance,
+  deps: { payoutObserver: PayoutObserver | null },
+): Promise<void> {
+  app.get('/api/payouts', async (): Promise<PayoutsResponse> => {
+    if (!deps.payoutObserver) {
+      return {
+        address: null,
+        total_unspent_sat: null,
+        utxo_count: null,
+        scanned_block_height: null,
+        checked_at: null,
+        last_error: 'payout observer not configured',
+        source: null,
+      };
+    }
+    const snap = deps.payoutObserver.getLastSnapshot();
+    const err = deps.payoutObserver.getLastError();
+    if (!snap) {
+      return {
+        address: null,
+        total_unspent_sat: null,
+        utxo_count: null,
+        scanned_block_height: null,
+        checked_at: null,
+        last_error: err,
+        source: null,
+      };
+    }
+    return {
+      address: snap.address,
+      total_unspent_sat: snap.total_unspent_sat,
+      utxo_count: snap.utxo_count,
+      scanned_block_height: snap.scanned_block_height,
+      checked_at: snap.checked_at,
+      last_error: err,
+      source: snap.source,
+    };
+  });
+
+  app.post('/api/payouts/scan', async (_req, reply) => {
+    if (!deps.payoutObserver) {
+      reply.code(503);
+      return { ok: false, error: 'payout observer not configured' };
+    }
+    await deps.payoutObserver.scanOnce();
+    return { ok: true };
+  });
+
+  // #170: dashboard "Backfill now" button. Walks the full address
+  // history via electrs and folds every coinbase tx into
+  // reward_events. Ignores the include_historical_payouts gate -
+  // pressing the button is an explicit operator action that the gate
+  // setting should not block.
+  app.post('/api/payouts/backfill', async (_req, reply) => {
+    if (!deps.payoutObserver) {
+      reply.code(503);
+      return { ok: false, error: 'payout observer not configured' };
+    }
+    const result = await deps.payoutObserver.runHistoricalBackfill();
+    if (result.error) {
+      reply.code(502);
+      return {
+        ok: false,
+        error: result.error,
+        inserted: result.inserted,
+        with_matching_outputs: result.withMatchingOutputs,
+        tx_seen: result.txSeen,
+        duration_ms: result.durationMs,
+      };
+    }
+    return {
+      ok: true,
+      inserted: result.inserted,
+      with_matching_outputs: result.withMatchingOutputs,
+      tx_seen: result.txSeen,
+      duration_ms: result.durationMs,
+    };
+  });
+}

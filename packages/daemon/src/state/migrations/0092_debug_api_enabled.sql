@@ -1,0 +1,1 @@
+ALTER TABLE config ADD COLUMN debug_api_enabled INTEGER NOT NULL DEFAULT 0;

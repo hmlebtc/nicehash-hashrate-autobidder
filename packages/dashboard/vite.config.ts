@@ -1,0 +1,80 @@
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import { lingui, linguiTransformerBabelPreset } from '@lingui/vite-plugin';
+import babel from '@rolldown/plugin-babel';
+import tailwindcss from '@tailwindcss/vite';
+import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
+
+function getBuildInfo(): { build: number; hash: string; version: string } {
+  const buildFile = resolve(__dirname, '../../BUILD_NUMBER');
+  let build = 0;
+  try {
+    build = parseInt(readFileSync(buildFile, 'utf8').trim(), 10) || 0;
+  } catch { /* first build */ }
+  // Prefer an explicit GIT_SHA env var (set by Docker build-arg in CI
+  // and locally injected when needed) over running git, because the
+  // Docker build context excludes .git/ - without the env override
+  // every Docker-baked dashboard would footer "dev". Fall back to a
+  // live git call for bare-metal/dev builds, then to "dev" if we
+  // really cannot determine it. Truncate to 7 chars to match the
+  // short-SHA convention regardless of whether the env var carries
+  // the full 40-char form (GitHub Actions sets `github.sha` long).
+  let hash = process.env.GIT_SHA?.trim() || '';
+  if (!hash) {
+    try {
+      hash = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    } catch { /* not a git repo */ }
+  }
+  // App version: prefer an explicit APP_VERSION env var (set by the
+  // Docker build-arg in CI) over reading umbrel-app.yml off disk,
+  // because .dockerignore excludes rdouma-hashrate-autopilot/ from
+  // the build context - without the env override every Docker-baked
+  // dashboard would footer "vunknown" (the Umbrel install symptom
+  // observed 2026-04-27). Bare-metal builds run with the manifest
+  // present in the source tree, so the file fallback handles them.
+  // Both paths share one canonical source-of-truth: umbrel-app.yml.
+  // Final fallback "unknown" so footer chrome never breaks the
+  // build.
+  let version = process.env.APP_VERSION?.trim() || '';
+  if (!version) {
+    try {
+      const manifestPath = resolve(__dirname, '../../rdouma-hashrate-autopilot/umbrel-app.yml');
+      const manifest = readFileSync(manifestPath, 'utf8');
+      const match = manifest.match(/^version:\s*"?([^"\s]+)"?\s*$/m);
+      if (match?.[1]) version = match[1];
+    } catch { /* manifest unavailable */ }
+  }
+  return { build, hash: hash ? hash.slice(0, 7) : 'dev', version: version || 'unknown' };
+}
+
+const info = getBuildInfo();
+
+export default defineConfig({
+  plugins: [
+    react(),
+    babel({ presets: [linguiTransformerBabelPreset({}, { cwd: __dirname })] }),
+    lingui({ cwd: __dirname }),
+    tailwindcss(),
+  ],
+  define: {
+    __BUILD_NUMBER__: JSON.stringify(info.build),
+    __BUILD_HASH__: JSON.stringify(info.hash),
+    __APP_VERSION__: JSON.stringify(info.version),
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
+    },
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+  },
+});

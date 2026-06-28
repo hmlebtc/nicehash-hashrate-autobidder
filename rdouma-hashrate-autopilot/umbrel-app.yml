@@ -1,0 +1,301 @@
+# Umbrel app manifest. Loaded when this repo is added as a Community
+# App Store. Umbrel community-store convention: the directory name
+# (and the `id:` field below) must be prefixed with the store's id
+# from `umbrel-app-store.yml` - here that's `rdouma-`.
+
+manifestVersion: 1
+id: rdouma-hashrate-autopilot
+category: bitcoin
+name: Hashrate Autopilot
+version: "1.15.0"
+tagline: Autopilot for renting hashrate to mine on Ocean Mining
+icon: https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/assets/icon-512.png
+# Umbrel renders description literally - no YAML folding of soft
+# line breaks. Each paragraph MUST be one physical line; a single
+# blank line separates paragraphs. Do NOT introduce soft wraps at
+# ~80 chars, your editor's pretty-printing will render as awkward
+# mid-sentence breaks on the app card.
+description: |
+  Rent hashrate on the Braiins Hashpower marketplace and route it to your own Ocean non-custodial mining pool, automatically. Each tick the autopilot finds the cheapest available price for your target hashrate, adds a small operator-chosen cushion, and bids exactly that price. You set a maximum you are willing to pay, and the controller never goes above it.
+
+  Why this matters: Ocean is a non-custodial pool. Each Ocean block's coinbase pays out to every miner whose accumulated earnings have crossed the on-chain payout threshold (1,048,576 sat) - the coinbase IS the payout, in a single transaction the chain itself executes when the block confirms. Most pools (FPPS, PPS+, PPLNS) instead pay their own wallet first and then send miners a second transaction on the pool's settlement cadence; that intermediate pool wallet is bitcoin the pool custodies on your behalf, and it's what gets lost when a pool goes dark. With Ocean your maximum exposure to pool failure is your current unpaid balance (bounded by the threshold), and every past payout is publicly verifiable on-chain forever. Ocean's Datum templates also filter non-financial spam transactions. Renting hashrate to that kind of pool is a small contribution to keeping Bitcoin mining decentralized.
+
+  Solo mining via Ocean's solo template should also work, though so far the autopilot has only been tested against the regular Ocean+Datum pool setup.
+
+  Setup is a three-step web wizard accessible at port 3010. After setup you get a dashboard with live decisions, charts, the DRY-RUN / LIVE / PAUSED switch, and a P&L panel that reads spend from Braiins and earnings from your on-chain wallet.
+
+  This app declares Bitcoin Knots, Electrs, and Datum Gateway as dependencies, so Umbrel will prompt you to install them during setup. Once all apps run on the same Umbrel, the autopilot's dashboard auto-discovers the local Datum HTTP API, Electrs server, and Bitcoin RPC across Umbrel's shared Docker network - zero copy/paste, the worker-count, hashrate, P&L earnings, and BIP110 signalling panels all populate on first boot. (Pointing at off-Umbrel instances is also supported - just override the URLs in Config after setup.)
+
+developer: Remco Douma
+website: https://github.com/rdouma/hashrate-autopilot
+dependencies:
+  - bitcoin
+  - electrs
+  - datum
+repo: https://github.com/rdouma/hashrate-autopilot
+support: https://github.com/rdouma/hashrate-autopilot/issues
+port: 3010
+# Gallery uses absolute GitHub-raw URLs (same pattern as the icon)
+# because Umbrel resolves bare filenames against the store root,
+# not the app subdir. Order is the operator-eye story arc:
+# status-page-hero -> status-page-charts -> wizard-step-1
+# -> wizard-step-2. First image is the card hero.
+gallery:
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/1.png
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/2.png
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/3.png
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/4.png
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/5.png
+  - https://raw.githubusercontent.com/rdouma/hashrate-autopilot/main/rdouma-hashrate-autopilot/6.png
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: Remco Douma
+submission: https://github.com/rdouma/hashrate-autopilot
+releaseNotes: |
+  v1.15.0 - aviator branding, bid-vs-hashprice tile, BIP-110 explorers, not-hashing detection, stale-bid self-heal.
+
+  NEW
+  - Bid-vs-hashprice tile (#293): a new stats-bar tile shows your bid as a percentage of Ocean's break-even hashprice, with a state-aware caption that tracks cheap mode - "cheap < 95%" when you're posting under the threshold, "3/5 min < 95%" while the sustained-window countdown runs, and "cheap on -> 10 PH/s" once cheap mode engages and scales you up to the cheap-mode target. The whole calculation is done daemon-side so the tile agrees with the controller.
+  - BIP-110 block explorers (#289): mempool.guide - a mempool.space fork that surfaces BIP-110 miner signaling - is now the default block/transaction explorer for fresh installs and the first preset under Config -> Display & Logging -> Block explorer, with mempool.kilombino.com added as a second BIP-110-aware option. Both render as highlighted yellow pills. Existing installs keep whatever explorer they configured.
+  - Aviator branding (#298): a stylized 1940s aviator (leather flight helmet + goggles) is now the app's identity - a favicon in the browser tab, a badge next to the "Hashrate Autopilot" wordmark in the top bar, and the Umbrel / home-screen app icon. The old icon was an unrelated illustration that turned to mush at small sizes.
+
+  IMPROVEMENTS
+  - Reachable-but-not-hashing detection for Bitaxe / AxeOS miners (#291): a miner that is still answering its HTTP API but has actually stopped hashing (thermal overheat_mode, NerdQAxe shutdown, or a physically-impossible hashrate-per-watt ratio after a stall) no longer reports phantom hashrate or a false "back online". The fleet tile excludes a halted device and its card shows a "reboot needed" badge.
+  - The "View on chart" action in a History event's detail drawer is now a prominent amber button near the top of the drawer instead of a faint link buried in the footer, so jumping from an event to its spot on the price chart is the obvious thing to reach for.
+
+  FIXES
+  - Stale local bids deleted at Braiins out-of-band now self-heal (#295): if a bid is removed at Braiins while the autopilot isn't looking (you cancelled it manually, a port/URL change, etc.), the daemon now cross-checks the local ledger against a successful Braiins bid-list fetch each tick and clears any active bid the list no longer contains (with a grace window so a freshly-placed bid is never pruned, and only when the fetch definitively succeeded). "Cancel & recreate" also recovers on its own - an "order not found" from Braiins is treated as already-gone. No more hand-editing the database.
+  - False giant "bid paused" bands are gone (#292): an orphan resume event could paint a huge rose idle band stretching back to the start of history; pause/resume bands now only render around a logged matching pause.
+  - The History -> chart "jump to event" beacon now works in Firefox and Safari (it previously only animated in Chrome), homes to a fixed window around the event, and renders reliably even if the event was filtered out of the chart.
+  - Dashboard updates are no longer stuck behind a year-long browser cache: index.html was being served immutable, so a deployed UI fix could stay invisible until a manual hard-refresh. It now revalidates.
+  - Daemon-offline gaps count as downtime in the uptime tile and bid-coverage math, instead of being silently skipped.
+
+  v1.14.0 - run-mode and bid-pause history with chart markers and idle bands, History detail drawer, legend toggles.
+
+  NEW
+  - Run-mode switches and Braiins bid pause/resume are logged as History events (#287): filterable rows with their own icons; bid-paused rows carry Braiins' own pause reason. Boot-time mode transitions are logged too, so an overnight restart that drops the controller out of LIVE can't hide.
+  - The same events render as price-chart markers - violet power icon for mode changes, rose pause / emerald play for the Braiins transitions - always visible at every zoom level.
+  - Idle-state background bands on both charts: a violet hatch over every DRY RUN / PAUSED span (retroactive over your full history) and a rose hatch while Braiins had the bid paused. Hovering a band names the state and its duration. All three marker colors are configurable under Config -> chart colors.
+  - History detail drawer (#285): click any row for full details, including the new Reason column; "View on chart" jumps to the price chart, scrolls it into view, and pulses a ring around the exact marker. History filters now stick per browser.
+  - Click a chart legend entry to show or hide that series, persisted per device (#280).
+  - Speed-edit markers mirror onto the hashrate chart, where a speed change actually shows (#281).
+
+  IMPROVEMENTS
+  - Payout tracking works with any Electrum-protocol server - electrs, Fulcrum, ElectrumX - and the UI now says so (#273). Confirmed working against Fulcrum on Umbrel.
+  - The chart crosshair readout dodges pinned tooltips instead of sliding underneath them.
+  - Pool-luck step markers sit exactly on their steps; the placement rule is now a pure, test-locked function.
+
+  FIXES
+  - BIP 110 block cards no longer overflow on mobile.
+  - Phantom pool-block dot at the chart edge is gone, and focus-clicks no longer pin the crosshair.
+
+  v1.13.0 - configurable stats bar, dedicated History page, synced chart crosshair, and a sweep of mobile and oracle polish.
+
+  NEW
+  - Configurable stats bar: pick which tiles appear from a catalogue of about 22 (uptime broken into bid coverage and delivery while bidding, hashrate averages by source, cost vs hashprice, hashprice, pool blocks 30d, three pool-luck windows colour-coded with window-aware thresholds, share log %, share rejection, wallet runway, hashrate target, and Bitaxe fleet hashrate / power / efficiency in J per TH / all-time best difficulty). Drag-to-reorder via hover-revealed grip handles inside the bar; choice persists so the layout follows you across browsers.
+  - Dedicated History page at /history. Flat sortable table of every bid event (create / edit price / edit speed / cancel) with filter chips by action, full bid id, locale-aware custom date picker, and a denomination-aware |Delta price| filter whose units track the TH/PH/EH toggle. Server-side infinite scroll.
+  - Synced crosshair across the Hashrate and Price charts: hover either to draw a vertical guide on both with a floating readout of every visible series at the snapped tick. Click to pin; Esc or click outside dismisses. Touch users press-and-hold then scrub.
+  - USD denomination button now greys out with a tooltip when the BTC oracle is configured but unreachable, instead of silently disappearing. The "Disabled" choice still hides the button as before.
+
+  IMPROVEMENTS
+  - Test connection button for the BTC oracle now sits inline next to the Price source dropdown, matching the rest of Config's Test-connection idiom.
+  - NerdAxe / NerdQAxe miners with numeric bestDiff are accepted (one malformed device can no longer take down the whole fleet's poll).
+  - Scan local network: clicking the X actually aborts in-flight HTTP probes so the scan ends in milliseconds, and the trigger button reliably reverts to "Scan local network".
+  - Hero price card no longer overflows on iPhone in BTC denomination.
+  - telegram_chat_id is now redacted in the Diagnostics support bundle (used to leak alongside the bot_token mask).
+  - Pool-luck step markers anchor at the higher line for FOUND blocks and the lower line for AGED OUT blocks, matching the operator mental model.
+  - BIP 110 pool / miner badge letters stay square even with long tag text alongside; Ocean's letter is now its brand blue.
+  - "rejection rate" renamed to "rejection ratio" across the dashboard, matching Braiins terminology.
+
+  Safe to upgrade from any 1.11.x / 1.12.x release; no new migrations.
+
+  v1.12.2 - oracle test button + one-click diagnostics support bundle.
+
+  NEW
+  - Test connection button for the BTC price oracle (Config -> Pool & Payout): one click fetches a live price from the selected provider and shows the result inline - the current BTC/USD price on success, or the concrete failure (HTTP status like 429, or the network error code) instead of the USD toggle just silently not appearing. A successful test enables the USD toggle immediately.
+  - Diagnostics support bundle (Config -> Display & Logging -> Diagnostics): one click probes every service the app talks to - Braiins, Ocean, Datum, your Bitcoin node, electrs, Telegram, all four BTC price providers, public-IP service, plus a DNS check - each with latency or the exact error. "Copy as Markdown" produces a paste-ready block for bug reports: version info, the connectivity table, per-service freshness, and your configuration with every sensitive value (tokens, passwords, payout address, hostnames, public IP) visibly stripped as "********** [redacted]". The bug-report template now asks for this bundle, which should make support conversations much faster.
+
+  IMPROVEMENTS
+  - Price fetches send a proper User-Agent and daemon logs now include the underlying network error (e.g. ENOTFOUND) instead of a bare "fetch failed", making oracle problems diagnosable from a single log paste.
+
+  v1.12.1 - hotfix: NerdAxe / NerdQAxe miners now appear on the Status page.
+
+  FIXES
+  - NerdAxe / NerdQAxe miners (#260): these firmwares report their best share difficulty as a raw number where stock Bitaxe firmware reports text like "4.29G". The daemon's parser crashed on the numeric form in a way that silently discarded every successful poll while letting failed polls through, so a NerdAxe added via the scanner never showed up on the Status page. Numeric values are now handled natively and displayed in the same "58.39M" style as Bitaxe units, one misbehaving device can no longer blank the whole miners card, and unreachable-device errors now show the underlying network error instead of a bare "fetch failed".
+
+  v1.12.0 - public-IP change tracking, drag-to-reorder dashboard, configurable marker colors, return-on-spend, Bitaxe rename.
+
+  NEW
+  - Public-IP change tracking (#250): the daemon polls api.ipify.org every 60 seconds (down from 5 minutes) and writes a row to a new ip_change_events table whenever the public IPv4 actually changes. Each rotation shows up as a router-icon marker at the top of the hashrate chart with a styled tooltip listing the old → new IP pair and the locale-formatted detection time; the DDNS card on Config → Pool & Payout carries an "IP last changed" timestamp. The DDNS updater now also pushes immediately on a change instead of waiting for the next hourly heartbeat, so the public DNS A record stays in sync within ~60 seconds of an ISP rotation. Rejection-rate spikes can be lined up directly against IP rotations on the chart.
+  - Drag-to-reorder Status page (#244): every block on the dashboard is draggable. Hit "Rearrange" in the top bar, drag the cards into the order you want (e.g. lifetime P&L up top, or the hashrate and price charts reordered independently), then click "Done". Order is saved per device in the browser so your phone and your desktop each keep their own arrangement. New blocks in future releases slot into their default position rather than getting buried at the bottom.
+  - Configurable chart marker colors: five new override slots in the chart-color picker covering the BIP 110-signalling cube, difficulty-retarget pickaxe, public-IP-change router, on-chain payout gem, and Braiins deposit fuel-pump markers. The Config → Display & Logging chart-color section was reshuffled into three groups (Hashrate chart, Price chart, Markers) with a live SVG preview next to each row, so the row labelled "own pool block" actually shows the crown that will appear on the chart.
+  - Return on spend (#249): the lifetime Profit & Loss card now shows net divided by spent as a percentage in its own row under "= net". Reads as "how much have we made (or lost) relative to what we paid for hashrate". Near -100% at the start of a run when only spend has happened; walks toward 0% as Ocean earnings and on-chain payouts land; positive once total earnings exceed total spend. Translated en + nl + es.
+  - Braiins share-rejection rate (#243): per-tick snapshot of the primary owned bid's cumulative share counters from Braiins's /spot/bid/detail endpoint, surfaced as a "rejection rate" row on the Braiins service card and as a right-axis option on the Hashrate chart. The card and chart now use the same server-side calculation (rejected / purchased across the selected chart range) so values agree across 3h / 6h / 24h / 1w / 1m / 1y / All.
+
+  IMPROVEMENTS
+  - Pool-luck step dots reworked: the dots on the pool-luck right-axis line now anchor at the block's actual timestamp instead of scanning forward for a count change, so they no longer mis-label when two blocks' events interact. When two block events land in the same daemon tick (e.g. one block ages out while another is found) the markers collapse into a single dot with a combined tooltip that lists each contributing block under a green "FOUND" or red "AGED OUT" badge.
+  - Chart bucket scaling now smooth: scrolling the hashrate chart through 24h no longer produces a sudden 30x jump in detail level. The bucket size is a continuous function of the visible span (one bucket per minute at 24h, scaled proportionally for wider spans) instead of a 4-tier ladder with hard boundaries.
+  - "Solo miners" renamed to "Bitaxe miners" everywhere it's user-facing: dashboard card, Config tab, alert labels, right-axis series labels. The integration only ever supported AxeOS firmware, so the new name says what it actually does. Internal field names are unchanged so existing alert subscriptions and saved configurations keep working without operator intervention.
+  - Rejection-rate tooltip cites both Braiins's documented inherent rate (0.05%) and the practical end-to-end healthy range (0.05-0.5%) so the operator sees both anchors instead of an unrealistically tight number.
+  - Range-bound values now explain themselves on hover: the Braiins card's rejection rate, the stat-bar AVG cards (uptime / Braiins / Datum / Ocean / cost-vs-hashprice), and the per-day P&L mini-cards all carry tooltips that say "computed over the selected chart range" so it's clear which numbers move when you change the range selector.
+  - IP-change markers use the styled tooltip pattern (same dark slate panel + locale-aware date as pool-block markers), not the browser's native title attribute.
+  - Percent sign and Satoshi symbol now align consistently across cards: same small leading space and same muted slate colour on every row that ends in % or the sat glyph.
+  - Several small chart fixes: rejection-rate chart line appears on bucketed presets (1w / 1m / 1y / All) instead of dropping out, negative-Δrejected aggregation artefacts no longer produce nonsensical negative rates, the card and the chart line agree across every range preset.
+
+  FIXES
+  - Daemon crash safety net: the migration runner now catches "duplicate column name" and "already exists" errors and stamps the migration as applied, so a half-applied schema state self-heals on the next boot instead of crash-looping. Recovers cleanly from situations where a column was added by one release, the release was reverted, and a later release reused the same column name.
+  - Migration 0107 scrubs orphan May 5-6 share-counter rows left behind by the reverted #90 acceptance-ratio infrastructure. No-op on clean installs.
+  - The IP-change marker is only drawn on the Hashrate chart now (was also showing on the Price chart, where it added no signal).
+  - Hashrate-below-floor Telegram alert no longer fires on the same tick that the hashrate has already recovered (#242). The debounce-aware "is bad" flag and the actual current hashrate are reconciled before sending.
+
+  New migrations 0106-0109 (Braiins share counters, orphan-row scrub, dashboard card order, ip_change_events table). Safe to upgrade from any 1.11.x release.
+
+  v1.11.0 - BIP 110 scanner restructure, Telegram payout-lifecycle alerts, chart color picker, offline-period reconstruction.
+
+  NEW
+  - BIP 110 scanner overhaul: range selector replaced with a clean Current epoch / All toggle anchored at the first known signaling block (938,903). Per-epoch breakdown with expandable rows showing pool name, miner template-author, block reward, fees, size, and confirmations. Each epoch carries a MASF progress bar against the 55% threshold (1,109 signaling blocks of 2016) and a forecasted end date. The deployment-status tooltip is lifecycle-aware: LOCKED_IN forecasts the next boundary, ACTIVE distinguishes miner-activated (MASF) from user-activated (UASF, block 965,664), SIGNALING tense-switches its UASF clause when the chain tip crosses the flag-day. UASF forecast updates dynamically as the chain progresses.
+  - Telegram payout-lifecycle alerts (#226): two new opt-in INFO event classes. notify_on_payout_initiated fires the tick Ocean debits unpaid_sat by >30% with a residual below the on-chain payout threshold (signals Ocean has committed the payout to the coinbase of the next block it finds; the TX hasn't confirmed yet). notify_on_payout_confirmed fires once per new on-chain payout to your configured address. Baselined at boot from rewardEventsRepo.maxId() so a fresh-install backfill doesn't fire a flood. Both are off by default; toggle on under Config -> Notifications.
+  - Chart color picker (#238): per-series color overrides for every named line and event marker on the Hashrate and Price charts. Curated 12-swatch palette + native color input + reset-to-default per slot. Settings under Config -> Display & Logging -> Chart colors. Eighteen named slots covering the chart's color vocabulary; missing keys fall back to the documented default.
+  - Difficulty-adjustment tooltip enrichment (#229): the violet pickaxe at every retarget tick now shows new vs previous difficulty, percent change, block height, average block time, network hashrate, and pool blocks this epoch.
+  - Historical network-difficulty backfill from bitcoind (#230): boot-time service walks NULL tick_metrics.network_difficulty rows (mostly pre-migration-0053 ticks) and writes the correct epoch's difficulty from bitcoind. Guarded with IS NULL so live observations never get clobbered.
+  - Offline-period reconstruction (#241): daemon-offline gaps render as a hatched band and a boot-time backfill walks every gap inserting synthetic ticks every 5 minutes plus one at each detected difficulty retarget. Pool-luck line step-changes through the gap, retarget markers land at canonical time when bitcoind is configured (nearest-pool-block estimate otherwise). Bypasses the recompute eligibility gate for synthetic rows so fresh installs with shallow pool_blocks history still get pool_luck populated.
+
+  FIXES
+  - Pool-block-credited Telegram credit math (#239): credit number now reads Ocean's actual TIDES credit (delta in ocean_unpaid_sat against the previous fire), with the legacy share_log_pct × reward estimate kept only as a prefixed ~ fallback for first alert after restart, multi-block ticks, or right after a payout fired in the interval.
+  - Right-axis at constant-data ranges (#236): when every visible tick formats to the same number, the axis re-pads to a value-relative minimum, anchoring the actual value at top with nice round ticks below; no more single-label collapse.
+  - Solo fleet right-axis at the All chart range (#232): no longer silently truncates to 24h.
+  - P&L collected (on-chain) reads lifetime received (#240 follow-up): switched from current UTXO balance to the sum of reward_events. A payout received then spent still counts; "we count what they put in."
+  - Boot-time payout-address mismatch detection (#240 follow-up): on every restart the daemon compares cfg.btc_payout_address against the address last fed to runHistoricalBackfill; on mismatch it clears reward_events + re-runs the backfill against the live address. Even on match, the daemon additively re-runs the backfill so users whose reward_events was missing a TX from a prior boot (electrs hiccup, transient error, or a now-fixed code bug like the pre-build-558 coinbase-only filter) pick it up next restart.
+  - Dropped the coinbase-only filter in historical backfill (#240): empirically Ocean payouts are NOT always coinbase-direct. Ocean's pool wallet (P2SH 37dvwZZoT3D7RXpTCpN2yKzMmNs2i2Fd1n) sweeps coinbase outputs into batched multi-output transactions to operators. Any output paying the configured address now counts.
+
+  New migrations 0101-0105 (payout-lifecycle alert toggles, Display & Logging locale plumbing, chart color overrides JSON, tick_metrics.synthetic, runtime_state.last_backfilled_payout_address). Safe to upgrade from any 1.10.x release.
+
+  v1.10.0 - fee protection + configurable edit deadband, deadband shown in EDIT_PRICE tooltip, chart-marker cap actually works.
+
+  NEW
+  - Fee protection: new Max acceptable fee config knob (default 0). When any active bid carries a non-zero fee_rate_pct above this percentage, the autopilot halts new CREATE_BID / EDIT_PRICE / EDIT_SPEED. CANCEL_BID stays allowed so you (or the Datum-down auto-cancel) can still bail out of a fee-bearing bid. Default 0 = halt on any non-zero fee, matching the existing beta_exit Telegram alert. Raise to (say) 0.5 to tolerate a known small fee without stopping the autopilot. The halt clears automatically as soon as every active bid drops back at-or-below the threshold; the threshold itself is the operator's acknowledgement.
+  - Configurable EDIT_PRICE deadband: new Edit-price deadband config knob (default 20). Replaces the previously hard-coded overpay/5 with overpay × deadband_pct / 100. Default 20 reproduces the legacy behavior. Raise to 50 to halve edit frequency and tolerate ~2x more price jitter before re-pricing - useful as a chart-noise reducer today, and as a per-edit-fee mitigation if Braiins ever introduces an EDIT fee. tick_size remains the hard floor.
+  - Deadband visible in EDIT_PRICE event tooltip: the MARKET AT THIS TICK section on every yellow event dot now shows the deadband that was in effect at the moment of the edit, as a percentage with the equivalent sat/PH/day floor. Captured per-tick into tick_metrics so historical events show the historically-correct deadband even after the operator changes the knob. Pre-upgrade rows backfill to 20% (the legacy /5 equivalent).
+
+  FIXES
+  - chart_max_markers actually works at longer chart ranges. The dashboard pre-fetches 3x the visible range so pan/zoom stays snappy, but the chart-marker cap was counting the full fetched set. On an actively-editing controller (~18 events/hour), a 12h view fetched 36h ~= 650 events; the cap at 500 fired and dropped every yellow EDIT_PRICE marker, even though only ~220 were in the visible 12h. Shrinking to 6h made markers reappear. Now the cap counts events filtered to the visible viewport; buffered out-of-view events stay loaded for pan/zoom but don't inflate the cap.
+  - Pool-block dots on the unpaid line now correctly anchor at distinct Ocean refresh steps. When two pool blocks landed within Ocean's ~5-min unpaid_sat refresh cadence, both block markers projected to the same first step at an intermediate Y value. Each block now scans past the previous block's claimed step; when Ocean genuinely batches two credits into one observed step, the dots stagger horizontally so both stay hoverable.
+  - Pool-luck step tooltip wording: was "numerator went from X× to Y×" which mislabelled the luck multiplier as the numerator (the actual numerator is a block count). Now reads "pool luck went from X× to Y×".
+
+  New migrations 0099 + 0100 (config fee-protection columns, tick_metrics deadband snapshot). Safe to upgrade from any 1.9.x release.
+
+  v1.9.0 - chart overlay maturity pass: payout gems, deposit markers, BIP 110 progress bar.
+
+  NEW
+  - On-chain payout gem markers (emerald) on the Price chart with pinnable tooltips linking to your block explorer.
+  - Braiins deposit fuel markers (purple) on the Price chart. When the right axis shows Braiins balance, a purple dot appears on the balance line at each step-up with a dotted connector back to the fuel icon.
+  - Braiins balance right-axis series on the Price chart - total wallet balance (available + blocked) as a zero-anchored purple line.
+  - BIP 110 activation progress bar on the scan card with a tooltip explaining the MASF (current miner signaling phase) and UASF (block 965,664, ~September 2026) activation path.
+  - BIP 110 scan cards now show pool name, block reward, fees, size, and confirmations.
+  - Pool-probe error and latency shown as tooltip on the stratum reachability badge.
+
+  FIXES
+  - Deposit-detected notification now fires correctly from the on-chain endpoint.
+  - Pool-block step markers aligned with the actual curve step, with dotted connector when offset.
+  - Right-axis Y-domain scoped to visible viewport (no more inflated scale from off-screen data).
+  - Pool luck step-down tooltip shows from/to values (matching step-up format).
+  - Solo fleet series anchored at zero when all devices are offline.
+
+  New migrations 0095-0098; safe to upgrade from any 1.8.x release.
+
+  v1.7.2 - solo-miner scan reliability.
+
+  FIX
+  - "Scan local network" was still flaky after v1.7.1 - repeated clicks could come back empty even when the device was on the typed CIDR. Root cause: the scanner fired all 254 probes in one burst with a 200 ms per-IP timeout, which overwhelms ESP-Miner's small HTTP stack and the Wi-Fi AP's ARP table under Docker NAT. Redesigned as a background sweep at concurrency 8 with a 1.5 s per-IP timeout. The modal now opens immediately with a progress bar and "Probing X of 254…" counter, and discovered devices appear in the table as they're found instead of waiting for the full sweep to finish. Reliable on the first click.
+
+  No migration; safe to upgrade or revert.
+
+  v1.7.1 - solo-miner scan works on Umbrel.
+
+  FIX
+  - "Scan local network" on Config -> Solo miners returned "No AxeOS devices found" on every Umbrel install: the daemon container's auto-detected /24 is the docker bridge subnet (10.21.0.0/24), not the host LAN where the Bitaxes actually live. Added a subnet-override input next to the Scan button; type your home LAN CIDR there (e.g. 192.168.1.0/24) and the scan probes it directly. The value is remembered per browser so you only type it once. Bare-metal installs are unaffected - leave it blank and the existing auto-detect kicks in.
+  - Cosmetic: "Add device" Label placeholder swapped from "Bedroom Gamma" to "Garage Gamma" (the rented-hashrate audience tends not to host miners in the bedroom).
+
+  No migration; safe to upgrade or revert.
+
+  v1.7.0 - solo-mining monitoring + several real-user bug fixes.
+
+  NEW
+  - Solo-mining monitoring (Bitaxe / AxeOS): optional fleet monitor for home Bitaxe / Nerdaxe / ESP-Miner units alongside the autopilot's rented Braiins hashrate. When enabled (Config → Display & Logging → Solo miners), the daemon polls each registered device's /api/system/info every tick (2 s timeout per device, parallel poll so one unreachable unit doesn't block the rest) and surfaces per-device hashrate, ASIC + VR temperature, power draw, share-rejection rate, best-ever-difficulty, uptime on a Status-page card with a fleet-summary footer (total hashrate, total watts, J/TH efficiency, active-device count). Four IMPORTANT Telegram event classes: overheating (per-ASIC-model thermal ceiling with global override), zero-hashrate (device unreachable or hashrate = 0 for configurable minutes), share-rejection (rolling-window threshold), and stratum URL drift (firmware silently re-pointed at a different pool). A "Scan local network" button on the device-list UI probes the daemon's /24 subnet for AxeOS-shaped responders so adding a fleet doesn't require typing every IP. Master toggle defaults off.
+  - Number-format + date-layout split: the Config → Display & Logging picker used to bundle thousands/decimal separators, date layout order, and month-name language into a single Intl-locale dropdown - so an English-UI operator picking "1.234,56" European separators got Dutch month abbreviations leaking into the Status page's last-tick timestamp. Now two independent dropdowns. Month names always follow the UI language picker (top-right) regardless of the date layout choice.
+  - Alerts page: ACKNOWLEDGED + RESOLVED merged into one chronological bucket headed "Acknowledged and resolved", sorted strictly newest-first by firing time. The two-section layout (separate ACKNOWLEDGED and RESOLVED) created a visual break that wasn't chronological - a 2-min-ago recovery on an old IMPORTANT firing landed visually below a 1-day-old INFO ack. Per-card right-side pill keeps the state distinction visible: emerald RESOLVED vs slate ACKNOWLEDGED · {age}. OPEN stays its own group at the top.
+
+  FIXES
+  - DDNS DuckDNS auto-update never fired: the updater's tick guard required `username` to be non-empty, but DuckDNS doesn't use that field. Every DuckDNS user was silently broken. Now the username check is per-provider, matching the dashboard's hasUsernameField rule.
+  - Telegram receiver respects the "Send messages to Telegram" master switch: when credentials were configured but the master toggle off, the inbound getUpdates long-poll kept running. Telegram's getUpdates is single-consumer per bot - a muted secondary install would race-consume ack callbacks meant for the primary, then update its own DB and edit the Telegram message, making the primary's dashboard show "still unacked" forever. Mute now disables polling end-to-end (in + out).
+  - Config cross-tab search now indexes Solo miners + Display + block-found sound picker. "BitAxe", "AxeOS", "cowbell", "sound", "upload" all hit now.
+  - Status page "Just lowered/raised bid" recap row no longer shifts the dashboard down by one line on every appearance / disappearance.
+  - Config page header no longer overlaps the global nav at the top of the page.
+  - Tooltip flip-below now actually flips - previously the placement logic updated `top` but not the `transform`, so tooltips on hero cards near the viewport top were clipping against the top edge.
+  - Solo-miners device row re-laid-out + trash icon: On checkbox leftmost, widest Label column, IP/host, trash icon right-aligned. Both checkbox and trash carry tooltips spelling out the pause-vs-delete distinction.
+  - Solo-miners IP/host field truncation on iPhone: table now wraps in overflow-x-auto with table-fixed colgroup so the column widths are actually honoured rather than proportionally squeezed by the browser when the row exceeds viewport width.
+
+  Three new migrations (0085-0087) run on first boot to create the solo-mining tables. Solo-mining stays off by default - toggle it on at Config → Display & Logging → Solo miners when ready.
+
+  v1.6.0 - alerts pipeline maturity pass.
+
+  NEW
+  - In-dashboard toast notifications: when a new alert lands, a small toast slides in at the bottom-right with severity-coloured border, severity pill, title, and body preview. Click navigates to /alerts; auto-dismiss timing depends on severity (5 s for INFO and recoveries, 15 s for IMPORTANT / WARNING).
+  - Braiins deposit lifecycle restored: two Telegram messages per deposit - "Detected" when Braiins first observes the on-chain transaction (mempool / first-confirmation), then "Available" 6-12 min later once compliance has cleared and the funds are spendable on the marketplace. A third "Returned" IMPORTANT message fires on the rare case compliance bounces the deposit back.
+  - Alerts page redesign: flat row list replaced with collapsible event cards grouped into OPEN / ACKNOWLEDGED / RESOLVED buckets. Open cards expand by default; the others collapse to a header. Free-text search box filters across titles + bodies with hit-highlighting. Severity badges restored on every row.
+  - Multilingual Telegram messages: alert copy follows the operator's chosen Telegram language (English / Dutch / Spanish), independent of the dashboard's display language.
+  - Notifications config rebuild: every event-class tile carries a severity pill (IMPORTANT red, WARNING amber, INFO slate) matching the chat conventions. Timer-driven events have inline minute thresholds; Datum-unreachable and sustained-paused now have independent config fields (previously both fell out of pool_outage_blip_tolerance_seconds × 5).
+  - Cheap mode now lives in its own section on Config → Strategy with an explicit Enable checkbox - no more "set threshold to 0 to disable" guessing.
+  - Pool-luck step markers on the Hashrate chart: line steps up at every pool-block credit, decays continuously between blocks.
+
+  FIXES
+  - Severity rename ERROR → IMPORTANT; new INFO tier explicitly for opt-in good news (pool block credited, deposit lifecycle).
+  - Recovery alert titles read positive ("Bid active again", not "✓ Bid sustained-paused").
+  - Sustained-paused detector reads the live status, not the lingering last_pause_reason that would keep it firing after recovery.
+  - Wallet-runway threshold accepts fractional days (0.5, 1.5, ...).
+  - Snooze removed entirely; replaced by the simpler ack-only model that survives all flows (dashboard, Telegram button, restart).
+  - Unicode arrows (→) in Telegram messages instead of ASCII (->); matches the rest of the rich-Unicode formatting.
+  - Deposit-detected message reframes compliance screening as the rare case (it's the 3-confirmation typical path, not the 48-hour edge case).
+  - Sticky upgrade banner: the "new version available" prompt now stays pinned at the top of the viewport on scroll.
+  - Chart markers: cap on max bid-event markers rendered; over the cap, EDIT_PRICE markers drop out first.
+
+  First watcher poll silently absorbs already-credited historical deposits, so no Telegram flood - only future deposits produce events.
+
+  v1.5.4 - the actual electrs-only fix.
+
+  FIX
+  - On-chain payouts populate the chart on Umbrel installs (and any other electrs-only setup without Bitcoin Knots RPC). Previous fixes (v1.5.1 / v1.5.2) added the right code inside PayoutObserver, but main.ts's construction guard required bitcoindClient and so the observer was never instantiated when bitcoind RPC creds were absent. Relaxed the guard to allow electrs-only construction. Daemon log now explicitly reports whether the observer is ENABLED or DISABLED on startup (with the exact reason if disabled), so the next regression of this shape is grep-able from the log instead of presenting as a silent flat-zero chart.
+
+  Within ~60s the balance panel should populate; the chart's lifetime-earnings line backfills retroactively shortly after.
+
+  v1.5.3 - "new version available" banner fix.
+
+  FIX
+  - Dashboard's "new version available, click to refresh" banner now actually fires on Docker / Umbrel installs. The /api/build endpoint reads BUILD_NUMBER off disk to report the running build, but the runtime image stage wasn't copying that file out of the builder - so /api/build returned `build: 0` inside the container, the banner's `daemon > dashboard` check could never be true, and the prompt never appeared. Pre-existing bug since #103; surfaced now because the v1.5.1 -> v1.5.2 update silently failed to nudge anyone on Umbrel. After this update lands, future releases will surface a banner the moment the daemon comes back up at the new version.
+
+  v1.5.2 - hot-fix on top of v1.5.1.
+
+  FIX
+  - On-chain payouts populate the chart on Umbrel installs (and any other electrs-only setup without Bitcoin Knots RPC). v1.5.1's "Electrs payout-observer now writes reward_events" fix only worked when bitcoind RPC was ALSO configured - the side-scan it added required a bitcoind client. Replaced with an electrs-native path: blockchain.scripthash.listunspent for the per-UTXO list, blockchain.block.header parsed for the actual on-chain timestamp. Backfills retroactively within ~60s of restart - your historical payouts now appear at their real block dates on the price chart's "paid earnings (lifetime)" line.
+  - Two example placeholders in the Config UI no longer leak personal hostnames (the dev box's name was bleeding into operator-facing text).
+
+  v1.5.1 - polish + bug-fix release.
+
+  NEW
+  - Telegram instance-label prefix: run multiple daemons against the same bot/chat and tell them apart at a glance.
+  - Inline Mark-as-seen / Snooze 2h buttons in Telegram messages now actually render (regression from 1.5.0). Tap on your phone, the row updates server-side via the bot's getUpdates long-poll.
+  - Stale-URL banner on Status and Config: warn when an active bid is bound to a now-stale destination URL after a Pool URL change, with a confirm-then-cancel flow that triggers a fresh bid on the next decision tick.
+  - DDNS now supports DuckDNS and generic dyndns2 alongside No-IP. Ticks immediately on any DDNS-relevant config save (was up to 5-min lag) and on any detected ISP IP rotation.
+  - Price chart: clickable event dots with rich tooltips on paid earnings (per on-chain payout), unpaid earnings (per Ocean pool block), and pool blocks. All deep-link to your configured block explorer.
+  - Hashrate chart: difficulty retarget markers when right-axis = network difficulty.
+  - Alerts page: "mark all as seen (N)" bulk button + sticky "unacknowledged only" filter.
+  - Block explorer: separate transaction URL template auto-derived from your existing block template (mempool/blockstream/blockchair/btcscan/btc.com presets). Self-hosted explorers can override either independently.
+  - Bundled "Ocean mining found a block" voice clip alongside the existing block-found cues.
+
+  FIXES
+  - Lifetime-earnings phantom upward spike at payout-transition buckets: chart now uses end-of-bucket semantics for both paid and unpaid totals, so the sum is stable across the moment the payout lands.
+  - Electrs payout-observer now writes the reward_events ledger: paid-earnings line on the chart was flat-zero on electrs setups. Backfills retroactively on first run after upgrade.
+  - On-chain payout dot now deep-links to the transaction (was rendering the {hash} placeholder literally).
+  - Network difficulty removed from the Price chart's right-axis dropdown (was duplicated on both charts).
+  - Various i18n + UI polish: locale leak on dates, DDNS "20582d ago" age bug, Config search width clipping tab labels.

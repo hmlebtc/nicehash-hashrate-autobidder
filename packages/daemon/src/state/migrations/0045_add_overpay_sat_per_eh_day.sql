@@ -1,0 +1,22 @@
+-- Pay-your-bid controller (#53). NO-OP - see the note below.
+--
+-- Earlier versions of this file ran:
+--   ALTER TABLE config ADD COLUMN overpay_sat_per_eh_day INTEGER NOT NULL DEFAULT 1000000;
+--
+-- That was a companion to the (now-revised) 0043, which used to drop
+-- `overpay_sat_per_eh_day`. Together the pair lost every operator's
+-- configured overpay value, resetting it to the 1,000 sat/PH/day
+-- default.
+--
+-- 0043 has since been edited to PRESERVE `overpay_sat_per_eh_day`
+-- through the CLOB-redesign retirements. So for any fresh migration
+-- chain the column already exists at this point and trying to add
+-- it again would raise "duplicate column". Operators who already
+-- applied the previous (column-adding) version of this migration on
+-- dev keep the _migrations row and skip this file on subsequent boots.
+--
+-- Net effect: this file is now a no-op, kept only so the migration
+-- sequence stays contiguous and the bookkeeping in `_migrations`
+-- remains stable.
+
+SELECT 1;

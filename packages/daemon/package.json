@@ -1,0 +1,45 @@
+{
+  "name": "@hashrate-autopilot/daemon",
+  "version": "0.1.0",
+  "description": "Control loop, HTTP API, and state store for the Hashrate Autopilot",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    },
+    "./state": {
+      "types": "./dist/state/index.d.ts",
+      "import": "./dist/state/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp -R src/state/migrations dist/state/",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hashrate-autopilot/bitcoind-client": "workspace:*",
+    "@hashrate-autopilot/braiins-client": "workspace:*",
+    "@hashrate-autopilot/shared": "workspace:*",
+    "@fastify/basic-auth": "^6.2.0",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.1.3",
+    "@inquirer/prompts": "^8.5.2",
+    "bech32": "^2.0.0",
+    "better-sqlite3": "^12.10.0",
+    "fastify": "^5.8.5",
+    "kysely": "^0.29.2",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}

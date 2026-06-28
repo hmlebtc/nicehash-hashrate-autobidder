@@ -1,0 +1,45 @@
+# systemd unit template for the Hashrate Autopilot daemon (bare-metal install).
+#
+# Copy to /etc/systemd/system/hashrate-autopilot.service, fill in the three
+# placeholders below, then:
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hashrate-autopilot
+#   sudo systemctl status hashrate-autopilot       # confirm "active (running)"
+#   journalctl -u hashrate-autopilot -f            # follow logs
+#
+# Placeholders to fill in:
+#   __USER__         the unprivileged Linux user that owns the checkout
+#                    (the same user that ran `git clone` + `pnpm install`).
+#                    Find it: `whoami` while logged in as that user.
+#   __REPO_PATH__    absolute path to the repo on disk.
+#                    Find it: `pwd` from inside the checkout.
+#   __PNPM_PATH__    absolute path to the pnpm binary.
+#                    Find it: `which pnpm` while logged in as __USER__.
+#                    nvm-managed installs typically have it at
+#                    /home/__USER__/.nvm/versions/node/v22.x/bin/pnpm.
+#
+# When pnpm / node update via nvm, the path under /home/.../node/vXX/ changes -
+# update __PNPM_PATH__ here and re-run `sudo systemctl daemon-reload`.
+
+[Unit]
+Description=Hashrate Autopilot daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=__USER__
+WorkingDirectory=__REPO_PATH__
+ExecStart=__PNPM_PATH__ -w run daemon
+Restart=on-failure
+RestartSec=5
+# Daemon writes its SQLite DB + logs under data/. Keep the workdir
+# writable; everything else can be read-only as far as the service is
+# concerned. Logs go to journald by default; read them with
+# `journalctl -u hashrate-autopilot`.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
