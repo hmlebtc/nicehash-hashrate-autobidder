@@ -86,19 +86,21 @@ async function main() {
       `   - id=${o.id} price=${o.price} limit=${o.limit} avail=${o.availableAmount ?? '?'} speed=${o.acceptedCurrentSpeed ?? '0'}`,
     );
   }
+  // Shape probe: confirm the top-level field name (list vs orderList vs ...).
+  console.log(`  myOrders top-level keys: ${Object.keys(mine ?? {}).join(', ')}`);
 
-  console.log(`\n→ getOrderBook(${algorithm}) (orderbook for ${market})`);
+  console.log(`\n→ getOrderBook(${algorithm})`);
   const book = await client.getOrderBook(algorithm);
-  const stats = book.stats?.[market];
-  if (!stats) {
-    console.log(`  no stats for market ${market}; available: ${Object.keys(book.stats ?? {}).join(', ')}`);
-  } else {
-    const orders = [...(stats.orders ?? [])].sort((a, b) => parseDecimal(b.price) - parseDecimal(a.price));
-    console.log(`  totalSpeed=${stats.totalSpeed ?? '?'}  competing orders=${orders.length}`);
-    for (const o of orders.slice(0, 5)) {
-      console.log(`   - price=${o.price} limit=${o.limit}`);
-    }
+  // Shape probe: the order book is keyed differently than first assumed
+  // (saw "BTC", not "EU"). Dump the structure so the parser can be fixed.
+  const rawStats = (book as { stats?: Record<string, unknown> }).stats ?? {};
+  console.log(`  stats keys: ${Object.keys(rawStats).join(', ')}`);
+  for (const [k, v] of Object.entries(rawStats)) {
+    const nested = v && typeof v === 'object' ? Object.keys(v as Record<string, unknown>) : [];
+    console.log(`   stats[${k}] keys: ${nested.join(', ')}`);
   }
+  console.log('  raw orderBook (truncated to 4000 chars):');
+  console.log(JSON.stringify(book, null, 2).slice(0, 4000));
 
   console.log('\n✓ Smoke test complete - signed NiceHash calls succeeded.');
 }
