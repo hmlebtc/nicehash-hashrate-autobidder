@@ -22,7 +22,7 @@ control and the matching model differ.
 | Core primitive | A single **bid** you keep alive and edit in place | An **order** that escrows funds, has a price + speed limit, and drains |
 | Matching | **Pay-your-bid**; controller tracks the cheapest *ask* with enough unmatched supply (`fillable_ask`) and sits just above it | **Buyer competition**; sellers deliver to the highest-priced live orders first. You pay your set price; your price's rank decides whether (and how much) hashrate you receive |
 | Order type | bid | **STANDARD** only via API (FIXED was removed) |
-| Price unit | `sat / EH / day` | `BTC / <display-unit> / day` (PH/s for the SHA256 family, incl. **SHA256AsicBoost** — our target market), scaled by `marketFactor` |
+| Price unit | `sat / EH / day` | `BTC / <display-unit> / day` (PH/s for the SHA256 family, incl. **`SHA256ASICBOOST`** — our target market, BTC-paid; not the `SHA256ASICBOOST_USDT` variant), scaled by `marketFactor` |
 | Speed unit | `EH/day` (the controller works in PH/s) | display unit per second (e.g. PH/s), from the algorithm's `displayMarketFactor` |
 | Markets | one | **EU / USA** (and regional variants) — separate order books; must pick |
 | Funding | account balance; bid amount capped at 1 BTC | per-order **escrow**; **refill** to top up; remaining funds returned on cancel |
@@ -125,7 +125,7 @@ The packages are `nicehash-client` (done), `daemon`, `dashboard`, `shared`, and
 | `daemon/src/controller/execute.ts` | Map proposals to `createOrder` / `updatePriceAndLimit` / `refillOrder` / `cancelOrder`. |
 | `daemon/src/controller/gate.ts` | Keep `PRICE_DECREASE_COOLDOWN`; clamp lowering to `priceDownStep`; keep fee-threshold gate. |
 | New: `daemon/src/services/pool-manager.ts` | Ensure the configured stratum pool is registered; resolve/cache `poolId`. |
-| `daemon/src/config/schema.ts` | New fields: NiceHash `apiKey`/`apiSecret`/`orgId`, `market`, `algorithm`, `refill_amount_btc`, `refill_when_runway_hours`, `min_order_amount_btc`. Prices expressed in BTC/unit/day. (Market + algorithm are configurable, no hardcoded default — per the project requirement; the **target algorithm is `SHA256AsicBoost`** and the default example throughout the tooling uses it.) |
+| `daemon/src/config/schema.ts` | New fields: NiceHash `apiKey`/`apiSecret`/`orgId`, `market`, `algorithm`, `refill_amount_btc`, `refill_when_runway_hours`, `min_order_amount_btc`. Prices expressed in BTC/unit/day. (Market + algorithm are configurable, no hardcoded default — per the project requirement; the **target algorithm code is `SHA256ASICBOOST`** (BTC-paid AsicBoost; the NiceHash UI shows it as "SHA256AsicBoost"), and the default example throughout the tooling uses it.) |
 | `daemon/src/services/account-spend.ts`, `*-deposit-watcher.ts` | Re-source spend from order `payedAmount` deltas + NiceHash withdrawals instead of the Braiins ledger. |
 | `shared/src/units.ts` | Add BTC/unit/day helpers (already mirrored in `nicehash-client/src/units.ts`); keep hashrate conversions. |
 | `dashboard/*` | Re-label Braiins → NiceHash, `sat/EH/day` → `BTC/<unit>/day`, "bid" → "order", add an escrow/refill card. Charts, P&L, Bitaxe/Datum/Ocean panels are marketplace-agnostic and carry over. |

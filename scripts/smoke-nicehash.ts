@@ -14,7 +14,7 @@
  *   NICEHASH_API_SECRET=...     \
  *   NICEHASH_ORG_ID=...         \
  *   NICEHASH_BASE_URL=https://api-test.nicehash.com   # default; prod=https://api2.nicehash.com
- *   NICEHASH_ALGORITHM=SHA256AsicBoost   # default (the target market)
+ *   NICEHASH_ALGORITHM=SHA256ASICBOOST   # default (the target market; BTC-paid, not _USDT)
  *   NICEHASH_MARKET=EU          # default
  *   NICEHASH_CURRENCY=TBTC      # testnet balance currency; prod=BTC
  *   pnpm smoke:nicehash
@@ -46,7 +46,7 @@ async function main() {
   const apiSecret = required('NICEHASH_API_SECRET');
   const orgId = required('NICEHASH_ORG_ID');
   const baseUrl = process.env.NICEHASH_BASE_URL ?? NICEHASH_TEST_BASE_URL;
-  const algorithm = process.env.NICEHASH_ALGORITHM ?? 'SHA256AsicBoost';
+  const algorithm = process.env.NICEHASH_ALGORITHM ?? 'SHA256ASICBOOST';
   const market = process.env.NICEHASH_MARKET ?? 'EU';
   const currency = process.env.NICEHASH_CURRENCY ?? 'TBTC';
 
