@@ -27,6 +27,7 @@
   "dependencies": {
     "@hashrate-autopilot/bitcoind-client": "workspace:*",
     "@hashrate-autopilot/braiins-client": "workspace:*",
+    "@hashrate-autopilot/nicehash-client": "workspace:*",
     "@hashrate-autopilot/shared": "workspace:*",
     "@fastify/basic-auth": "^6.2.0",
     "@fastify/cors": "^11.2.0",
