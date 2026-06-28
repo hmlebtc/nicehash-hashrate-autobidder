@@ -1,7 +1,7 @@
 {
-  "name": "hashrate-autopilot",
+  "name": "nicehash-hashrate-autobidder",
   "version": "0.1.0",
-  "description": "Autopilot and monitor for renting hashrate from marketplaces (Braiins Hashpower today, marketplace-agnostic by design) and routing it to your own Ocean non-custodial mining pool.",
+  "description": "Autopilot and monitor for renting hashrate from the NiceHash Hash-power marketplace and routing it to your own mining pool. Adapted from Hashrate Autopilot (MIT, Remco Douma).",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.0",
@@ -19,12 +19,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "smoke": "tsx scripts/smoke-braiins.ts",
+    "smoke:nicehash": "tsx scripts/smoke-nicehash.ts",
     "setup": "tsx scripts/setup.ts",
     "daemon": "tsx packages/daemon/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@hashrate-autopilot/braiins-client": "workspace:*",
+    "@hashrate-autopilot/nicehash-client": "workspace:*",
     "@hashrate-autopilot/daemon": "workspace:*",
     "@hashrate-autopilot/shared": "workspace:*",
     "@inquirer/prompts": "^8.5.2",

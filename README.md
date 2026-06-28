@@ -1,4 +1,17 @@
-# Hashrate Autopilot
+# NiceHash Hashrate Autobidder
+
+> 🛠️ **This is a NiceHash fork of [Hashrate Autopilot](https://github.com/rdouma/hashrate-autopilot) by Remco Douma (MIT).**
+> It keeps the same architecture and dashboard but bids on the
+> [NiceHash Hash-power marketplace](https://www.nicehash.com/marketplace) instead of Braiins Hashpower.
+> The Braiins → NiceHash mapping and the staged adaptation plan live in
+> **[`docs/NICEHASH_ADAPTATION.md`](docs/NICEHASH_ADAPTATION.md)**. Attribution and license terms are in
+> [`NOTICE.md`](NOTICE.md) and [`LICENSE`](LICENSE). Not affiliated with NiceHash Ltd. or the upstream author.
+>
+> ⚠️ Adaptation is **in progress** — sections below that describe Braiins-specific behaviour (`sat/EH/day`
+> pricing, single-bid model, Datum/Ocean wording) still reflect the upstream and are being migrated.
+
+<details>
+<summary>Upstream README (Braiins) — retained for reference during migration</summary>
 
 > 📦 **Already running the community-store version (`rdouma-hashrate-autopilot`) and switching to the official Umbrel App Store?** Don't just click Install — the official-store app id is different, so a straight install creates a second empty instance side-by-side with your existing data. Five-minute SSH-side migration recipe here: **[Migrating from the community store version](docs/migrating-from-community-store.md)**.
 
@@ -846,3 +859,5 @@ MIT - see [`LICENSE`](LICENSE).
 This is a passion project. I run it for my own setup and ship it because I think keeping mining decentralized is worth making easier. There's no paywall and never will be. But if it has saved you time, kept your hashrate profitable, or you just like that it exists, a tip is welcome.
 
 **Bitcoin:** `bc1qc5ad3ec655d8m4mt58pk39lkrsc222hk20rd73`
+
+</details>
