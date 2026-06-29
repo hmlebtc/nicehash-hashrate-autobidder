@@ -2,6 +2,17 @@
 
 ## 2026-06-29
 
+### `[Fix]` Anchor off the miner count, not the under-reported accepted-speed
+
+v0.5.3 found the marginal order via each order's `acceptedSpeed`, but the
+orderbook reports that field sparsely — the sum across all orders came in well
+under the market's real delivery — so the cheapest order that happened to
+report a nonzero `acceptedSpeed` was still well above the true floor (anchor
+~0.477 when NiceHash's purple was ~0.4475). The anchor now uses each order's
+`rigsCount` (NiceHash's "Miners" column), which matches the purple marginal
+exactly: the anchor is the cheapest order that currently has miners on it.
+`acceptedSpeed` remains a fallback only when no rig counts are reported.
+
 ### `[Fix]` Anchor at the marginal price, not the top of the filled book
 
 The v0.5.1 anchor fix over-corrected: it walked the filled orders from cheapest

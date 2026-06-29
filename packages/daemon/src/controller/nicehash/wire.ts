@@ -53,6 +53,7 @@ export function competingOrdersFromBook(
       price_btc: parseDecimal(entry.price),
       limit_units: parseDecimal(entry.limit),
       accepted_speed_units: parseDecimal(entry.acceptedSpeed),
+      rigs_count: typeof entry.rigsCount === 'number' ? entry.rigsCount : Number(entry.rigsCount ?? 0),
     });
   }
   return { competitors, totalSpeedUnits: parseDecimal(stats.totalSpeed) };

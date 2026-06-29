@@ -11,12 +11,14 @@
  * win a normal target; how much we actually draw is then bounded by our own
  * order limit, not by the anchor.
  *
- * We detect "currently receiving hashrate" via each competitor's
- * `accepted_speed_units` (the speed it is actually drawing), NOT its `limit`
- * (its price-cap, which may be far larger than what it draws). That is what
- * keeps an idle or over-capped high-priced order - a large `limit` resting high
- * but delivering ~nothing (e.g. a BUSINESS ceiling order) - from dragging the
- * anchor to the top of the book: it simply isn't a filled order.
+ * We detect "currently receiving hashrate" via each competitor's `rigs_count`
+ * (NiceHash's "Miners" column) - the reliable signal that an order is being
+ * filled. (The orderbook's per-order `accepted_speed_units` is sparsely
+ * reported and undercounts badly, so it's only a fallback when no rig counts
+ * are present.) Keying off live delivery - not the order's `limit` price-cap -
+ * is what keeps an idle or over-capped high-priced order (a large `limit`
+ * resting high but mining nothing, e.g. a BUSINESS ceiling order) from dragging
+ * the anchor to the top of the book: it simply isn't a filled order.
  *
  * We deliberately do NOT try to "accumulate" the target across the cheapest
  * filled orders. In a deep market that walks the anchor far up the book (and
@@ -49,10 +51,12 @@ export function computeMarketAnchor(
   const lowest = prices.length > 0 ? Math.min(...prices) : null;
 
   // The marginal price = the cheapest order currently receiving hashrate
-  // (NiceHash's purple). This is the price to beat.
-  const filledPrices = valid
-    .filter((o) => (o.accepted_speed_units ?? 0) > 0)
-    .map((o) => o.price_btc);
+  // (NiceHash's purple). Prefer the "Miners" count (`rigs_count`); fall back to
+  // `accepted_speed_units` only when no rig counts are reported at all.
+  const byRigs = valid.filter((o) => (o.rigs_count ?? 0) > 0);
+  const bySpeed = valid.filter((o) => (o.accepted_speed_units ?? 0) > 0);
+  const filled = byRigs.length > 0 ? byRigs : bySpeed;
+  const filledPrices = filled.map((o) => o.price_btc);
 
   if (filledPrices.length > 0) {
     return {

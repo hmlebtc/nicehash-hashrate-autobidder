@@ -23,6 +23,14 @@ export interface CompetingOrder {
    * not actually consuming anything (e.g. an idle BUSINESS ceiling order).
    */
   readonly accepted_speed_units?: number;
+  /**
+   * Number of mining rigs currently delivering to this order (NiceHash's
+   * "Miners" column). This is the reliable signal for whether an order is being
+   * filled - the orderbook's per-order `accepted_speed_units` is sparsely
+   * reported, but `rigs_count` matches the marginal (purple) price NiceHash
+   * shows. 0 / undefined means the order is currently winning no hashrate.
+   */
+  readonly rigs_count?: number;
 }
 
 /**

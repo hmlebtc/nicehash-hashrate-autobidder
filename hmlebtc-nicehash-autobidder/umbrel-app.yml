@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.5.3"
+version: "0.5.4"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,15 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.5.4 - anchor off the "Miners" count, not accepted-speed.
+
+  The order book's per-order accepted-speed field under-reports badly, so v0.5.3
+  (which used it to find the cheapest filled order) still anchored too high. The
+  bot now uses each order's miner count (NiceHash's "Miners" column) to find the
+  marginal order - the cheapest order with miners on it - which matches the
+  purple price exactly. Your anchor should now track ~the purple, and bids sit
+  just above it.
+
   v0.5.3 - anchor at the marginal price, not the top of the book.
 
   v0.5.1 fixed one anchor bug but introduced another: the anchor walked up the
