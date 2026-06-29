@@ -88,6 +88,20 @@ describe('ownedOrderFromWire / reconcileOrders', () => {
     expect(owned.map((o) => o.order_id)).toEqual(['mine']);
     expect(unknown.map((o) => o.order_id)).toEqual(['stranger']);
   });
+
+  it('ignores stopped / completed foreign orders (only live ones are unknown)', () => {
+    const stopped: HashpowerOrder = { id: 's1', status: { code: 'STOPPED' }, price: '0.02', limit: '1', amount: '0.01' };
+    const completed: HashpowerOrder = { id: 'c1', status: 'COMPLETED', price: '0.02', limit: '1', amount: '0.01' };
+    const dead: HashpowerOrder = { id: 'd1', status: { code: 'DEAD' }, price: '0.02', limit: '1', amount: '0.01' };
+    const liveStranger: HashpowerOrder = { id: 'live1', status: 'ACTIVE', price: '0.02', limit: '1', amount: '0.01' };
+    const { owned, unknown } = reconcileOrders(
+      [orderA, stopped, completed, dead, liveStranger],
+      new Set(['mine']),
+    );
+    expect(owned.map((o) => o.order_id)).toEqual(['mine']);
+    // Only the live foreign order trips the safeguard; stopped/completed/dead are ignored.
+    expect(unknown.map((o) => o.order_id)).toEqual(['live1']);
+  });
 });
 
 describe('availableBtcFromBalance', () => {

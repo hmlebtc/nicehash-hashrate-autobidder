@@ -43,6 +43,7 @@ import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
 import { NiceHashSettingsRepo } from './state/repos/nicehash_settings.js';
 import { NiceHashMetricsRepo } from './state/repos/nicehash_tick_metrics.js';
 import { NiceHashEventsRepo } from './state/repos/nicehash_order_events.js';
+import { NiceHashDecisionLogRepo } from './state/repos/nicehash_decision_log.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
   const settingsRepo = new NiceHashSettingsRepo(handle.db);
   const metricsRepo = new NiceHashMetricsRepo(handle.db);
   const eventsRepo = new NiceHashEventsRepo(handle.db);
+  const decisionLogRepo = new NiceHashDecisionLogRepo(handle.db);
 
   // 2. Load persisted settings, or seed from env on first boot. A stored row
   // from an older version may lack newer fields; backfill them from the env
@@ -162,6 +164,7 @@ async function main(): Promise<void> {
     hashprice: () => hashpriceOracle.latest(),
     metrics: metricsRepo,
     events: eventsRepo,
+    decisionLog: decisionLogRepo,
     floorUnits: settings.minimumFloorUnits,
     speedToPriceUnit,
   });
@@ -169,11 +172,13 @@ async function main(): Promise<void> {
   // Prune the time-series + audit log to the configured retention window on
   // boot (and once per day in the loop below).
   const retentionMs = Math.max(1, settings.retentionDays) * 24 * 60 * 60_000;
+  const logRetentionMs = Math.max(1, settings.logRetentionDays) * 24 * 60 * 60_000;
   const prune = async (): Promise<void> => {
     try {
-      const cutoff = Date.now() - retentionMs;
-      await metricsRepo.pruneOlderThan(cutoff);
-      await eventsRepo.pruneOlderThan(cutoff);
+      const now = Date.now();
+      await metricsRepo.pruneOlderThan(now - retentionMs);
+      await eventsRepo.pruneOlderThan(now - retentionMs);
+      await decisionLogRepo.pruneOlderThan(now - logRetentionMs);
     } catch {
       /* non-fatal */
     }
@@ -194,6 +199,18 @@ async function main(): Promise<void> {
     } catch (err) {
       const error = (err as Error)?.message ?? String(err);
       console.error(`tick error: ${error}`);
+      try {
+        await decisionLogRepo.record({
+          ts: Date.now(),
+          level: 'error',
+          kind: 'ERROR',
+          run_mode: store.getRunMode(),
+          message: `tick error: ${error}`,
+          detail: (err as Error)?.stack ?? null,
+        });
+      } catch {
+        /* non-fatal */
+      }
       return { ok: false, error };
     } finally {
       ticking = false;
@@ -210,6 +227,7 @@ async function main(): Promise<void> {
     tickSeconds: settings.tickSeconds,
     metrics: metricsRepo,
     events: eventsRepo,
+    decisionLog: decisionLogRepo,
     hashprice: () => hashpriceOracle.latest(),
     runNow: doTick,
   });

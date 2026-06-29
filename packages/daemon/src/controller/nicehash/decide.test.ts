@@ -21,6 +21,7 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     price_down_step_btc: 0.0000001,
     cheap_threshold_pct: 0,
     cheap_target_speed_units: 0,
+    use_break_even: true,
     ...over,
   };
 }
@@ -150,6 +151,25 @@ describe('decide - create', () => {
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
           cap_at_break_even: false,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.00091, 9);
+  });
+
+  it('ignores the break-even cap when the master use_break_even switch is off', () => {
+    const out = decide(
+      state({
+        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.0008,
+        config: config({
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          use_break_even: false,
+          cap_at_break_even: true,
           max_price_btc_per_unit_day: 1,
         }),
       }),

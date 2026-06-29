@@ -66,11 +66,15 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   let effectiveCap = dynamicCap !== null ? Math.min(fixedCap, dynamicCap) : fixedCap;
 
   // Fee-adjusted break-even ceiling: bid + NiceHash fee + pool fee must not
-  // exceed what the rented hashrate earns (the hashprice). Applies only when a
-  // hashprice is available, so a transient oracle gap never blocks bidding.
-  const breakEven = breakEvenPrice(hashprice, config.nicehash_fee_pct, config.pool_fee_pct);
+  // exceed what the rented hashrate earns (the hashprice). Gated behind the
+  // master `use_break_even` switch AND the `cap_at_break_even` knob; applies
+  // only when a hashprice is available, so a transient oracle gap never blocks
+  // bidding.
+  const breakEven = config.use_break_even
+    ? breakEvenPrice(hashprice, config.nicehash_fee_pct, config.pool_fee_pct)
+    : null;
   let cappedByBreakEven = false;
-  if (config.cap_at_break_even && breakEven !== null && breakEven < effectiveCap) {
+  if (config.use_break_even && config.cap_at_break_even && breakEven !== null && breakEven < effectiveCap) {
     effectiveCap = breakEven;
     cappedByBreakEven = true;
   }
