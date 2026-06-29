@@ -137,6 +137,8 @@ describe('openDatabase - migrations', () => {
       '0109_ip_change_events.sql',
       '0110_dashboard_tiles.sql',
       '0111_bid_events_allow_mode_change.sql',
+      '0112_nicehash_orders.sql',
+      '0113_nicehash_settings.sql',
     ]);
     expect(handle.migrations.skipped).toEqual([]);
   });

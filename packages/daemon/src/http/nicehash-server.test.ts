@@ -3,10 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import { NiceHashStateStore } from '../controller/nicehash/state-store.js';
+import { SECRET_MASK, settingsFromEnv, type NiceHashSettings } from '../controller/nicehash/settings.js';
 import type { NiceHashControllerConfig } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult } from '../controller/nicehash/tick.js';
 import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
+import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 import { createNiceHashHttpServer, type NiceHashHttpDeps } from './nicehash-server.js';
+
+// The /test endpoint builds a real signed client; swap it for a fake we control.
+const hoisted = vi.hoisted(() => ({ client: null as unknown }));
+vi.mock('@hashrate-autopilot/nicehash-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@hashrate-autopilot/nicehash-client')>();
+  return { ...actual, createNiceHashClient: () => hoisted.client };
+});
 
 function config(): NiceHashControllerConfig {
   return {
@@ -49,10 +58,29 @@ function tickResult(): NiceHashTickResult {
   };
 }
 
-function deps(store: NiceHashStateStore): NiceHashHttpDeps {
+/** In-memory stand-in for NiceHashSettingsRepo. */
+function fakeSettingsRepo(initial?: NiceHashSettings): {
+  repo: NiceHashSettingsRepo;
+  current: () => NiceHashSettings | null;
+} {
+  let row: NiceHashSettings | null = initial ?? null;
+  const repo = {
+    get: vi.fn(async () => row),
+    put: vi.fn(async (s: NiceHashSettings) => {
+      row = s;
+    }),
+  } as unknown as NiceHashSettingsRepo;
+  return { repo, current: () => row };
+}
+
+function deps(
+  store: NiceHashStateStore,
+  settingsRepo: NiceHashSettingsRepo,
+): NiceHashHttpDeps {
   return {
     store,
     ledger: { list: vi.fn(async () => []) } as unknown as NiceHashOrdersRepo,
+    settingsRepo,
     config: config(),
     buildNumber: 690,
     tickSeconds: 60,
@@ -61,14 +89,18 @@ function deps(store: NiceHashStateStore): NiceHashHttpDeps {
 
 describe('NiceHash HTTP server', () => {
   let app: FastifyInstance;
+  let app2: FastifyInstance;
   let store: NiceHashStateStore;
+  let settings: ReturnType<typeof fakeSettingsRepo>;
 
   beforeEach(async () => {
     store = new NiceHashStateStore('DRY_RUN');
-    app = await createNiceHashHttpServer(deps(store));
+    settings = fakeSettingsRepo(settingsFromEnv({}));
+    app = await createNiceHashHttpServer(deps(store, settings.repo));
   });
   afterEach(async () => {
     await app.close();
+    hoisted.client = null;
   });
 
   it('GET /api/health returns ok + build', async () => {
@@ -96,11 +128,12 @@ describe('NiceHash HTTP server', () => {
     expect(body.outcomes[0]).toEqual({ kind: 'CREATE_ORDER', outcome: 'BLOCKED', detail: 'RUN_MODE_NOT_LIVE' });
   });
 
-  it('POST /api/nicehash/run-mode updates the store', async () => {
+  it('POST /api/nicehash/run-mode updates the store and persists', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/nicehash/run-mode', payload: { mode: 'PAUSED' } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ run_mode: 'PAUSED' });
     expect(store.getRunMode()).toBe('PAUSED');
+    expect(settings.current()?.runMode).toBe('PAUSED');
   });
 
   it('POST /api/nicehash/run-mode rejects an invalid mode', async () => {
@@ -121,5 +154,104 @@ describe('NiceHash HTTP server', () => {
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.body).toContain('NiceHash Hashrate Autobidder');
     expect(res.body).toContain('/api/nicehash/status');
+    expect(res.body).toContain('/api/nicehash/config');
+    expect(res.body).toContain('/api/nicehash/test');
+  });
+
+  it('GET /api/nicehash/config masks the secret', async () => {
+    settings = fakeSettingsRepo({ ...settingsFromEnv({}), apiKey: 'k', apiSecret: 'shh', orgId: 'o' });
+    app2 = await createNiceHashHttpServer(deps(store, settings.repo));
+    const res = await app2.inject({ method: 'GET', url: '/api/nicehash/config' });
+    expect(res.statusCode).toBe(200);
+    const cfg = res.json().config;
+    expect(cfg.apiKey).toBe('k');
+    expect(cfg.apiSecret).toBe(SECRET_MASK);
+    await app2.close();
+  });
+
+  it('POST /api/nicehash/config keeps the secret when the mask is posted back', async () => {
+    settings = fakeSettingsRepo({ ...settingsFromEnv({}), apiKey: 'k', apiSecret: 'shh', orgId: 'o' });
+    app2 = await createNiceHashHttpServer(deps(store, settings.repo));
+    const res = await app2.inject({
+      method: 'POST',
+      url: '/api/nicehash/config',
+      payload: { apiSecret: SECRET_MASK, targetSpeedUnits: '5', runMode: 'PAUSED' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().config.apiSecret).toBe(SECRET_MASK);
+    // Stored secret is unchanged; numeric coerced; run mode applied live.
+    expect(settings.current()?.apiSecret).toBe('shh');
+    expect(settings.current()?.targetSpeedUnits).toBe(5);
+    expect(store.getRunMode()).toBe('PAUSED');
+    await app2.close();
+  });
+
+  it('POST /api/nicehash/config replaces the secret when a new one is posted', async () => {
+    settings = fakeSettingsRepo({ ...settingsFromEnv({}), apiKey: 'k', apiSecret: 'shh', orgId: 'o' });
+    app2 = await createNiceHashHttpServer(deps(store, settings.repo));
+    await app2.inject({ method: 'POST', url: '/api/nicehash/config', payload: { apiSecret: 'new-secret' } });
+    expect(settings.current()?.apiSecret).toBe('new-secret');
+    await app2.close();
+  });
+
+  it('POST /api/nicehash/test rejects when credentials are missing', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/nicehash/test', payload: {} });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(false);
+    expect(res.json().error).toMatch(/required/i);
+  });
+
+  it('POST /api/nicehash/test reports a successful signed read', async () => {
+    hoisted.client = {
+      syncTime: vi.fn(async () => -42),
+      getAlgorithmSetting: vi.fn(async () => ({ marketFactor: '1000000000000000', displayMarketFactor: 'PH', displayPriceFactor: 'EH' })),
+      getAccountBalance: vi.fn(async () => ({ available: '0.005' })),
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/nicehash/test',
+      payload: { apiKey: 'k', apiSecret: 's', orgId: 'o', balanceCurrency: 'TBTC' },
+    });
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.clockOffsetMs).toBe(-42);
+    expect(body.marketFactor).toBe('1000000000000000');
+    expect(body.balance).toBe('0.005');
+    expect(body.balanceCurrency).toBe('TBTC');
+  });
+
+  it('POST /api/nicehash/test still reports OK when only the balance read fails', async () => {
+    hoisted.client = {
+      syncTime: vi.fn(async () => 0),
+      getAlgorithmSetting: vi.fn(async () => ({ marketFactor: '1', displayMarketFactor: 'PH' })),
+      getAccountBalance: vi.fn(async () => {
+        throw new Error('no balance permission');
+      }),
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/nicehash/test',
+      payload: { apiKey: 'k', apiSecret: 's', orgId: 'o' },
+    });
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.balance).toBeNull();
+    expect(body.balanceError).toMatch(/permission/);
+  });
+
+  it('POST /api/nicehash/test returns ok:false when the signed read throws', async () => {
+    hoisted.client = {
+      syncTime: vi.fn(async () => {
+        throw new Error('clock unreachable');
+      }),
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/nicehash/test',
+      payload: { apiKey: 'k', apiSecret: 's', orgId: 'o' },
+    });
+    const body = res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/clock unreachable/);
   });
 });

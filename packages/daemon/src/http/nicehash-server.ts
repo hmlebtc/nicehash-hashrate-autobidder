@@ -16,15 +16,25 @@
 import fastifyCors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { createNiceHashClient, NiceHashApiError } from '@hashrate-autopilot/nicehash-client';
+
 import { NICEHASH_DASHBOARD_HTML } from './nicehash-dashboard-html.js';
+import {
+  maskSettings,
+  mergeSettings,
+  settingsFromEnv,
+  type NiceHashSettings,
+} from '../controller/nicehash/settings.js';
 import type { NiceHashStateStore } from '../controller/nicehash/state-store.js';
 import type { NiceHashControllerConfig, Proposal, RunMode } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult, TickOutcome } from '../controller/nicehash/tick.js';
 import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
+import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 
 export interface NiceHashHttpDeps {
   readonly store: NiceHashStateStore;
   readonly ledger: NiceHashOrdersRepo;
+  readonly settingsRepo: NiceHashSettingsRepo;
   readonly config: NiceHashControllerConfig;
   readonly buildNumber: number;
   /** Seconds between ticks - surfaced so the UI can show the next-tick countdown. */
@@ -117,7 +127,67 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
       return reply.code(400).send({ error: `mode must be one of ${RUN_MODES.join(', ')}` });
     }
     deps.store.setRunMode(mode as RunMode);
+    // Persist so the run mode survives a restart (best-effort).
+    const cur = await deps.settingsRepo.get();
+    if (cur) await deps.settingsRepo.put({ ...cur, runMode: mode as RunMode });
     return { run_mode: deps.store.getRunMode() };
+  });
+
+  const currentSettings = async (): Promise<NiceHashSettings> =>
+    (await deps.settingsRepo.get()) ?? settingsFromEnv();
+
+  // Read settings (secret masked).
+  app.get('/api/nicehash/config', async () => ({ config: maskSettings(await currentSettings()) }));
+
+  // Update settings. Most changes apply on the next app restart; run mode is
+  // applied live. Returns the masked, persisted settings.
+  app.post('/api/nicehash/config', async (req) => {
+    const patch = (req.body ?? {}) as Partial<Record<keyof NiceHashSettings, unknown>>;
+    const merged = mergeSettings(await currentSettings(), patch);
+    await deps.settingsRepo.put(merged);
+    deps.store.setRunMode(merged.runMode); // run mode is the one live-applied field
+    return { config: maskSettings(merged), note: 'Saved. Restart the app to apply connection/strategy changes; run mode applies immediately.' };
+  });
+
+  // Connectivity test: build a throwaway client from the saved settings + any
+  // posted overrides, then exercise the signed read path. Read-only.
+  app.post('/api/nicehash/test', async (req) => {
+    const patch = (req.body ?? {}) as Partial<Record<keyof NiceHashSettings, unknown>>;
+    const s = mergeSettings(await currentSettings(), patch);
+    if (!s.apiKey || !s.apiSecret || !s.orgId) {
+      return { ok: false, error: 'API key, secret, and organization id are all required.' };
+    }
+    const client = createNiceHashClient({
+      baseUrl: s.baseUrl,
+      credentials: { apiKey: s.apiKey, apiSecret: s.apiSecret, orgId: s.orgId },
+    });
+    try {
+      const clockOffsetMs = await client.syncTime();
+      const algo = await client.getAlgorithmSetting(s.algorithm);
+      let balance: string | null = null;
+      let balanceError: string | null = null;
+      try {
+        balance = (await client.getAccountBalance(s.balanceCurrency)).available;
+      } catch (err) {
+        balanceError = err instanceof Error ? err.message : String(err);
+      }
+      return {
+        ok: true,
+        clockOffsetMs,
+        algorithm: s.algorithm,
+        marketFactor: algo.marketFactor,
+        displayMarketFactor: algo.displayMarketFactor,
+        displayPriceFactor: algo.displayPriceFactor ?? null,
+        balance,
+        balanceCurrency: s.balanceCurrency,
+        balanceError,
+      };
+    } catch (err) {
+      if (err instanceof NiceHashApiError) {
+        return { ok: false, error: err.message, status: err.status };
+      }
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   return app;
