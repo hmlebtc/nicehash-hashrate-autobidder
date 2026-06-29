@@ -2,6 +2,70 @@
 
 ## 2026-06-29
 
+### `[UI]` Full dashboard: Status / History / Config, charts, tiles, P&L
+
+Rebuilt the dashboard into a tabbed, Hashrate-Autopilot-style operator UI
+(still a single self-contained page, no build step, no external/CDN deps):
+
+- **Status**: run-mode + "Run decision now" with a next-tick countdown,
+  hero cards (price / delivered / balance / anchor / market supply),
+  a time-range selector (3h…All), summary tiles (uptime, avg delivered,
+  avg price, avg hashprice, cost-vs-hashprice, samples), hand-rolled
+  canvas **hashrate** and **price** charts (the price chart overlays
+  create/edit/cancel event markers), the orders table, and a profit &
+  loss panel (balance, lifetime spent, spend/day, estimated income/net/
+  return from the hashprice oracle).
+- **History**: the order-mutation audit trail with action / order-id /
+  min-Δ-price filters.
+- **Config**: the expanded settings form (connection, strategy, cheap
+  mode, pool, daemon & data) plus the connectivity test.
+- Header **unit toggles**: speed TH/PH/EH and price sat/BTC, persisted
+  client-side.
+
+Gallery screenshots refreshed to the new UI.
+
+### `[Feature]` Dashboard data API: metrics, history, summary, run-now
+
+New HTTP endpoints backing the upcoming charts/tiles/History UI:
+`GET /api/nicehash/metrics?range=` (downsampled time series for the
+hashrate + price charts), `GET /api/nicehash/history` (order-event audit
+trail with action/order/date/Δ-price filters), `GET /api/nicehash/summary`
+(window averages, uptime, lifetime spend, current hashprice for the tiles
++ P&L), and `POST /api/nicehash/run-now` ("Run decision now" - a guarded
+out-of-band tick that can't overlap the loop). The order burn rate is now
+expressed in BTC/day via the speed-unit→price-unit (PH→EH) conversion.
+
+### `[Feature]` Network-hashprice oracle (estimate)
+
+Since NiceHash exposes no income data, the daemon now derives the SHA-256
+network hashprice (BTC/EH/day) from mempool.space - mainnet emission over
+network hashrate - to power the upcoming cost-vs-hashprice tile, the
+estimated profit/loss, and (optionally) the dynamic price cap. Cached with
+a 5-minute TTL, refreshed on a schedule, and resilient: a transient outage
+keeps the last good value. Opt-in via the `mempool` source; `none` (default)
+disables it. Recorded into the per-tick metrics each tick.
+
+### `[Feature]` Expanded strategy + daemon settings (parity)
+
+Surfaced the controller's full strategy surface through settings: minimum
+floor, cheap mode (enable / target / threshold), max premium over
+hashprice (dynamic price ceiling), and edit-price deadband - previously
+hardcoded. Added daemon controls: boot mode (always dry-run / resume last
+/ always live, with RESUME demoting PAUSED to DRY-RUN), hashprice oracle
+source, BTC/USD price source, and a configurable history retention window
+(replacing the fixed 30-day prune, now also re-run daily). All settable
+from env and persisted; the dashboard form gains these fields in a later
+phase.
+
+### `[Infra]` Persist per-tick metrics + order-event history
+
+Toward dashboard feature parity with Hashrate Autopilot: the daemon now
+records a per-tick metrics time series (`nicehash_tick_metrics`) and an
+order-mutation audit trail (`nicehash_order_events`) on every controller
+tick. These back the upcoming charts, summary tiles, profit & loss panel,
+and History page. Both are pruned to a 30-day window on boot. No
+user-visible UI yet.
+
 ### `[Fix]` Move host port off 3010 to avoid Hashrate Autopilot conflict
 
 The Umbrel manifest published the app on port 3010, the same host port as

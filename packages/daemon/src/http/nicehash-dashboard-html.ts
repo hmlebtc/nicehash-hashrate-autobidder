@@ -1,14 +1,21 @@
 /**
  * Self-contained NiceHash dashboard (no build step).
  *
- * A single HTML page (inline CSS + vanilla JS) served by the NiceHash HTTP
- * server at `/`. It polls `/api/nicehash/status` and renders the live control
- * state in NiceHash terms - order / escrow / BTC-per-EH-day pricing - with a
- * DRY-RUN / LIVE / PAUSED toggle wired to `POST /api/nicehash/run-mode`.
+ * A single HTML page (inline CSS + vanilla JS, hand-rolled canvas charts) served
+ * by the NiceHash HTTP server at `/`. Three tabs:
  *
- * This is a focused operator UI, not the full upstream charting dashboard
- * (that remains a larger port). Kept as a string constant so it works
- * identically under tsx and a dist build with no asset-copy step.
+ *   - Status  : run-mode + "Run decision now", summary tiles, hashrate + price
+ *               charts, our orders, profit & loss, and the next action.
+ *   - History : the order-mutation audit trail with action / order / Δ-price
+ *               filters.
+ *   - Config  : credentials, connection, strategy, cheap mode, pool, and
+ *               daemon/data settings, plus a connectivity test.
+ *
+ * Kept as a string constant so it works identically under tsx and a dist build
+ * with no asset-copy step and no external/CDN dependencies (Umbrel-friendly).
+ * Modelled on Hashrate Autopilot, adapted to NiceHash terms (BTC/EH/day prices,
+ * PH/s speeds, escrow/refill). Not the full upstream charting stack - a focused,
+ * dependency-free port.
  */
 
 export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
@@ -21,48 +28,62 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0e1116; color: #e6edf3; }
-  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #222; flex-wrap: wrap; }
-  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 22px; border-bottom: 1px solid #222; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
   .sub { color: #8b949e; font-size: 12px; }
   .grow { flex: 1; }
+  nav { display: flex; gap: 4px; }
+  nav button { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: #8b949e; cursor: pointer; }
+  nav button.active { color: #e6edf3; background: #21262d; border-color: #30363d; }
   .badge { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
   .mode-DRY_RUN { background: #1f6feb33; color: #58a6ff; }
   .mode-LIVE { background: #2ea04333; color: #3fb950; }
   .mode-PAUSED { background: #d2992233; color: #e3b341; }
-  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-  .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 16px; }
-  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; margin: 0 0 8px; }
-  .big { font-size: 22px; font-weight: 700; }
+  main { padding: 20px; max-width: 1180px; margin: 0 auto; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; margin: 0 0 6px; }
+  .big { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .muted { color: #8b949e; font-size: 12px; }
+  .pos { color: #3fb950; } .neg { color: #ff7b72; }
   .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; font-size: 13px; }
   th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
-  .controls button { font: inherit; font-weight: 600; padding: 7px 14px; margin-left: 8px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  .controls button.active { outline: 2px solid #58a6ff; }
-  .warn { background: #f8514922; border: 1px solid #f85149; color: #ff7b72; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  .controls button, .toggle button { font: inherit; font-weight: 600; padding: 6px 12px; margin-left: 6px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
+  .controls button.active, .toggle button.active { outline: 2px solid #58a6ff; }
+  .toggle button { margin-left: 0; padding: 4px 8px; font-size: 11px; }
+  .toggle { display: inline-flex; gap: 4px; align-items: center; }
+  .primary { background: #1f6feb !important; border-color: #1f6feb !important; }
+  .warn { background: #f8514922; border: 1px solid #f85149; color: #ff7b72; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
   .pill { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-  .ok { background: #2ea04333; color: #3fb950; }
-  .blocked { background: #6e768133; color: #8b949e; }
-  .failed { background: #f8514933; color: #ff7b72; }
-  .dry { background: #1f6feb33; color: #58a6ff; }
-  h2.section { font-size: 13px; color: #8b949e; margin: 28px 0 8px; text-transform: uppercase; letter-spacing: .06em; }
-  .cfgbtn { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  fieldset { border: 1px solid #21262d; border-radius: 10px; margin: 0 0 16px; padding: 12px 16px; }
+  .ok { background: #2ea04333; color: #3fb950; } .blocked { background: #6e768133; color: #8b949e; }
+  .failed { background: #f8514933; color: #ff7b72; } .dry { background: #1f6feb33; color: #58a6ff; }
+  h2.section { font-size: 13px; color: #8b949e; margin: 24px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .chartcard { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+  .chartcard .head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .chartcard h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; margin: 0; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #8b949e; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
+  .rangebar { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
+  .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid #30363d; background: #161b22; color: #8b949e; cursor: pointer; }
+  .rangebar button.active { background: #21262d; color: #e6edf3; outline: 1px solid #58a6ff; }
+  fieldset { border: 1px solid #21262d; border-radius: 10px; margin: 0 0 14px; padding: 10px 14px; }
   legend { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
-  .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 16px; }
+  .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 16px; }
   .formgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b949e; }
-  .formgrid input { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid #30363d; background: #0e1116; color: #e6edf3; }
-  .formgrid input:focus { outline: 2px solid #1f6feb; border-color: #1f6feb; }
-  .btnrow { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .formgrid label.chk { flex-direction: row; align-items: center; gap: 8px; }
+  .formgrid input, .formgrid select { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid #30363d; background: #0e1116; color: #e6edf3; }
+  .formgrid input:focus, .formgrid select:focus { outline: 2px solid #1f6feb; border-color: #1f6feb; }
+  .btnrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; }
   .btnrow button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  .btnrow button.primary { background: #1f6feb; border-color: #1f6feb; }
   .msg { font-size: 12px; color: #8b949e; }
-  #configSection { display: none; }
-  #configSection.open { display: block; }
   code { color: #79c0ff; }
-  footer { padding: 16px 24px; color: #586069; font-size: 11px; border-top: 1px solid #222; }
+  footer { padding: 14px 22px; color: #586069; font-size: 11px; border-top: 1px solid #222; }
   a { color: #58a6ff; }
 </style>
 </head>
@@ -72,48 +93,123 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <h1>NiceHash Hashrate Autobidder</h1>
     <div class="sub" id="sub">connecting…</div>
   </div>
+  <nav>
+    <button data-page="status" class="active">Status</button>
+    <button data-page="history">History</button>
+    <button data-page="config">Config</button>
+  </nav>
   <div class="grow"></div>
+  <div class="toggle" title="Speed unit">
+    <button data-speed="TH">TH</button><button data-speed="PH">PH</button><button data-speed="EH">EH</button>
+  </div>
+  <div class="toggle" title="Price denomination">
+    <button data-price="sat">sat</button><button data-price="BTC">BTC</button>
+  </div>
   <span class="badge" id="modeBadge">—</span>
   <div class="controls">
     <button data-mode="DRY_RUN">Dry-run</button>
     <button data-mode="PAUSED">Pause</button>
     <button data-mode="LIVE">Live</button>
   </div>
-  <button class="cfgbtn" id="cfgToggle">⚙ Config</button>
 </header>
 <main>
-  <div id="unknownWarn"></div>
-  <div class="grid">
-    <div class="card"><h2>Available balance</h2><div class="big" id="balance">—</div><div class="muted" id="balanceCur"></div></div>
-    <div class="card"><h2>Market anchor</h2><div class="big" id="anchor">—</div><div class="muted">BTC / EH / day · price to beat</div></div>
-    <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="thin"></div></div>
-    <div class="card"><h2>Strategy</h2>
-      <div class="row"><span class="muted">Algorithm</span><span id="algo">—</span></div>
-      <div class="row"><span class="muted">Market</span><span id="market">—</span></div>
-      <div class="row"><span class="muted">Target speed</span><span id="target">—</span></div>
-      <div class="row"><span class="muted">Overpay</span><span id="overpay">—</span></div>
-      <div class="row"><span class="muted">Max price</span><span id="maxprice">—</span></div>
+  <!-- ===================== STATUS ===================== -->
+  <section id="page-status" class="page active">
+    <div id="unknownWarn"></div>
+    <div class="grid">
+      <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice">—</div><div class="muted" id="curPriceUnit"></div></div>
+      <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered">—</div><div class="muted" id="curDeliveredUnit"></div></div>
+      <div class="card"><h2>Available balance</h2><div class="big" id="balance">—</div><div class="muted">BTC</div></div>
+      <div class="card"><h2>Market anchor</h2><div class="big" id="anchor">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
+      <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
+      <div class="card"><h2>Next action</h2>
+        <div id="nextAction" class="muted">—</div>
+        <div class="btnrow" style="margin-bottom:0">
+          <button id="runNow" class="primary">Run decision now</button>
+          <span class="msg" id="nextTick"></span>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <h2 class="section">Our orders</h2>
-  <table>
-    <thead><tr><th>Order</th><th>Price (BTC/EH/day)</th><th>Limit (PH/s)</th><th>Delivered</th><th>Escrow left</th><th>Runway</th><th>Status</th></tr></thead>
-    <tbody id="orders"><tr><td colspan="7" class="muted">—</td></tr></tbody>
-  </table>
+    <div class="rangebar" id="rangebar">
+      <button data-range="3h">3h</button><button data-range="6h">6h</button>
+      <button data-range="12h">12h</button><button data-range="24h" class="active">24h</button>
+      <button data-range="1w">1w</button><button data-range="1m">1m</button>
+      <button data-range="1y">1y</button><button data-range="all">All</button>
+    </div>
 
-  <h2 class="section">Next action</h2>
-  <table>
-    <thead><tr><th>Proposal</th><th>Reason</th><th>Outcome</th></tr></thead>
-    <tbody id="actions"><tr><td colspan="3" class="muted">holding — no action</td></tr></tbody>
-  </table>
+    <div class="grid" id="tiles"></div>
 
-  <section id="configSection">
+    <div class="chartcard">
+      <div class="head"><h3>Hashrate</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:#f0883e"></i>delivered</span>
+          <span><i class="swatch" style="background:#58a6ff"></i>limit</span>
+          <span><i class="swatch" style="background:#3fb950"></i>target</span>
+          <span><i class="swatch" style="background:#8b949e"></i>floor</span>
+        </div>
+      </div>
+      <canvas id="hashChart"></canvas>
+    </div>
+
+    <div class="chartcard">
+      <div class="head"><h3>Price</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:#f0883e"></i>our price</span>
+          <span><i class="swatch" style="background:#a371f7"></i>anchor</span>
+          <span><i class="swatch" style="background:#e3b341"></i>hashprice</span>
+          <span><i class="swatch" style="background:#3fb950;border-radius:50%;width:6px;height:6px"></i>create</span>
+          <span><i class="swatch" style="background:#e3b341;border-radius:50%;width:6px;height:6px"></i>edit</span>
+          <span><i class="swatch" style="background:#ff7b72;border-radius:50%;width:6px;height:6px"></i>cancel</span>
+        </div>
+      </div>
+      <canvas id="priceChart"></canvas>
+    </div>
+
+    <h2 class="section">Our orders</h2>
+    <table>
+      <thead><tr><th>Order</th><th>Price</th><th>Limit</th><th>Delivered</th><th>Escrow left</th><th>Runway</th><th>Status</th></tr></thead>
+      <tbody id="orders"><tr><td colspan="7" class="muted">—</td></tr></tbody>
+    </table>
+
+    <h2 class="section">Profit &amp; loss <span class="muted" style="text-transform:none">(income/net are estimates from the hashprice oracle)</span></h2>
+    <div class="grid" id="pnl"></div>
+
+    <h2 class="section">Next action detail</h2>
+    <table>
+      <thead><tr><th>Proposal</th><th>Reason</th><th>Outcome</th></tr></thead>
+      <tbody id="actions"><tr><td colspan="3" class="muted">holding — no action</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ===================== HISTORY ===================== -->
+  <section id="page-history" class="page">
+    <h2 class="section">Order history</h2>
+    <div class="btnrow">
+      <span class="toggle" id="histActions">
+        <button data-act="CREATE" class="active">create</button>
+        <button data-act="EDIT_PRICE" class="active">price</button>
+        <button data-act="EDIT_LIMIT" class="active">limit</button>
+        <button data-act="REFILL" class="active">refill</button>
+        <button data-act="CANCEL" class="active">cancel</button>
+      </span>
+      <input id="histOrder" placeholder="order id contains…" style="font:inherit;padding:6px 9px;border-radius:7px;border:1px solid #30363d;background:#0e1116;color:#e6edf3" />
+      <label class="muted">min Δ price <input id="histMinDelta" type="number" step="any" value="0" style="width:110px;font:inherit;padding:6px 9px;border-radius:7px;border:1px solid #30363d;background:#0e1116;color:#e6edf3" /></label>
+      <button id="histReload">Reload</button>
+      <span class="msg" id="histMsg"></span>
+    </div>
+    <table>
+      <thead><tr><th>When</th><th>Order</th><th>Action</th><th>Outcome</th><th>Price before</th><th>Price after</th><th>Δ</th><th>Reason</th></tr></thead>
+      <tbody id="histRows"><tr><td colspan="8" class="muted">—</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ===================== CONFIG ===================== -->
+  <section id="page-config" class="page">
     <h2 class="section">Configuration</h2>
-    <p class="muted">Credentials, connection and strategy. The secret is write-only — leave it as
-      the dots to keep the saved value, or type a new one to replace it. <b>Test connection</b> uses the
-      values currently in the form (read-only). <b>Save</b> persists them; connection/strategy changes take
-      effect after an app restart, the run mode applies immediately.</p>
+    <p class="muted">The secret is write-only — leave it as the dots to keep the saved value, or type a new one to replace it.
+      <b>Test connection</b> uses the values currently in the form (read-only). <b>Save</b> persists them; connection/strategy
+      changes take effect after an app restart, the run mode applies immediately.</p>
     <div id="configForm"></div>
     <div class="btnrow">
       <button id="cfgTest">Test connection</button>
@@ -124,14 +220,186 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   </section>
 </main>
 <footer>
-  <span id="build"></span> · auto-refreshes every 5s · DRY-RUN mutates nothing.
-  Not affiliated with NiceHash Ltd.
+  <span id="build"></span> · Status auto-refreshes · DRY-RUN mutates nothing. Not affiliated with NiceHash Ltd.
 </footer>
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  function fmt(n, d) { return (n === null || n === undefined) ? '—' : Number(n).toFixed(d === undefined ? 8 : d); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
+
+  // ---- units (client-side display only) ------------------------------------
+  var UI = { speed: localStorage.getItem('nh.speed') || 'PH', price: localStorage.getItem('nh.price') || 'BTC', range: localStorage.getItem('nh.range') || '24h' };
+  function spFactor() { return UI.speed === 'TH' ? 1000 : UI.speed === 'EH' ? 0.001 : 1; }
+  function cvSpeed(ph) { return (ph == null) ? null : ph * spFactor(); }
+  function cvPrice(btc) { return (btc == null) ? null : (UI.price === 'sat' ? btc * 1e8 : btc); }
+  function speedUnit() { return UI.speed + '/s'; }
+  function priceUnit() { return (UI.price === 'sat' ? 'sat' : 'BTC') + '/EH/day'; }
+  function fmtSpeed(ph, d) { var v = cvSpeed(ph); return v == null ? '—' : v.toFixed(d == null ? 2 : d); }
+  function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
+  function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
+
+  // ---- routing -------------------------------------------------------------
+  function showPage(p) {
+    Array.prototype.forEach.call(document.querySelectorAll('.page'), function (el) { el.classList.toggle('active', el.id === 'page-' + p); });
+    Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('active', b.getAttribute('data-page') === p); });
+    if (p === 'history') loadHistory();
+    if (p === 'config' && !configLoaded) loadConfig();
+    if (p === 'status') { loadMetrics(); loadSummary(); }
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) {
+    b.addEventListener('click', function () { showPage(b.getAttribute('data-page')); });
+  });
+
+  // ---- unit toggles --------------------------------------------------------
+  function syncToggles() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (b) { b.classList.toggle('active', b.getAttribute('data-speed') === UI.speed); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) { b.classList.toggle('active', b.getAttribute('data-price') === UI.price); });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (b) {
+    b.addEventListener('click', function () { UI.speed = b.getAttribute('data-speed'); localStorage.setItem('nh.speed', UI.speed); syncToggles(); renderAll(); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) {
+    b.addEventListener('click', function () { UI.price = b.getAttribute('data-price'); localStorage.setItem('nh.price', UI.price); syncToggles(); renderAll(); });
+  });
+
+  // ---- run mode ------------------------------------------------------------
+  async function setMode(mode) {
+    if (mode === 'LIVE' && !confirm('Switch to LIVE? The bidder will place and manage REAL orders.')) return;
+    await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
+    refreshStatus();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
+    b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
+  });
+  $('runNow').addEventListener('click', async function () {
+    $('nextTick').textContent = 'running…';
+    try { var r = await fetch('/api/nicehash/run-now', { method: 'POST' }); var j = await r.json();
+      $('nextTick').textContent = j.ok ? 'tick done' : ('failed: ' + (j.error || '?')); }
+    catch (e) { $('nextTick').textContent = 'failed'; }
+    refreshStatus(); loadMetrics(); loadSummary();
+  });
+
+  // ---- charts (hand-rolled canvas) ----------------------------------------
+  function drawChart(canvas, series, opts) {
+    opts = opts || {};
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth || 600, cssH = canvas.clientHeight || 220;
+    canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+    var ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    var padL = 60, padR = 12, padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
+    var xs = [], ys = [];
+    series.forEach(function (s) { s.points.forEach(function (p) { if (p.y != null && isFinite(p.y)) { xs.push(p.x); ys.push(p.y); } }); });
+    ctx.font = '10px system-ui';
+    if (!xs.length) { ctx.fillStyle = '#586069'; ctx.fillText('no data yet', padL, padT + h / 2); return; }
+    var xmin = Math.min.apply(null, xs), xmax = Math.max.apply(null, xs);
+    var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
+    if (opts.yMinZero && ymin > 0) ymin = 0;
+    if (ymax === ymin) ymax = ymin + (ymin === 0 ? 1 : Math.abs(ymin) * 0.1);
+    var p = (ymax - ymin) * 0.08; ymin -= p; ymax += p;
+    if (opts.yMinZero && ymin < 0) ymin = 0;
+    function X(x) { return padL + (xmax === xmin ? 0 : (x - xmin) / (xmax - xmin)) * w; }
+    function Y(y) { return padT + h - (y - ymin) / (ymax - ymin) * h; }
+    ctx.strokeStyle = '#21262d'; ctx.fillStyle = '#8b949e'; ctx.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      var yy = padT + h * (i / 4), val = ymax - (ymax - ymin) * (i / 4);
+      ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + w, yy); ctx.stroke();
+      ctx.fillText(opts.fmtY ? opts.fmtY(val) : val.toFixed(2), 4, yy + 3);
+    }
+    ctx.fillStyle = '#8b949e';
+    [xmin, (xmin + xmax) / 2, xmax].forEach(function (t, idx) {
+      var lx = X(t); ctx.textAlign = idx === 0 ? 'left' : idx === 2 ? 'right' : 'center';
+      ctx.fillText(new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), lx, padT + h + 14);
+    });
+    ctx.textAlign = 'left';
+    series.forEach(function (s) {
+      ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6;
+      ctx.setLineDash(s.dashed ? [4, 3] : []);
+      ctx.beginPath(); var started = false;
+      s.points.forEach(function (pt) {
+        if (pt.y == null || !isFinite(pt.y)) { started = false; return; }
+        var px = X(pt.x), py = Y(pt.y);
+        if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    (opts.markers || []).forEach(function (m) {
+      if (m.x < xmin || m.x > xmax) return;
+      ctx.fillStyle = m.color; ctx.beginPath(); ctx.arc(X(m.x), padT + h - 3, 3, 0, 6.283); ctx.fill();
+    });
+  }
+
+  // ---- state caches --------------------------------------------------------
+  var lastStatus = null, lastMetrics = [], lastSummary = null, lastEventsForChart = [];
+
+  function setRange(r) {
+    UI.range = r; localStorage.setItem('nh.range', r);
+    Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === r); });
+    loadMetrics(); loadSummary();
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) {
+    b.addEventListener('click', function () { setRange(b.getAttribute('data-range')); });
+  });
+
+  function renderCharts() {
+    var m = lastMetrics;
+    var hash = [
+      { color: '#f0883e', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.accepted_speed_units) }; }) },
+      { color: '#58a6ff', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
+      { color: '#3fb950', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
+      { color: '#8b949e', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
+    ];
+    drawChart($('hashChart'), hash, { yMinZero: true, fmtY: function (v) { return v.toFixed(v < 10 ? 2 : 0); } });
+
+    var markerColor = { CREATE: '#3fb950', EDIT_PRICE: '#e3b341', EDIT_LIMIT: '#58a6ff', REFILL: '#a371f7', CANCEL: '#ff7b72' };
+    var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#8b949e' }; });
+    var price = [
+      { color: '#f0883e', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
+      { color: '#a371f7', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
+      { color: '#e3b341', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) }
+    ];
+    drawChart($('priceChart'), price, { markers: markers, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
+  }
+
+  function tile(label, value, sub, cls) {
+    return '<div class="card"><h2>' + esc(label) + '</h2><div class="big ' + (cls || '') + '">' + value + '</div><div class="muted">' + esc(sub || '') + '</div></div>';
+  }
+
+  function renderTiles() {
+    var s = lastSummary && lastSummary.summary;
+    if (!s) { $('tiles').innerHTML = ''; return; }
+    var costVs = (s.avg_our_price_btc != null && s.avg_hashprice_btc_per_unit_day != null) ? (s.avg_our_price_btc - s.avg_hashprice_btc_per_unit_day) : null;
+    var html = '';
+    html += tile('Uptime', s.uptime_pct == null ? '—' : s.uptime_pct.toFixed(1), '%');
+    html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
+    html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
+    html += tile('Avg hashprice', fmtPrice(s.avg_hashprice_btc_per_unit_day, 6), priceUnit());
+    html += tile('Cost vs hashprice', costVs == null ? '—' : (costVs > 0 ? '+' : '') + fmtPrice(costVs, 6), costVs == null ? '' : (costVs <= 0 ? 'below hashprice' : 'above hashprice'), costVs == null ? '' : (costVs <= 0 ? 'pos' : 'neg'));
+    html += tile('Samples', String(s.samples || 0), 'ticks in range');
+    $('tiles').innerHTML = html;
+  }
+
+  function renderPnl() {
+    var sum = lastSummary; var s = sum && sum.summary;
+    var spend = s ? s.avg_spend_rate_btc_day : null;
+    var price = s ? s.avg_our_price_btc : null;
+    var hp = sum ? sum.hashprice_now : (s ? s.avg_hashprice_btc_per_unit_day : null);
+    var avgHp = s ? s.avg_hashprice_btc_per_unit_day : null;
+    var income = (spend != null && price > 0 && avgHp != null) ? spend * (avgHp / price) : null;
+    var net = (income != null && spend != null) ? income - spend : null;
+    var ret = (net != null && spend > 0) ? (net / spend * 100) : null;
+    var bal = sum && sum.current ? sum.current.balance_btc : (lastStatus ? lastStatus.balance_btc : null);
+    var html = '';
+    html += tile('Balance', fmtBtc(bal), 'BTC');
+    html += tile('Lifetime spent', fmtBtc(sum ? sum.lifetime_spent_btc : null), 'BTC');
+    html += tile('Spend / day', fmtBtc(spend, 6), 'BTC/day');
+    html += tile('Est. income / day', fmtBtc(income, 6), 'BTC/day');
+    html += tile('Est. net / day', net == null ? '—' : (net >= 0 ? '+' : '') + fmtBtc(net, 6), 'BTC/day', net == null ? '' : (net >= 0 ? 'pos' : 'neg'));
+    html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / spend', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
+    $('pnl').innerHTML = html;
+  }
+
   function runwayHours(o) {
     var rate = (o.price_btc || 0) * ((o.accepted_speed_units > 0 ? o.accepted_speed_units : o.limit_units) || 0);
     if (!(o.available_amount_btc > 0)) return '0h';
@@ -139,52 +407,42 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
   }
 
-  async function setMode(mode) {
-    if (mode === 'LIVE' && !confirm('Switch to LIVE? The bidder will place and manage REAL orders.')) return;
-    await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
-    refresh();
-  }
-  Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
-    b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
-  });
-
-  function render(s) {
-    var badge = $('modeBadge');
-    badge.textContent = s.run_mode;
-    badge.className = 'badge mode-' + s.run_mode;
-    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
-      b.classList.toggle('active', b.getAttribute('data-mode') === s.run_mode);
-    });
+  function renderStatus() {
+    var s = lastStatus; if (!s) return;
+    var badge = $('modeBadge'); badge.textContent = s.run_mode; badge.className = 'badge mode-' + s.run_mode;
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.classList.toggle('active', b.getAttribute('data-mode') === s.run_mode); });
     $('sub').textContent = s.tick_at ? ('last tick ' + new Date(s.tick_at).toLocaleTimeString()) : 'no tick yet';
     $('build').textContent = 'build ' + s.build;
 
-    $('balance').textContent = fmt(s.balance_btc, 8);
-    $('balanceCur').textContent = 'BTC';
-    $('anchor').textContent = s.market ? fmt(s.market.anchor_price_btc) : '—';
-    $('supply').textContent = s.market ? fmt(s.market.total_speed_units, 2) + ' PH/s' : '—';
-    $('thin').textContent = s.market && s.market.thin ? 'thin market' : '';
-
-    var c = s.config || {};
-    $('algo').textContent = c.algorithm || '—';
-    $('market').textContent = c.market || '—';
-    $('target').textContent = (c.target_speed_units != null ? c.target_speed_units : '—') + ' PH/s';
-    $('overpay').textContent = fmt(c.overpay_btc_per_unit_day);
-    $('maxprice').textContent = fmt(c.max_price_btc_per_unit_day);
-
     var orders = s.owned_orders || [];
+    var primary = orders[0];
+    $('curPrice').textContent = primary ? fmtPrice(primary.price_btc) : (s.market ? '—' : '—');
+    $('curPriceUnit').textContent = priceUnit();
+    $('curDelivered').textContent = fmtSpeed(orders.reduce(function (a, o) { return a + (o.accepted_speed_units || 0); }, 0));
+    $('curDeliveredUnit').textContent = speedUnit();
+    $('balance').textContent = fmtBtc(s.balance_btc);
+    $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
+    $('anchorUnit').textContent = priceUnit() + ' · price to beat';
+    $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
+    $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
+
+    var props = s.proposals || [];
+    $('nextAction').innerHTML = props.length ? props.map(function (p) { return esc(p.kind) + ' — ' + esc(p.reason); }).join('<br>') : 'holding — no action';
+    if (s.tick_at && s.tick_seconds) {
+      var nextAt = s.tick_at + s.tick_seconds * 1000, secs = Math.max(0, Math.round((nextAt - Date.now()) / 1000));
+      $('nextTick').textContent = 'next tick in ~' + secs + 's';
+    }
+
     $('orders').innerHTML = orders.length ? orders.map(function (o) {
-      return '<tr><td><code>' + esc((o.order_id || '').slice(0, 8)) + '</code></td><td>' + fmt(o.price_btc) +
-        '</td><td>' + fmt(o.limit_units, 2) + '</td><td>' + fmt(o.accepted_speed_units, 2) + ' PH/s</td><td>' +
-        fmt(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
+      return '<tr><td><code>' + esc((o.order_id || '').slice(0, 8)) + '</code></td><td>' + fmtPrice(o.price_btc) +
+        '</td><td>' + fmtSpeed(o.limit_units) + ' ' + speedUnit() + '</td><td>' + fmtSpeed(o.accepted_speed_units) + ' ' + speedUnit() +
+        '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="muted">no order — ' + (s.market ? 'holding' : 'market unavailable') + '</td></tr>';
 
-    var warn = '';
-    if ((s.unknown_orders || []).length) {
-      warn = '⚠️ ' + s.unknown_orders.length + ' unknown order(s) detected on the account — the controller PAUSES until resolved.';
-    }
+    var warn = (s.unknown_orders || []).length ? ('⚠️ ' + s.unknown_orders.length + ' unknown order(s) on the account — the controller PAUSES until resolved.') : '';
     $('unknownWarn').innerHTML = warn ? '<div class="warn">' + esc(warn) + '</div>' : '';
 
-    var props = s.proposals || [], outs = s.outcomes || [];
+    var outs = s.outcomes || [];
     $('actions').innerHTML = props.length ? props.map(function (p, i) {
       var o = outs[i] || {};
       var cls = o.outcome === 'EXECUTED' ? 'ok' : o.outcome === 'FAILED' ? 'failed' : o.outcome === 'DRY_RUN' ? 'dry' : 'blocked';
@@ -193,125 +451,149 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     }).join('') : '<tr><td colspan="3" class="muted">holding — no action</td></tr>';
   }
 
-  async function refresh() {
-    try {
-      var r = await fetch('/api/nicehash/status');
-      render(await r.json());
-    } catch (e) {
-      $('sub').textContent = 'connection error';
-    }
+  function renderAll() { renderStatus(); renderTiles(); renderPnl(); renderCharts(); }
+
+  // ---- fetchers ------------------------------------------------------------
+  async function refreshStatus() {
+    try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json(); renderStatus(); renderPnl(); }
+    catch (e) { $('sub').textContent = 'connection error'; }
+  }
+  async function loadMetrics() {
+    try { var r = await fetch('/api/nicehash/metrics?range=' + encodeURIComponent(UI.range)); lastMetrics = (await r.json()).rows || []; }
+    catch (e) { lastMetrics = []; }
+    // markers for the price chart come from history within roughly the range
+    try { var h = await fetch('/api/nicehash/history?limit=500'); lastEventsForChart = (await h.json()).events || []; } catch (e) { lastEventsForChart = []; }
+    renderCharts();
+  }
+  async function loadSummary() {
+    try { var r = await fetch('/api/nicehash/summary?range=' + encodeURIComponent(UI.range)); lastSummary = await r.json(); renderTiles(); renderPnl(); }
+    catch (e) { lastSummary = null; }
   }
 
-  // ---- Configuration screen -------------------------------------------------
-  var FIELDS = [
-    { group: 'Connection', items: [
-      ['apiKey', 'API key', 'text'],
-      ['apiSecret', 'API secret', 'password'],
-      ['orgId', 'Organization ID', 'text'],
-      ['baseUrl', 'Base URL', 'text']
-    ]},
+  // ---- history page --------------------------------------------------------
+  function deltaCell(e) {
+    if (e.price_before == null || e.price_after == null) return '—';
+    var d = e.price_after - e.price_before; return (d > 0 ? '+' : '') + fmtPrice(d, 6);
+  }
+  async function loadHistory() {
+    $('histMsg').textContent = 'loading…';
+    var acts = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#histActions button.active'), function (b) { acts.push(b.getAttribute('data-act')); });
+    var qs = 'limit=500';
+    if (acts.length) qs += '&action=' + acts.join(',');
+    var order = $('histOrder').value.trim(); if (order) qs += '&order=' + encodeURIComponent(order);
+    var md = parseFloat($('histMinDelta').value); if (md > 0) qs += '&minDelta=' + md;
+    try {
+      var r = await fetch('/api/nicehash/history?' + qs); var rows = (await r.json()).events || [];
+      $('histRows').innerHTML = rows.length ? rows.map(function (e) {
+        var oc = e.outcome === 'EXECUTED' ? 'ok' : e.outcome === 'FAILED' ? 'failed' : 'dry';
+        return '<tr><td>' + new Date(e.ts).toLocaleString() + '</td><td><code>' + esc((e.order_id || '').slice(0, 8)) + '</code></td><td>' +
+          esc(e.action) + '</td><td><span class="pill ' + oc + '">' + esc(e.outcome) + '</span></td><td>' + fmtPrice(e.price_before, 6) +
+          '</td><td>' + fmtPrice(e.price_after, 6) + '</td><td>' + deltaCell(e) + '</td><td class="muted">' + esc(e.reason || '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="8" class="muted">no events match the filter</td></tr>';
+      $('histMsg').textContent = rows.length + ' event(s)';
+    } catch (e) { $('histMsg').textContent = 'failed to load history'; }
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#histActions button'), function (b) {
+    b.addEventListener('click', function () { b.classList.toggle('active'); loadHistory(); });
+  });
+  $('histReload').addEventListener('click', loadHistory);
+  $('histOrder').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadHistory(); });
+
+  // ---- config page ---------------------------------------------------------
+  var CFG = [
+    { group: 'Connection', items: [['apiKey', 'API key', 'text'], ['apiSecret', 'API secret', 'password'], ['orgId', 'Organization ID', 'text'], ['baseUrl', 'Base URL', 'text']] },
     { group: 'Strategy', items: [
-      ['algorithm', 'Algorithm', 'text'],
-      ['market', 'Market', 'text'],
-      ['priceCurrency', 'Order-book currency', 'text'],
-      ['balanceCurrency', 'Balance currency', 'text'],
-      ['tickSeconds', 'Tick seconds', 'number'],
-      ['targetSpeedUnits', 'Target speed (PH/s)', 'number'],
+      ['algorithm', 'Algorithm', 'text'], ['market', 'Market', 'text'],
+      ['priceCurrency', 'Order-book currency', 'text'], ['balanceCurrency', 'Balance currency', 'text'],
+      ['tickSeconds', 'Tick seconds', 'number'], ['targetSpeedUnits', 'Target speed (PH/s)', 'number'],
+      ['minimumFloorUnits', 'Minimum floor (PH/s)', 'number'],
       ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number'],
       ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number'],
-      ['orderBudgetBtc', 'Order budget (BTC)', 'number'],
-      ['refillAmountBtc', 'Refill amount (BTC)', 'number'],
-      ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number']
-    ]},
-    { group: 'Pool', items: [
-      ['poolHost', 'Pool host', 'text'],
-      ['poolPort', 'Pool port', 'number'],
-      ['poolUser', 'Pool user', 'text'],
-      ['poolPassword', 'Pool password', 'text']
-    ]}
+      ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number'],
+      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number'],
+      ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number'],
+      ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number'],
+      ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number'] ] },
+    { group: 'Cheap mode', items: [
+      ['cheapModeEnabled', 'Enable cheap mode', 'checkbox'],
+      ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number'],
+      ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number'] ] },
+    { group: 'Pool', items: [['poolHost', 'Pool host', 'text'], ['poolPort', 'Pool port', 'number'], ['poolUser', 'Pool user', 'text'], ['poolPassword', 'Pool password', 'text']] },
+    { group: 'Daemon & data', items: [
+      ['bootMode', 'Boot mode', 'select:DRY_RUN,RESUME,LIVE'],
+      ['hashpriceSource', 'Hashprice source', 'select:none,mempool'],
+      ['priceSource', 'BTC price source', 'text'],
+      ['retentionDays', 'History retention (days)', 'number'] ] }
   ];
-
   function buildConfigForm() {
     var html = '';
-    FIELDS.forEach(function (g) {
+    CFG.forEach(function (g) {
       html += '<fieldset><legend>' + esc(g.group) + '</legend><div class="formgrid">';
       g.items.forEach(function (it) {
-        var step = it[2] === 'number' ? ' step="any"' : '';
-        var auto = it[2] === 'password' ? ' autocomplete="off"' : '';
-        html += '<label>' + esc(it[1]) + '<input id="cfg_' + it[0] + '" type="' + it[2] + '"' + step + auto + ' /></label>';
+        var id = 'cfg_' + it[0], type = it[2];
+        if (type === 'checkbox') {
+          html += '<label class="chk"><input id="' + id + '" type="checkbox" />' + esc(it[1]) + '</label>';
+        } else if (type.indexOf('select:') === 0) {
+          var opts = type.slice(7).split(',').map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
+          html += '<label>' + esc(it[1]) + '<select id="' + id + '">' + opts + '</select></label>';
+        } else {
+          var extra = type === 'number' ? ' step="any"' : type === 'password' ? ' autocomplete="off"' : '';
+          html += '<label>' + esc(it[1]) + '<input id="' + id + '" type="' + type + '"' + extra + ' /></label>';
+        }
       });
       html += '</div></fieldset>';
     });
     $('configForm').innerHTML = html;
   }
-
   function fillConfig(cfg) {
-    FIELDS.forEach(function (g) { g.items.forEach(function (it) {
-      var el = $('cfg_' + it[0]);
-      if (el) el.value = (cfg[it[0]] === null || cfg[it[0]] === undefined) ? '' : cfg[it[0]];
+    CFG.forEach(function (g) { g.items.forEach(function (it) {
+      var el = $('cfg_' + it[0]); if (!el) return;
+      if (it[2] === 'checkbox') el.checked = !!cfg[it[0]];
+      else el.value = (cfg[it[0]] === null || cfg[it[0]] === undefined) ? '' : cfg[it[0]];
     }); });
   }
-
   function collectConfig() {
     var out = {};
-    FIELDS.forEach(function (g) { g.items.forEach(function (it) {
-      var el = $('cfg_' + it[0]);
-      if (el) out[it[0]] = el.value;
+    CFG.forEach(function (g) { g.items.forEach(function (it) {
+      var el = $('cfg_' + it[0]); if (!el) return;
+      out[it[0]] = it[2] === 'checkbox' ? el.checked : el.value;
     }); });
     return out;
   }
-
   var configLoaded = false;
   async function loadConfig() {
-    try {
-      var r = await fetch('/api/nicehash/config');
-      var j = await r.json();
-      fillConfig(j.config || {});
-      configLoaded = true;
-    } catch (e) { $('cfgMsg').textContent = 'failed to load config'; }
+    try { var r = await fetch('/api/nicehash/config'); fillConfig((await r.json()).config || {}); configLoaded = true; }
+    catch (e) { $('cfgMsg').textContent = 'failed to load config'; }
   }
-
   async function saveConfig() {
     $('cfgMsg').textContent = 'saving…';
-    try {
-      var r = await fetch('/api/nicehash/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
-      var j = await r.json();
-      fillConfig(j.config || {});
-      $('cfgMsg').textContent = j.note || 'saved';
-      refresh();
-    } catch (e) { $('cfgMsg').textContent = 'save failed'; }
+    try { var r = await fetch('/api/nicehash/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
+      var j = await r.json(); fillConfig(j.config || {}); $('cfgMsg').textContent = j.note || 'saved'; refreshStatus(); }
+    catch (e) { $('cfgMsg').textContent = 'save failed'; }
   }
-
   async function testConfig() {
     $('testMsg').innerHTML = 'testing…';
     try {
       var r = await fetch('/api/nicehash/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
       var j = await r.json();
       if (j.ok) {
-        var bal = (j.balance === null || j.balance === undefined)
-          ? ('— (' + esc(j.balanceError || 'n/a') + ')')
-          : (esc(j.balance) + ' ' + esc(j.balanceCurrency));
-        $('testMsg').innerHTML = '<span class="pill ok">OK</span> clock offset ' + esc(j.clockOffsetMs) +
-          'ms · ' + esc(j.algorithm) + ' marketFactor ' + esc(j.marketFactor) + ' · balance ' + bal;
-      } else {
-        $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(j.error || 'unknown error') +
-          (j.status ? (' (HTTP ' + esc(j.status) + ')') : '');
-      }
+        var bal = (j.balance == null) ? ('— (' + esc(j.balanceError || 'n/a') + ')') : (esc(j.balance) + ' ' + esc(j.balanceCurrency));
+        $('testMsg').innerHTML = '<span class="pill ok">OK</span> clock offset ' + esc(j.clockOffsetMs) + 'ms · ' + esc(j.algorithm) + ' marketFactor ' + esc(j.marketFactor) + ' · balance ' + bal;
+      } else { $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(j.error || 'unknown error') + (j.status ? (' (HTTP ' + esc(j.status) + ')') : ''); }
     } catch (e) { $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(e.message || String(e)); }
   }
-
-  buildConfigForm();
-  $('cfgToggle').addEventListener('click', function () {
-    var sec = $('configSection');
-    sec.classList.toggle('open');
-    if (sec.classList.contains('open') && !configLoaded) loadConfig();
-    if (sec.classList.contains('open')) sec.scrollIntoView({ behavior: 'smooth' });
-  });
   $('cfgSave').addEventListener('click', saveConfig);
   $('cfgTest').addEventListener('click', testConfig);
 
-  refresh();
-  setInterval(refresh, 5000);
+  // ---- boot ----------------------------------------------------------------
+  buildConfigForm();
+  syncToggles();
+  Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === UI.range); });
+  refreshStatus(); loadMetrics(); loadSummary();
+  setInterval(refreshStatus, 5000);
+  setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); loadSummary(); } }, 30000);
+  window.addEventListener('resize', renderCharts);
 })();
 </script>
 </body>

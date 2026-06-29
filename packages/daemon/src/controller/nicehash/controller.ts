@@ -18,9 +18,18 @@
 import type { NiceHashClient } from '@hashrate-autopilot/nicehash-client';
 
 import type { NiceHashOrdersRepo } from '../../state/repos/nicehash_orders.js';
+import type {
+  NiceHashMetricRow,
+  NiceHashMetricsRepo,
+} from '../../state/repos/nicehash_tick_metrics.js';
+import type {
+  NiceHashEventsRepo,
+  NiceHashOrderEventInput,
+} from '../../state/repos/nicehash_order_events.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
 import { tick as runTick, type NiceHashTickResult, type TickOutcome } from './tick.js';
-import type { NiceHashControllerConfig, RunMode } from './types.js';
+import { isActionableOrder, type NiceHashState, type RunMode } from './types.js';
+import type { NiceHashControllerConfig } from './types.js';
 
 export interface NiceHashControllerDeps {
   readonly service: NiceHashService;
@@ -35,6 +44,18 @@ export interface NiceHashControllerDeps {
   readonly priceDecreaseCooldownMs?: number;
   readonly orderType?: string;
   readonly now?: () => number;
+  /** Optional time-series sink: one row recorded per tick (charts/tiles/P&L). */
+  readonly metrics?: NiceHashMetricsRepo;
+  /** Optional audit sink: one row per attempted order mutation (History page). */
+  readonly events?: NiceHashEventsRepo;
+  /** Configured minimum floor (display units) - recorded into metrics. */
+  readonly floorUnits?: number;
+  /**
+   * Conversion from a speed-display unit (e.g. PH) to a price-display unit
+   * (e.g. EH): marketFactor / priceFactor. Used to express the burn rate
+   * (price x delivered) in BTC/day. Defaults to 1 (no conversion).
+   */
+  readonly speedToPriceUnit?: number;
 }
 
 export class NiceHashController {
@@ -42,6 +63,7 @@ export class NiceHashController {
 
   async tick(): Promise<NiceHashTickResult> {
     const now = this.deps.now ?? Date.now;
+    const hashprice = this.deps.hashprice?.() ?? null;
     const [knownOrderIds, lastPriceDecreaseById] = await Promise.all([
       this.deps.ledger.getIds(),
       this.deps.ledger.lastPriceDecreaseMap(),
@@ -56,7 +78,7 @@ export class NiceHashController {
       knownOrderIds,
       lastPriceDecreaseById,
       runMode: this.deps.runMode(),
-      hashprice: this.deps.hashprice?.() ?? null,
+      hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
       ...(this.deps.priceDecreaseCooldownMs !== undefined
         ? { priceDecreaseCooldownMs: this.deps.priceDecreaseCooldownMs }
@@ -76,6 +98,35 @@ export class NiceHashController {
         payed_amount_btc: o.payed_amount_btc,
       })),
     );
+
+    // Record the per-tick metrics row + any order-mutation events. Best-effort:
+    // a persistence hiccup must not break the control loop.
+    if (this.deps.metrics) {
+      try {
+        await this.deps.metrics.record(
+          buildMetricsRow(
+            result.state,
+            hashprice,
+            this.deps.floorUnits ?? null,
+            this.deps.speedToPriceUnit ?? 1,
+          ),
+        );
+      } catch {
+        /* ignore - metrics are non-critical */
+      }
+    }
+    if (this.deps.events) {
+      for (const outcome of result.outcomes) {
+        const ev = toOrderEvent(outcome, result.state);
+        if (ev) {
+          try {
+            await this.deps.events.record(ev);
+          } catch {
+            /* ignore - history is non-critical */
+          }
+        }
+      }
+    }
 
     return result;
   }
@@ -110,5 +161,105 @@ export class NiceHashController {
       case 'PAUSE':
         return; // picked up by reconcileFromApi / no ledger effect
     }
+  }
+}
+
+function sum<T>(xs: readonly T[], f: (x: T) => number): number {
+  let total = 0;
+  for (const x of xs) total += f(x) || 0;
+  return total;
+}
+
+/** Build the per-tick metrics row from the observed state. */
+function buildMetricsRow(
+  state: NiceHashState,
+  hashprice: number | null,
+  floorUnits: number | null,
+  speedToPriceUnit: number,
+): NiceHashMetricRow {
+  const owned = state.owned_orders;
+  const primary = owned.find((o) => isActionableOrder(o)) ?? owned[0];
+  return {
+    ts: state.tick_at,
+    run_mode: state.run_mode,
+    api_ok: state.market ? 1 : 0,
+    balance_btc: state.balance_btc,
+    anchor_price_btc: state.market?.anchor_price_btc ?? null,
+    our_price_btc: primary?.price_btc ?? null,
+    total_speed_units: state.market?.total_speed_units ?? null,
+    accepted_speed_units: sum(owned, (o) => o.accepted_speed_units),
+    limit_units: sum(owned, (o) => o.limit_units),
+    target_units: state.config.target_speed_units,
+    floor_units: floorUnits,
+    available_amount_btc: sum(owned, (o) => o.available_amount_btc),
+    // Burn rate in BTC/day = price (BTC per price-unit/day) x delivered speed
+    // converted from the speed unit (PH) to the price unit (EH).
+    spend_rate_btc_day: sum(owned, (o) => o.price_btc * o.accepted_speed_units) * speedToPriceUnit,
+    hashprice_btc_per_unit_day: hashprice,
+    owned_count: owned.length,
+    unknown_count: state.unknown_orders.length,
+  };
+}
+
+/**
+ * Map a tick outcome to a History event row, or null when it should not be
+ * recorded.
+ *
+ * History records only *real* order actions: EXECUTED and FAILED (LIVE).
+ * DRY_RUN/PAUSED proposals are BLOCKED by the gate before they reach the
+ * marketplace and would otherwise re-log the same "would create" every tick -
+ * dry-run intent is surfaced in the live "Next action" panel instead. PAUSE is
+ * a run-mode transition, not an order mutation.
+ */
+function toOrderEvent(outcome: TickOutcome, state: NiceHashState): NiceHashOrderEventInput | null {
+  if (outcome.outcome !== 'EXECUTED' && outcome.outcome !== 'FAILED') return null;
+  const p = outcome.proposal;
+  if (p.kind === 'PAUSE') return null;
+
+  const base = {
+    ts: state.tick_at,
+    run_mode: state.run_mode,
+    outcome: outcome.outcome,
+    anchor_price_btc: state.market?.anchor_price_btc ?? null,
+    reason: p.reason,
+    detail: outcome.outcome === 'FAILED' ? outcome.error : outcome.note,
+    order_id: null as string | null,
+    price_before: null as number | null,
+    price_after: null as number | null,
+    limit_before: null as number | null,
+    limit_after: null as number | null,
+    amount_btc: null as number | null,
+  };
+
+  switch (p.kind) {
+    case 'CREATE_ORDER':
+      return {
+        ...base,
+        action: 'CREATE',
+        order_id: outcome.outcome === 'EXECUTED' ? (outcome.orderId ?? null) : null,
+        price_after: p.price_btc,
+        limit_after: p.limit_units,
+        amount_btc: p.amount_btc,
+      };
+    case 'EDIT_PRICE':
+      return {
+        ...base,
+        action: 'EDIT_PRICE',
+        order_id: p.order_id,
+        price_before: p.old_price_btc,
+        price_after: p.new_price_btc,
+      };
+    case 'EDIT_LIMIT':
+      return {
+        ...base,
+        action: 'EDIT_LIMIT',
+        order_id: p.order_id,
+        limit_before: p.old_limit_units,
+        limit_after: p.new_limit_units,
+      };
+    case 'REFILL_ORDER':
+      return { ...base, action: 'REFILL', order_id: p.order_id, amount_btc: p.amount_btc };
+    case 'CANCEL_ORDER':
+      return { ...base, action: 'CANCEL', order_id: p.order_id };
   }
 }

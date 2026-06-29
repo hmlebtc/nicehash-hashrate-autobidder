@@ -30,6 +30,8 @@ import type { NiceHashControllerConfig, Proposal, RunMode } from '../controller/
 import type { NiceHashTickResult, TickOutcome } from '../controller/nicehash/tick.js';
 import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
 import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
+import type { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
+import type { NiceHashEventsRepo } from '../state/repos/nicehash_order_events.js';
 
 export interface NiceHashHttpDeps {
   readonly store: NiceHashStateStore;
@@ -39,9 +41,44 @@ export interface NiceHashHttpDeps {
   readonly buildNumber: number;
   /** Seconds between ticks - surfaced so the UI can show the next-tick countdown. */
   readonly tickSeconds: number;
+  /** Time-series + history sinks (charts, tiles, P&L, History page). */
+  readonly metrics?: NiceHashMetricsRepo;
+  readonly events?: NiceHashEventsRepo;
+  /** Latest network-hashprice estimate (BTC/EH/day), or null. */
+  readonly hashprice?: () => number | null;
+  /** Trigger an out-of-band controller tick (the "Run decision now" button). */
+  readonly runNow?: () => Promise<{ ok: boolean; error?: string }>;
 }
 
 const RUN_MODES: readonly RunMode[] = ['DRY_RUN', 'LIVE', 'PAUSED'];
+
+/** Chart/summary time-range windows. */
+const RANGE_MS: Record<string, number> = {
+  '3h': 3 * 3600_000,
+  '6h': 6 * 3600_000,
+  '12h': 12 * 3600_000,
+  '24h': 24 * 3600_000,
+  '1w': 7 * 24 * 3600_000,
+  '1m': 30 * 24 * 3600_000,
+  '1y': 365 * 24 * 3600_000,
+  all: Infinity,
+};
+
+function sinceForRange(range: string): number {
+  const ms = RANGE_MS[range] ?? RANGE_MS['24h']!;
+  return ms === Infinity ? 0 : Date.now() - ms;
+}
+
+/** Stride-downsample so a chart never receives more than ~maxPoints rows. */
+function downsample<T>(rows: readonly T[], maxPoints = 1500): T[] {
+  if (rows.length <= maxPoints) return [...rows];
+  const stride = Math.ceil(rows.length / maxPoints);
+  const out: T[] = [];
+  for (let i = 0; i < rows.length; i += stride) out.push(rows[i]!);
+  const last = rows[rows.length - 1]!;
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
 
 function proposalView(p: Proposal): { kind: string; reason: string } {
   return { kind: p.kind, reason: p.reason };
@@ -118,6 +155,64 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
   app.get('/api/nicehash/orders', async () => {
     const rows = await deps.ledger.list();
     return { orders: rows };
+  });
+
+  // Time series for the hashrate + price charts.
+  app.get('/api/nicehash/metrics', async (req) => {
+    const range = String((req.query as { range?: unknown })?.range ?? '24h');
+    if (!deps.metrics) return { range, rows: [] };
+    const rows = await deps.metrics.range(sinceForRange(range));
+    return { range, rows: downsample(rows) };
+  });
+
+  // Order-mutation audit trail (History page), with optional filters.
+  app.get('/api/nicehash/history', async (req) => {
+    if (!deps.events) return { events: [] };
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const actions = q.action
+      ? q.action.split(',').map((a) => a.trim().toUpperCase()).filter(Boolean)
+      : undefined;
+    const num = (v: string | undefined): number | undefined => {
+      if (v === undefined || v === '') return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const events = await deps.events.list({
+      ...(actions && actions.length > 0 ? { actions } : {}),
+      ...(q.order ? { orderIdContains: q.order } : {}),
+      ...(num(q.since) !== undefined ? { sinceMs: num(q.since)! } : {}),
+      ...(num(q.until) !== undefined ? { untilMs: num(q.until)! } : {}),
+      ...(num(q.minDelta) !== undefined ? { minAbsDeltaPrice: num(q.minDelta)! } : {}),
+      ...(num(q.limit) !== undefined ? { limit: num(q.limit)! } : {}),
+      ...(num(q.offset) !== undefined ? { offset: num(q.offset)! } : {}),
+    });
+    return { events };
+  });
+
+  // Summary tiles + profit & loss for a window.
+  app.get('/api/nicehash/summary', async (req) => {
+    const range = String((req.query as { range?: unknown })?.range ?? '24h');
+    const since = sinceForRange(range);
+    const [summary, current, lifetimeSpentBtc] = await Promise.all([
+      deps.metrics?.summary(since) ?? Promise.resolve(null),
+      deps.metrics?.latest() ?? Promise.resolve(null),
+      deps.ledger.sumLifetimePayedBtc(),
+    ]);
+    return {
+      range,
+      since,
+      summary,
+      current,
+      lifetime_spent_btc: lifetimeSpentBtc,
+      hashprice_now: deps.hashprice?.() ?? null,
+      run_mode: deps.store.getRunMode(),
+    };
+  });
+
+  // "Run decision now" - trigger one out-of-band controller tick.
+  app.post('/api/nicehash/run-now', async () => {
+    if (!deps.runNow) return { ok: false, error: 'run-now is not available' };
+    return deps.runNow();
   });
 
   app.post('/api/nicehash/run-mode', async (req, reply) => {
