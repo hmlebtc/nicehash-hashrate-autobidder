@@ -19,7 +19,7 @@
  * scale-up. The price-decrease cooldown / down-step clamp live in `gate.ts`.
  */
 
-import { breakEvenPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
+import { dynamicCapPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
 
 function fmtPrice(btcPerUnitDay: number): string {
   return `${btcPerUnitDay.toFixed(8)} BTC/unit/day`;
@@ -59,24 +59,29 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   if (dynamicCapConfigured && hashprice === null) return [];
 
   const fixedCap = config.max_price_btc_per_unit_day;
-  const dynamicCap =
+  const premiumCap =
     dynamicCapConfigured && hashprice !== null
       ? hashprice + config.max_overpay_vs_hashprice_btc_per_unit_day!
       : null;
-  let effectiveCap = dynamicCap !== null ? Math.min(fixedCap, dynamicCap) : fixedCap;
+  let effectiveCap = premiumCap !== null ? Math.min(fixedCap, premiumCap) : fixedCap;
 
-  // Fee-adjusted break-even ceiling: bid + NiceHash fee + pool fee must not
-  // exceed what the rented hashrate earns (the hashprice). Gated behind the
-  // master `use_break_even` switch AND the `cap_at_break_even` knob; applies
-  // only when a hashprice is available, so a transient oracle gap never blocks
-  // bidding.
-  const breakEven = config.use_break_even
-    ? breakEvenPrice(hashprice, config.nicehash_fee_pct, config.pool_fee_pct)
+  // Dynamic price cap: the fee-adjusted, buffered hashprice - the most we can
+  // pay and still keep the operator's profit buffer after NiceHash + pool fees.
+  // Kept as a *backstop alongside* the fixed hard cap: effective cap = min(hard
+  // cap, dynamic cap). Applies only when a hashprice is available, so a transient
+  // oracle gap falls back to the hard cap rather than blocking bidding.
+  const dynamicCap = config.dynamic_cap_enabled
+    ? dynamicCapPrice(
+        hashprice,
+        config.nicehash_fee_pct,
+        config.pool_fee_pct,
+        config.dynamic_cap_buffer_btc,
+      )
     : null;
-  let cappedByBreakEven = false;
-  if (config.use_break_even && config.cap_at_break_even && breakEven !== null && breakEven < effectiveCap) {
-    effectiveCap = breakEven;
-    cappedByBreakEven = true;
+  let cappedByDynamic = false;
+  if (dynamicCap !== null && dynamicCap < effectiveCap) {
+    effectiveCap = dynamicCap;
+    cappedByDynamic = true;
   }
 
   const anchor = state.market.anchor_price_btc; // non-null per guard above
@@ -110,7 +115,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     (config.overpay_btc_per_unit_day * config.price_edit_deadband_pct) / 100,
   );
 
-  const capLabel = cappedByBreakEven ? 'break-even' : 'cap';
+  const capLabel = cappedByDynamic ? 'dynamic cap' : 'cap';
   const priceSuffix = cappedByCeiling
     ? ` (clamped to ${capLabel} ${fmtPrice(effectiveCap)})`
     : ` (anchor ${fmtPrice(anchor)} + overpay ${fmtPrice(config.overpay_btc_per_unit_day)})`;

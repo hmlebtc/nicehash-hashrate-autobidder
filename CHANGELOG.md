@@ -2,6 +2,22 @@
 
 ## 2026-06-29
 
+### `[Feature]` Dynamic price cap (replaces fees & break-even)
+
+The bid ceiling can now track the market instead of a hand-tuned number. The new
+**Dynamic price cap** = `hashprice × (1 − (NiceHash fee + pool fee)/100) − buffer`
+- the most you can pay and still keep a profit buffer after both fees come out of
+the hashprice. It's applied as a backstop *alongside* the fixed Max price
+(effective cap = the lower of the two), and if the hashprice source is
+unavailable the bot falls back to the Max price rather than going uncapped. The
+buffer is an absolute BTC/EH/day amount you set (0 = pure break-even).
+
+The Config "Fees & break-even" section is replaced by a "Dynamic price cap"
+section (enable toggle, NiceHash fee %, pool fee %, profit buffer); the
+edit-price deadband moves to Strategy. The Status tiles and price-chart line
+become "Dynamic cap" / "Margin to cap". (The old break-even toggle and the
+separate "max premium over hashprice" knob are retired from the UI.)
+
 ### `[Fix]` Floor reads the GLOBAL marginal (scan the whole book)
 
 v0.6.3 stopped paging the order book at the first zero-miner order, assuming the
