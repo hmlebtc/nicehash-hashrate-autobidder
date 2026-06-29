@@ -2,6 +2,16 @@
 
 ## 2026-06-29
 
+### `[Feature]` Network-hashprice oracle (estimate)
+
+Since NiceHash exposes no income data, the daemon now derives the SHA-256
+network hashprice (BTC/EH/day) from mempool.space - mainnet emission over
+network hashrate - to power the upcoming cost-vs-hashprice tile, the
+estimated profit/loss, and (optionally) the dynamic price cap. Cached with
+a 5-minute TTL, refreshed on a schedule, and resilient: a transient outage
+keeps the last good value. Opt-in via the `mempool` source; `none` (default)
+disables it. Recorded into the per-tick metrics each tick.
+
 ### `[Feature]` Expanded strategy + daemon settings (parity)
 
 Surfaced the controller's full strategy surface through settings: minimum

@@ -16,7 +16,7 @@ import type { NiceHashControllerConfig, RunMode } from './types.js';
 export type BootMode = 'DRY_RUN' | 'RESUME' | 'LIVE';
 
 /** Network-hashprice oracle provider. `none` disables hashprice features. */
-export type HashpriceSource = 'none' | 'mempool' | 'minerstat';
+export type HashpriceSource = 'none' | 'mempool';
 
 export interface NiceHashSettings {
   readonly apiKey: string;
@@ -84,7 +84,7 @@ function asBootMode(v: string | undefined): BootMode {
   return v === 'DRY_RUN' || v === 'RESUME' || v === 'LIVE' ? v : 'RESUME';
 }
 function asHashpriceSource(v: string | undefined): HashpriceSource {
-  return v === 'mempool' || v === 'minerstat' || v === 'none' ? v : 'none';
+  return v === 'mempool' || v === 'none' ? v : 'none';
 }
 
 /**

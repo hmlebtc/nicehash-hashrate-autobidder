@@ -35,6 +35,7 @@ import {
 import { NiceHashStateStore } from './controller/nicehash/state-store.js';
 import type { NiceHashTickResult } from './controller/nicehash/tick.js';
 import { createNiceHashHttpServer } from './http/nicehash-server.js';
+import { HashpriceOracle } from './services/nicehash-hashprice.js';
 import { NiceHashService } from './services/nicehash-service.js';
 import { closeDatabase, openDatabase } from './state/db.js';
 import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
@@ -124,6 +125,12 @@ async function main(): Promise<void> {
   // 5. Build the controller config from settings + live algorithm metadata.
   const config = toControllerConfig(settings, algo, poolId);
 
+  // Network-hashprice oracle (estimate) - powers the cost-vs-hashprice tile,
+  // the P&L income estimate, and (optionally) the dynamic price cap. Disabled
+  // unless the operator picks a source. Best-effort refresh on boot.
+  const hashpriceOracle = new HashpriceOracle({ source: settings.hashpriceSource });
+  await hashpriceOracle.refresh();
+
   // Shared store: the loop writes each tick here, the HTTP API reads it, and
   // the run mode lives here so the dashboard can flip DRY-RUN / LIVE / PAUSED.
   // The boot mode decides the starting run mode (RESUME demotes PAUSED).
@@ -138,6 +145,7 @@ async function main(): Promise<void> {
     currency: settings.priceCurrency,
     balanceCurrency: settings.balanceCurrency,
     runMode: () => store.getRunMode(),
+    hashprice: () => hashpriceOracle.latest(),
     metrics: metricsRepo,
     events: eventsRepo,
     floorUnits: settings.minimumFloorUnits,
@@ -198,6 +206,8 @@ async function main(): Promise<void> {
   let lastPruneAt = Date.now();
   const PRUNE_INTERVAL_MS = 24 * 60 * 60_000;
   while (!stopping) {
+    // Refresh the hashprice estimate when stale (cheap no-op when source=none).
+    if (hashpriceOracle.isStale()) await hashpriceOracle.refresh();
     try {
       const result = await controller.tick();
       store.setLast(result);
