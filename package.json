@@ -22,6 +22,7 @@
     "smoke:nicehash": "tsx scripts/smoke-nicehash.ts",
     "loop:nicehash": "tsx scripts/run-nicehash-loop.ts",
     "daemon:nicehash": "tsx packages/daemon/src/main-nicehash.ts",
+    "validate:nicehash": "tsx scripts/validate-price-scale.ts",
     "setup": "tsx scripts/setup.ts",
     "daemon": "tsx packages/daemon/src/main.ts"
   },
