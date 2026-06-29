@@ -27,7 +27,7 @@ function ctx(over: Partial<NiceHashClient> = {}): NiceHashExecuteContext {
 
 const create: Proposal = {
   kind: 'CREATE_ORDER',
-  price_btc: 0.00051,
+  price_btc: 0.4546,
   amount_btc: 0.01,
   limit_units: 10,
   pool_id: 'pool-1',
@@ -55,7 +55,7 @@ describe('executeProposal - LIVE', () => {
       algorithm: 'SHA256ASICBOOST',
       type: 'STANDARD',
       amount: '0.01',
-      price: '0.00051',
+      price: '0.4546',
       limit: '10',
       poolId: 'pool-1',
       marketFactor: '1000000000000000',
@@ -63,6 +63,26 @@ describe('executeProposal - LIVE', () => {
       priceFactor: '1000000000000000000',
       displayPriceFactor: 'EH',
     });
+  });
+
+  it('snaps an over-precise price down to NiceHash 4-dp scale (PRICE_DATA_SCALE)', async () => {
+    const c = ctx();
+    // A dynamic-cap-clamped bid carries 8 dp; NiceHash rejects > 4 dp.
+    await executeProposal(c, 'LIVE', { ...create, price_btc: 0.45444046 });
+    expect(c.client.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ price: '0.4544' }),
+    );
+    await executeProposal(c, 'LIVE', {
+      kind: 'EDIT_PRICE',
+      order_id: 'o1',
+      new_price_btc: 0.45444046,
+      old_price_btc: 0.4544,
+      reason: 'r',
+    });
+    expect(c.client.updatePriceAndLimit).toHaveBeenCalledWith(
+      'o1',
+      expect.objectContaining({ price: '0.4544' }),
+    );
   });
 
   it('edits price only via updatePriceAndLimit', async () => {
