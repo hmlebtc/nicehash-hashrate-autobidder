@@ -20,6 +20,7 @@
     "format:check": "prettier --check .",
     "smoke": "tsx scripts/smoke-braiins.ts",
     "smoke:nicehash": "tsx scripts/smoke-nicehash.ts",
+    "loop:nicehash": "tsx scripts/run-nicehash-loop.ts",
     "setup": "tsx scripts/setup.ts",
     "daemon": "tsx packages/daemon/src/main.ts"
   },
