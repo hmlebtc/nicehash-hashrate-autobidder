@@ -174,7 +174,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="grid">
       <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice">—</div><div class="muted" id="curPriceUnit"></div></div>
       <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered">—</div><div class="muted" id="curDeliveredUnit"></div></div>
-      <div class="card"><h2>Available balance</h2><div class="big" id="balance">—</div><div class="muted">BTC</div></div>
+      <div class="card"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
+      <div class="card"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
       <div class="card"><h2>Market anchor</h2><div class="big" id="anchor">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
       <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
     </div>
@@ -575,15 +576,27 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function renderTiles() {
     var s = lastSummary && lastSummary.summary;
     if (!s) { $('tiles').innerHTML = ''; return; }
-    var cap = dynamicCapBtc(s.avg_hashprice_btc_per_unit_day);
-    var margin = (cap != null && s.avg_our_price_btc != null) ? (cap - s.avg_our_price_btc) : null;
+    // Dynamic cap + margin must reflect the CURRENT tick, not the range average:
+    // the cap tracks the live hashprice (the same value decide() bids against),
+    // and the margin compares it to our live bid. Using the range-average made
+    // the cap read low and the margin show "OVER cap" when the live bid was
+    // actually under the live cap.
+    var hpNow = (lastSummary && lastSummary.hashprice_now != null)
+      ? lastSummary.hashprice_now : s.avg_hashprice_btc_per_unit_day;
+    var cap = dynamicCapBtc(hpNow);
+    var liveBid = null;
+    if (lastStatus && lastStatus.owned_orders) {
+      var lo = lastStatus.owned_orders.filter(function (o) { return isLiveOrderStatus(o.status); })[0];
+      if (lo) liveBid = lo.price_btc;
+    }
+    var margin = (cap != null && liveBid != null) ? (cap - liveBid) : null;
     var html = '';
     html += tile('Uptime', s.uptime_pct == null ? '—' : s.uptime_pct.toFixed(1), '%');
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
-    html += tile('Avg hashprice', fmtPrice(s.avg_hashprice_btc_per_unit_day, 6), priceUnit());
+    html += tile('Hashprice (now)', fmtPrice(hpNow, 6), priceUnit());
     html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice − ' + totalFeePct() + '% fees − buffer') : 'dynamic cap off');
-    html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? '' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
+    html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? 'no active bid' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
   }
@@ -647,7 +660,14 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('curPriceUnit').textContent = primary ? priceUnit() : 'no active order';
     $('curDelivered').textContent = fmtSpeed(live.reduce(function (a, o) { return a + (o.accepted_speed_units || 0); }, 0));
     $('curDeliveredUnit').textContent = speedUnit();
-    $('balance').textContent = fmtBtc(s.balance_btc);
+    // Order balance = escrow remaining in the live order (not the wallet); the
+    // wallet balance still shows in the P&L panel.
+    $('orderBalance').textContent = primary ? fmtBtc(primary.available_amount_btc) : '—';
+    $('orderBalanceSub').textContent = primary ? 'escrow left in order' : 'no active order';
+    $('orderRunway').textContent = primary ? runwayHours(primary) : '—';
+    $('orderRunwaySub').textContent = primary
+      ? (primary.accepted_speed_units > 0 ? 'until escrow runs out' : 'at full limit (not yet filled)')
+      : 'no active order';
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
     $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
     $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
@@ -700,7 +720,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   async function refreshStatus() {
     try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json();
       if (lastStatus && lastStatus.config) applyBaseUnit(lastStatus.config.speed_unit);
-      renderStatus(); renderPnl(); }
+      renderStatus(); renderPnl();
+      // Keep the summary tiles (dynamic cap / margin / hashprice-now / averages)
+      // in step with the live status instead of a slow 30s cache.
+      if ($('page-status').classList.contains('active')) loadSummary(); }
     catch (e) { $('sub').textContent = 'connection error'; }
   }
   async function loadMetrics() {
@@ -886,7 +909,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   refreshStatus(); loadMetrics(); loadSummary();
   setInterval(refreshStatus, 5000);
   setInterval(updateTickCountdown, 1000);
-  setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); loadSummary(); } }, 30000);
+  setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); } }, 30000);
   window.addEventListener('resize', renderCharts);
 })();
 </script>

@@ -2,6 +2,22 @@
 
 ## 2026-06-29
 
+### `[Fix]` Status tiles reflect the live tick (not a 30s-cached average)
+
+The dynamic-cap and margin tiles were computed from the range-average hashprice
+and only refreshed every 30s, so the cap read low and "margin to cap" showed
+"OVER cap" even when the live bid was under the live cap. The cap/margin now use
+the **current** hashprice (the same value the bidder bids against) and the live
+bid, the summary tiles refresh every ~5s in step with the status, and the
+"Avg hashprice" tile is now "Hashprice (now)".
+
+### `[UI]` Order-balance + time-remaining tiles
+
+"Available balance" (wallet) is replaced by **Order balance** — the escrow left
+in your live order — and a new **Time remaining** tile shows the approximate
+runway until that escrow runs out (at the delivered rate, or the order limit
+before it fills). Your wallet balance still shows in the profit & loss panel.
+
 ### `[Fix]` Orders no longer rejected for price scale (PRICE_DATA_SCALE)
 
 LIVE order creation was failing with `2997 Invalid input: PRICE_DATA_SCALE`
