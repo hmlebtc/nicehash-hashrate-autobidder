@@ -2,6 +2,28 @@
 
 ## 2026-06-29
 
+### `[UI]` Full dashboard: Status / History / Config, charts, tiles, P&L
+
+Rebuilt the dashboard into a tabbed, Hashrate-Autopilot-style operator UI
+(still a single self-contained page, no build step, no external/CDN deps):
+
+- **Status**: run-mode + "Run decision now" with a next-tick countdown,
+  hero cards (price / delivered / balance / anchor / market supply),
+  a time-range selector (3h…All), summary tiles (uptime, avg delivered,
+  avg price, avg hashprice, cost-vs-hashprice, samples), hand-rolled
+  canvas **hashrate** and **price** charts (the price chart overlays
+  create/edit/cancel event markers), the orders table, and a profit &
+  loss panel (balance, lifetime spent, spend/day, estimated income/net/
+  return from the hashprice oracle).
+- **History**: the order-mutation audit trail with action / order-id /
+  min-Δ-price filters.
+- **Config**: the expanded settings form (connection, strategy, cheap
+  mode, pool, daemon & data) plus the connectivity test.
+- Header **unit toggles**: speed TH/PH/EH and price sat/BTC, persisted
+  client-side.
+
+Gallery screenshots refreshed to the new UI.
+
 ### `[Feature]` Dashboard data API: metrics, history, summary, run-now
 
 New HTTP endpoints backing the upcoming charts/tiles/History UI:
