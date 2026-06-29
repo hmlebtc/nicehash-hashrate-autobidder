@@ -280,17 +280,28 @@ controller's assumption. Speed stays in PH/s, amount in BTC.
 Also validated live: pool registration via the API (`ensurePool` created
 `pool.xaxamining.com` and NiceHash returned a `poolId` used by the order).
 
-### OPEN — NiceHash API order creation gated (`5096`)
+### RESOLVED — full API create→read→cancel round-trip passes ✅
 
-The auto-cancelling API probe could not exercise the create path: NiceHash
-returned `403 - 5096: Order creations are currently disabled`, even though
-(a) the same account created an order fine via the **UI**, and (b) our API key
-successfully created a **pool** and performed all signed reads. Order placement
-is a separate granular permission on NiceHash, so the most likely cause is the
-testnet API key **missing the "Place hash-power orders" scope** (pool management
-is a different scope), or a testnet-side gate on API order-create.
+The auto-cancelling probe completed a full API round-trip against the testnet:
 
-Before enabling LIVE: confirm the key has the order-placement permission and
-re-run `pnpm validate:nicehash` (it now also reads back existing orders to
-re-confirm the read scale). Until an API create + read-back round-trip passes,
-the controller stays in DRY-RUN.
+```
+createOrder → id=e08b9f54…
+read-back: getOrder & myOrders both report price=0.01020000 (submitted 0.0102)
+ratio = 1.000000   ✓ PASS
+cancelOrder → cancelled, escrow refunded
+```
+
+Two gates were cleared along the way:
+
+1. **`5096: Order creations are currently disabled`** — the testnet API key was
+   missing the order-placement permission (pool management is a separate scope,
+   which is why `ensurePool` and reads worked). Enabling it cleared the error.
+2. **`2997: MISSING_DISPLAYMARKETFACTOR_DATA`** — the create body must carry
+   **both** factor pairs: speed (`marketFactor`/`displayMarketFactor`, PH) and
+   price (`priceFactor`/`displayPriceFactor`, EH). A raw `getOrder` of a valid
+   order confirmed all four; the client now sends all four on create/update.
+
+So the submit-price scale **== order-book scale == BTC/EH/day, confirmed by a
+live API round-trip** (not just corroboration). The remaining gate to LIVE is
+purely operational: set `NICEHASH_RUN_MODE=LIVE` deliberately. The controller
+still boots in DRY-RUN by default.
