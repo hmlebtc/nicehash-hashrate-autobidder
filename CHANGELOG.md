@@ -2,6 +2,19 @@
 
 ## 2026-06-29
 
+### `[Fix]` Anchor at the marginal price, not the top of the filled book
+
+The v0.5.1 anchor fix over-corrected: it walked the filled orders from cheapest
+upward, accumulating each order's delivered speed until the sum covered the
+target, and returned that order's price. In a deep market only a handful of
+orders report delivery, so the walk climbed to the most expensive *filled*
+order (~0.50 BTC/EH/day) and the bot bid at its safety cap instead of the
+floor. The anchor is now simply the cheapest order currently receiving hashrate
+— NiceHash's purple marginal — independent of the target. The bot bids just
+above that floor (marginal + overpay); how much hashrate it draws is governed
+by its own order limit, not by inflating the bid. This also sidesteps any
+reliance on per-order delivered-speed magnitudes (only the price is used).
+
 ### `[Fix]` Surface the real cause when the market is unavailable
 
 When `observe()` failed to read the order book or your orders, every tick
