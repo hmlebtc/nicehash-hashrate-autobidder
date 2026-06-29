@@ -25,6 +25,7 @@ export interface NiceHashOrderRow {
   readonly limit_units: number | null;
   readonly payed_amount_btc: number;
   readonly last_price_decrease_at: number | null;
+  readonly last_price_change_at: number | null;
   readonly pool_id: string | null;
   readonly abandoned: boolean;
 }
@@ -76,6 +77,20 @@ export class NiceHashOrdersRepo {
     return map;
   }
 
+  /** order_id -> last price-change timestamp (any direction); feeds the settle window. */
+  async lastPriceChangeMap(): Promise<Map<string, number>> {
+    const rows = await this.db
+      .selectFrom('nicehash_orders')
+      .select(['order_id', 'last_price_change_at'])
+      .where('last_price_change_at', 'is not', null)
+      .execute();
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (r.last_price_change_at !== null) map.set(r.order_id, r.last_price_change_at);
+    }
+    return map;
+  }
+
   /** Record a newly-created order. Idempotent on the order id. */
   async insert(args: InsertNiceHashOrderArgs): Promise<void> {
     await this.db
@@ -88,6 +103,8 @@ export class NiceHashOrdersRepo {
         amount_btc: args.amount_btc,
         limit_units: args.limit_units,
         last_price_decrease_at: null,
+        // The create sets the initial price, so the settle window starts now.
+        last_price_change_at: args.created_at,
         pool_id: args.pool_id,
       })
       .onConflict((oc) => oc.column('order_id').doNothing())
@@ -97,7 +114,16 @@ export class NiceHashOrdersRepo {
   async setLastPriceDecrease(orderId: string, at: number, newPriceBtc: number): Promise<void> {
     await this.db
       .updateTable('nicehash_orders')
-      .set({ last_price_decrease_at: at, price_btc: newPriceBtc })
+      .set({ last_price_decrease_at: at, last_price_change_at: at, price_btc: newPriceBtc })
+      .where('order_id', '=', orderId)
+      .execute();
+  }
+
+  /** Record an upward price change (no decrease cooldown effect; resets the settle window). */
+  async setLastPriceChange(orderId: string, at: number, newPriceBtc: number): Promise<void> {
+    await this.db
+      .updateTable('nicehash_orders')
+      .set({ last_price_change_at: at, price_btc: newPriceBtc })
       .where('order_id', '=', orderId)
       .execute();
   }
@@ -152,6 +178,7 @@ function toDomain(row: NiceHashOrdersRow): NiceHashOrderRow {
     limit_units: row.limit_units,
     payed_amount_btc: row.payed_amount_btc,
     last_price_decrease_at: row.last_price_decrease_at,
+    last_price_change_at: row.last_price_change_at,
     pool_id: row.pool_id,
     abandoned: row.abandoned === 1,
   };

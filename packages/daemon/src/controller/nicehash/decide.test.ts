@@ -51,6 +51,7 @@ function ownedOrder(over: Partial<OwnedOrderSnapshot> = {}): OwnedOrderSnapshot 
     accepted_speed_units: 10,
     status: 'ACTIVE',
     last_price_decrease_at: null,
+    last_price_change_at: null,
     ...over,
   };
 }
@@ -264,5 +265,90 @@ describe('decide - maintain', () => {
     expect(cancels).toHaveLength(1);
     if (cancels[0]?.kind !== 'CANCEL_ORDER') throw new Error('expected CANCEL_ORDER');
     expect(cancels[0].order_id).toBe('order-b');
+  });
+});
+
+describe('decide - track to fill', () => {
+  const T = 1_700_000_000_000;
+
+  it('walks the bid up by the step when under-filled and settled', () => {
+    // target 10, delivered 5 (< 80% of 10) -> under-filled; bump 0.0006 -> 0.0008.
+    const out = decide(
+      state({
+        owned_orders: [ownedOrder({ price_btc: 0.0006, accepted_speed_units: 5 })],
+        config: config({
+          walk_up_step_btc: 0.0002,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.0008, 9);
+  });
+
+  it('holds during the settle window instead of escalating again', () => {
+    const out = decide(
+      state({
+        tick_at: T,
+        owned_orders: [
+          ownedOrder({ price_btc: 0.0006, accepted_speed_units: 5, last_price_change_at: T - 1_000 }),
+        ],
+        config: config({
+          walk_up_step_btc: 0.0002,
+          walk_up_settle_ms: 60_000,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('never lowers the bid while still under-filled', () => {
+    // Sitting well above the floor but under-filled and settling: must hold, not
+    // walk down (that would undo the escalation we are waiting on).
+    const out = decide(
+      state({
+        tick_at: T,
+        owned_orders: [
+          ownedOrder({ price_btc: 0.0009, accepted_speed_units: 5, last_price_change_at: T - 1_000 }),
+        ],
+        config: config({
+          walk_up_step_btc: 0.0002,
+          walk_up_settle_ms: 60_000,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('caps the walk-up at the price ceiling', () => {
+    const out = decide(
+      state({
+        owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 5 })],
+        config: config({ walk_up_step_btc: 0.0002, max_price_btc_per_unit_day: 0.00095 }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00095, 9);
+  });
+
+  it('steps the bid down toward the floor by at most one price-down step when filled', () => {
+    // Filled, sitting at 0.0009, floor 0.00051: a single move drops by the
+    // algorithm down-step (0.0000001), not all the way to the floor.
+    const out = decide(
+      state({
+        owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 10 })],
+        config: config({ max_price_btc_per_unit_day: 1, price_down_step_btc: 0.0000001 }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.0009 - 0.0000001, 10);
   });
 });

@@ -226,6 +226,8 @@ export interface NiceHashOrdersTable {
   /** Latest `payedAmount` (cumulative spend) snapshot, BTC; monotonic. */
   payed_amount_btc: Generated<number>;
   last_price_decrease_at: number | null;
+  /** When the price last changed (up or down); powers the walk-up settle window. */
+  last_price_change_at: number | null;
   pool_id: string | null;
   abandoned: Generated<0 | 1>;
 }

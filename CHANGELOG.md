@@ -2,6 +2,22 @@
 
 ## 2026-06-29
 
+### `[Feature]` Track-to-fill bidding (walk up to win, walk down to save)
+
+The controller now manages the live order as a closed loop instead of just
+pinning it to the floor. Each tick it compares delivered hashrate against a
+configurable **minimum fill %** of target. While under-filled it walks the bid
+**up** by a configurable step (raises are unrestricted on NiceHash), waiting a
+**settle window** between steps so a raise has time to attract miners before the
+next bump — escalating until it fills or a price/break-even cap binds. Once
+filled and sitting above the floor, it steps the bid **down** toward the floor,
+bounded by NiceHash's rule of one decrease per 10 minutes of at most
+`priceDownStep` — which also fixes a latent bug where a large downward re-price
+was sent in a single jump and **rejected** by the API. New `last_price_change_at`
+ledger column (migration 0117) powers the settle window; new Track-to-fill
+config knobs: minimum fill %, walk-up step, settle seconds. Net effect: the
+lowest bid that still fills.
+
 ### `[Fix]` Label and scale hashrate in the market's real unit (EH for SHA256)
 
 The dashboard hardcoded `PH/s` for all hashrate, but SHA256ASICBOOST is quoted

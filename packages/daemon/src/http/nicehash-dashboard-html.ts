@@ -629,6 +629,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
+    { group: 'Track-to-fill', items: [
+      ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
+      ['walkUpStepBtc', 'Walk-up step (BTC/EH/day, 0=off)', 'number', 'How much to raise the bid each step while under-filled. Raises are unrestricted on NiceHash, so this escalates quickly. 0 = never walk up (pure floor-tracking).'],
+      ['walkUpSettleSeconds', 'Walk-up settle (seconds)', 'number', 'Wait this long after a bid change before the next walk-up step, giving miners time to re-point so the bot does not overshoot. e.g. 180.'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],

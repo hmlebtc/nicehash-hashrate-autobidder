@@ -66,6 +66,8 @@ export interface OwnedOrderSnapshot {
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   readonly last_price_decrease_at: number | null;
+  /** When the price last changed (up or down); null when never. Settle window. */
+  readonly last_price_change_at: number | null;
 }
 
 /** An order in the account that is NOT in our ledger - forces PAUSE. */
@@ -97,6 +99,22 @@ export interface NiceHashControllerConfig {
   readonly min_order_amount_btc: number;
   /** Re-price only when the move exceeds this % of the overpay cushion. */
   readonly price_edit_deadband_pct: number;
+  /**
+   * Track-to-fill: treat the order as "filled" once delivered speed reaches this
+   * percent of the (effective) target. Below it, the bidder walks the price up.
+   * Default 80.
+   */
+  readonly min_fill_pct?: number;
+  /**
+   * Track-to-fill: how much to raise the bid (BTC/unit/day) each escalation step
+   * while under-filled. 0 disables the walk-up (pure anchor-tracking). Default 0.
+   */
+  readonly walk_up_step_btc?: number;
+  /**
+   * Track-to-fill: minimum time (ms) to wait after a price change before the
+   * next walk-up step, so a raise has time to attract miners. Default 0.
+   */
+  readonly walk_up_settle_ms?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */

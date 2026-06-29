@@ -67,6 +67,7 @@ function ownedAt(lastDecrease: number | null): OwnedOrderSnapshot {
     accepted_speed_units: 10,
     status: 'ACTIVE',
     last_price_decrease_at: lastDecrease,
+    last_price_change_at: lastDecrease,
   };
 }
 

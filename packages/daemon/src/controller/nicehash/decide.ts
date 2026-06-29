@@ -178,14 +178,61 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     }
   }
 
-  // Price edit when drifted beyond the deadband.
-  if (Math.abs(primary.price_btc - targetPrice) >= editDeadband) {
+  // --- Track-to-fill price management ---------------------------------------
+  // Baseline is the floor (anchor + overpay, capped) = `targetPrice`. When the
+  // order is under-filled we walk the bid UP above the current price to win the
+  // fill (raises are unrestricted on NiceHash), after a settle window so a bump
+  // has time to attract miners. When filled and sitting above the floor we step
+  // the bid DOWN toward it - by at most one `price_down_step_btc` per move (the
+  // gate additionally throttles decreases to the 10-minute cooldown), so a large
+  // drop is never sent in one illegal jump.
+  const minFillPct = config.min_fill_pct ?? 100;
+  const walkUpStep = config.walk_up_step_btc ?? 0;
+  const settleMs = config.walk_up_settle_ms ?? 0;
+  const walkUpEnabled = walkUpStep > 0;
+  const fillThreshold = (effectiveTarget * minFillPct) / 100;
+  const underFilled = primary.accepted_speed_units < fillThreshold;
+  const settled =
+    primary.last_price_change_at === null || state.tick_at - primary.last_price_change_at >= settleMs;
+  const cur = primary.price_btc;
+
+  // Escalation target when under-filled and past the settle window: bump above
+  // the current price (never below the floor), capped.
+  const escalateTo = Math.min(effectiveCap, Math.max(targetPrice, cur + walkUpStep));
+  const escalating = walkUpEnabled && underFilled && settled && escalateTo > cur;
+
+  let editTo = cur;
+  let mode = '';
+  if (escalating) {
+    editTo = escalateTo; // intentional walk-up; bypasses the deadband
+    mode = 'walk up to fill';
+  } else if (walkUpEnabled && underFilled) {
+    // Under-filled but settling (or already at the cap): never lower the bid
+    // while we still want more hashrate; only raise to the floor if it climbed.
+    if (targetPrice - cur >= editDeadband) {
+      editTo = Math.min(effectiveCap, targetPrice);
+      mode = 'track anchor up';
+    }
+  } else if (Math.abs(cur - targetPrice) >= editDeadband) {
+    // Filled (or walk-up disabled): track the floor both ways, deadband-gated.
+    if (targetPrice > cur) {
+      editTo = Math.min(effectiveCap, targetPrice);
+      mode = 'track anchor up';
+    } else {
+      // Lower toward the floor by at most one down-step (the gate also throttles
+      // decreases to the cooldown), so a big drop is never sent in one go.
+      editTo = Math.max(targetPrice, cur - config.price_down_step_btc);
+      mode = 'walk down to floor';
+    }
+  }
+
+  if (Math.abs(editTo - cur) > 1e-12) {
     proposals.push({
       kind: 'EDIT_PRICE',
       order_id: primary.order_id,
-      new_price_btc: targetPrice,
-      old_price_btc: primary.price_btc,
-      reason: `track anchor: ${fmtPrice(primary.price_btc)} -> ${fmtPrice(targetPrice)}${priceSuffix}`,
+      new_price_btc: editTo,
+      old_price_btc: cur,
+      reason: `${mode}: ${fmtPrice(cur)} -> ${fmtPrice(editTo)}${priceSuffix}`,
     });
   }
 

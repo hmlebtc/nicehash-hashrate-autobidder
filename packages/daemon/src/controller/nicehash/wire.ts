@@ -72,10 +72,11 @@ export function marketAnchorFromBook(
   return computeMarketAnchor(competitors, totalSpeedUnits, targetUnits);
 }
 
-/** Map a wire order to an owned-order snapshot. `last_price_decrease_at` is ledger-sourced. */
+/** Map a wire order to an owned-order snapshot. Timestamps are ledger-sourced. */
 export function ownedOrderFromWire(
   order: HashpowerOrder,
   lastPriceDecreaseAt: number | null = null,
+  lastPriceChangeAt: number | null = null,
 ): OwnedOrderSnapshot {
   return {
     order_id: order.id,
@@ -87,6 +88,7 @@ export function ownedOrderFromWire(
     accepted_speed_units: parseDecimal(order.acceptedCurrentSpeed),
     status: codeOf(order.status),
     last_price_decrease_at: lastPriceDecreaseAt,
+    last_price_change_at: lastPriceChangeAt,
   };
 }
 
@@ -126,12 +128,19 @@ export function reconcileOrders(
   wireOrders: readonly HashpowerOrder[],
   knownOrderIds: ReadonlySet<string>,
   lastPriceDecreaseById: ReadonlyMap<string, number> = new Map(),
+  lastPriceChangeById: ReadonlyMap<string, number> = new Map(),
 ): { owned: OwnedOrderSnapshot[]; unknown: UnknownOrderSnapshot[] } {
   const owned: OwnedOrderSnapshot[] = [];
   const unknown: UnknownOrderSnapshot[] = [];
   for (const order of wireOrders) {
     if (knownOrderIds.has(order.id)) {
-      owned.push(ownedOrderFromWire(order, lastPriceDecreaseById.get(order.id) ?? null));
+      owned.push(
+        ownedOrderFromWire(
+          order,
+          lastPriceDecreaseById.get(order.id) ?? null,
+          lastPriceChangeById.get(order.id) ?? null,
+        ),
+      );
     } else if (isLiveForeignOrder(order)) {
       unknown.push(unknownOrderFromWire(order));
     }
