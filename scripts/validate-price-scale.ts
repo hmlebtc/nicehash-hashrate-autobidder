@@ -41,21 +41,18 @@ const num = (k: string, d: number): number => {
 };
 const dec = (n: number, decimals = 8): string => parseFloat(n.toFixed(decimals)).toString();
 
+// Default validation pool (operator-provided testnet pool). Overridable via env.
+const DEFAULT_POOL_HOST = 'pool.xaxamining.com';
+const DEFAULT_POOL_USER = 'tb1q3a89fh49xwzrjy4k8ee05etlp5zlnxq5hzks84';
+
 async function resolvePoolId(client: ReturnType<typeof createNiceHashClient>, algorithm: string): Promise<string> {
   if (env.NICEHASH_POOL_ID) return env.NICEHASH_POOL_ID;
-  const host = env.NICEHASH_POOL_HOST;
-  const user = env.NICEHASH_POOL_USER;
-  if (!host || !user) {
-    throw new Error(
-      'No pool configured. Set NICEHASH_POOL_ID, or NICEHASH_POOL_HOST + NICEHASH_POOL_USER (and optional NICEHASH_POOL_PORT/PASS) to auto-register one.',
-    );
-  }
   return ensurePool(client, {
     name: env.NICEHASH_POOL_NAME ?? 'nicehash-autobidder-validate',
     algorithm,
-    stratumHostname: host,
+    stratumHostname: env.NICEHASH_POOL_HOST ?? DEFAULT_POOL_HOST,
     stratumPort: num('NICEHASH_POOL_PORT', 3333),
-    username: user,
+    username: env.NICEHASH_POOL_USER ?? DEFAULT_POOL_USER,
     password: env.NICEHASH_POOL_PASS ?? 'x',
   });
 }
