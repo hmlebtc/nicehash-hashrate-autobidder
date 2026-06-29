@@ -2,6 +2,29 @@
 
 ## 2026-06-29
 
+### `[UI]` Zoomable / resizable charts
+
+The Hashrate and Price charts can now be explored: scroll to zoom (shift =
+vertical only, alt = horizontal only), drag to pan, and drag the bottom edge to
+grow the chart taller. A "⟲ reset zoom" button on each chart returns to the full
+auto-fit view. The zoom survives the auto-refresh so it won't snap back while
+you're looking.
+
+### `[Fix]` Hashprice tracks Luxor's Hashrate Index
+
+The mempool hashprice read a couple percent below Hashrate Index because it
+divided the daily block reward by the measured 3-day network hashrate. It now
+divides by the **difficulty-implied** hashrate (difficulty × 2^32 / 600) - the
+basis your share of blocks is actually set by, and the same basis Hashrate
+Index's spot hashprice uses - so the dashboard hashprice (and the dynamic cap
+derived from it) line up with the index.
+
+### `[UI]` Remove the edit-price deadband knob
+
+Dropped the "Edit-price deadband (%)" config field (a legacy knob). The bidder
+keeps a sensible internal default so it still avoids re-pricing on tiny market
+wiggles.
+
 ### `[Feature]` Dynamic price cap (replaces fees & break-even)
 
 The bid ceiling can now track the market instead of a hand-tuned number. The new

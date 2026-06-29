@@ -90,7 +90,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
-  canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
+  /* Drag the bottom edge to grow a chart vertically; scroll to zoom, drag to pan. */
+  canvas { width: 100%; height: 220px; display: block; margin-top: 8px; resize: vertical; overflow: hidden; min-height: 140px; cursor: grab; }
+  .btn-reset { margin-left: auto; font-size: 11px; padding: 2px 9px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; }
+  .btn-reset:hover { color: var(--text); border-color: var(--muted); }
+  .chart-hint { font-size: 10px; color: var(--muted); margin: 2px 0 0 2px; }
   .rangebar { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
   .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--border2); background: var(--panel); color: var(--muted); cursor: pointer; }
   .rangebar button.active { background: var(--panel); color: var(--gold); outline: 1px solid var(--gold); }
@@ -172,8 +176,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#64748b"></i>target</span>
           <span><i class="swatch" style="background:#64748b"></i>min fill</span>
         </div>
+        <button class="btn-reset" data-chart="hashChart">⟲ reset zoom</button>
       </div>
       <canvas id="hashChart"></canvas>
+      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
     </div>
 
     <div class="chartcard">
@@ -189,8 +195,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
           <span><i class="swatch" style="background:#f87171;border-radius:50%;width:6px;height:6px"></i>cancel</span>
         </div>
+        <button class="btn-reset" data-chart="priceChart">⟲ reset zoom</button>
       </div>
       <canvas id="priceChart"></canvas>
+      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
     </div>
 
     <h2 class="section">Our orders</h2>
@@ -384,6 +392,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (ymax === ymin) ymax = ymin + (ymin === 0 ? 1 : Math.abs(ymin) * 0.1);
     var p = (ymax - ymin) * 0.08; ymin -= p; ymax += p;
     if (opts.yMinZero && ymin < 0) ymin = 0;
+    // Cache the full (auto) domain + inputs so the zoom/pan handlers can redraw,
+    // and apply the current zoom view (data-coordinate window) if the user set one.
+    var full = { xmin: xmin, xmax: xmax, ymin: ymin, ymax: ymax };
+    canvas._chart = { series: series, opts: opts, full: full, padL: padL, padR: padR, padT: padT, padB: padB };
+    if (canvas._view) { xmin = canvas._view.xmin; xmax = canvas._view.xmax; ymin = canvas._view.ymin; ymax = canvas._view.ymax; }
+    if (!canvas._zoomWired) wireZoom(canvas);
     function X(x) { return padL + (xmax === xmin ? 0 : (x - xmin) / (xmax - xmin)) * w; }
     function Y(y) { return padT + h - (y - ymin) / (ymax - ymin) * h; }
     ctx.strokeStyle = '#21262d'; ctx.fillStyle = '#8b949e'; ctx.lineWidth = 1;
@@ -398,6 +412,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ctx.fillText(new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), lx, padT + h + 14);
     });
     ctx.textAlign = 'left';
+    // Clip data lines + markers to the plot box so a zoomed/panned view never
+    // paints over the axes, labels, or the right-edge value column.
+    ctx.save();
+    ctx.beginPath(); ctx.rect(padL, padT, w, h); ctx.clip();
     series.forEach(function (s) {
       ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6;
       ctx.setLineDash(s.dashed ? [4, 3] : []);
@@ -414,6 +432,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       if (m.x < xmin || m.x > xmax) return;
       ctx.fillStyle = m.color; ctx.beginPath(); ctx.arc(X(m.x), padT + h - 3, 3, 0, 6.283); ctx.fill();
     });
+    ctx.restore();
     // Right-edge value labels: the latest value of each series in its colour, so
     // you can read the actual numbers off the right of the chart.
     if (opts.rightLabels) {
@@ -434,6 +453,51 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     }
   }
 
+  function redraw(canvas) { var c = canvas._chart; if (c) drawChart(canvas, c.series, c.opts); }
+  function resetZoom(canvas) { canvas._view = null; redraw(canvas); }
+
+  // Wheel = zoom (shift: vertical only, alt: horizontal only), drag = pan. The
+  // view is a data-coordinate window kept on the canvas so it survives redraws
+  // (auto-refresh won't yank you back to full view); the reset button clears it.
+  function wireZoom(canvas) {
+    canvas._zoomWired = true;
+    function dom() { return canvas._view || (canvas._chart && canvas._chart.full); }
+    function pw() { var c = canvas._chart; return Math.max(1, canvas.clientWidth - c.padL - c.padR); }
+    function ph() { var c = canvas._chart; return Math.max(1, canvas.clientHeight - c.padT - c.padB); }
+    function pxToData(mx, my) {
+      var c = canvas._chart, d = dom();
+      var tx = Math.max(0, Math.min(1, (mx - c.padL) / pw()));
+      var ty = Math.max(0, Math.min(1, (my - c.padT) / ph()));
+      return { x: d.xmin + tx * (d.xmax - d.xmin), y: d.ymax - ty * (d.ymax - d.ymin) };
+    }
+    canvas.addEventListener('wheel', function (e) {
+      var c = canvas._chart; if (!c || !c.full) return;
+      e.preventDefault();
+      var d = dom(); var v = { xmin: d.xmin, xmax: d.xmax, ymin: d.ymin, ymax: d.ymax };
+      var rect = canvas.getBoundingClientRect();
+      var at = pxToData(e.clientX - rect.left, e.clientY - rect.top);
+      var f = e.deltaY < 0 ? 0.85 : 1 / 0.85;
+      if (!e.shiftKey) { v.xmin = at.x - (at.x - v.xmin) * f; v.xmax = at.x + (v.xmax - at.x) * f; }
+      if (!e.altKey) { v.ymin = at.y - (at.y - v.ymin) * f; v.ymax = at.y + (v.ymax - at.y) * f; }
+      canvas._view = v; redraw(canvas);
+    }, { passive: false });
+    var drag = null;
+    canvas.addEventListener('mousedown', function (e) {
+      var c = canvas._chart; if (!c || !c.full) return;
+      var d = dom(); drag = { x: e.clientX, y: e.clientY, v: { xmin: d.xmin, xmax: d.xmax, ymin: d.ymin, ymax: d.ymax } };
+      canvas.style.cursor = 'grabbing';
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!drag || !canvas._chart) return;
+      var dx = (e.clientX - drag.x) / pw() * (drag.v.xmax - drag.v.xmin);
+      var dy = (e.clientY - drag.y) / ph() * (drag.v.ymax - drag.v.ymin);
+      canvas._view = { xmin: drag.v.xmin - dx, xmax: drag.v.xmax - dx, ymin: drag.v.ymin + dy, ymax: drag.v.ymax + dy };
+      redraw(canvas);
+    });
+    window.addEventListener('mouseup', function () { if (drag) { drag = null; canvas.style.cursor = 'grab'; } });
+    if (window.ResizeObserver) { new ResizeObserver(function () { redraw(canvas); }).observe(canvas); }
+  }
+
   // ---- state caches --------------------------------------------------------
   var lastStatus = null, lastMetrics = [], lastSummary = null, lastEventsForChart = [];
 
@@ -442,6 +506,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === r); });
     loadMetrics(); loadSummary();
   }
+  Array.prototype.forEach.call(document.querySelectorAll('.btn-reset'), function (b) {
+    b.addEventListener('click', function () { var cv = $(b.getAttribute('data-chart')); if (cv) resetZoom(cv); });
+  });
   Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) {
     b.addEventListener('click', function () { setRange(b.getAttribute('data-range')); });
   });
@@ -661,7 +728,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['targetSpeedUnits', 'Target speed (PH/s)', 'number', 'How much hashrate you want delivered. The bidder prices to win this much from the market.'],
       ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number', 'Cushion added above the market anchor. Higher = more reliably filled but costs more; lower = cheaper but drops out sooner when rivals raise.'],
       ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Absolute hard ceiling on the order price (a backstop). The bidder never pays more than this even if the dynamic cap is higher or the hashprice source is down.'],
-      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'],
       ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
