@@ -413,5 +413,55 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     return { ok, checks };
   });
 
+  // Read-only diagnostic: dump the RAW NiceHash order-book entries + our raw
+  // order objects, so we can see exactly which fields carry the per-order miner
+  // count (orderbook) and the delivered speed (our orders), and their scale.
+  // Used to reconcile our parsing with what the NiceHash UI shows.
+  app.get('/api/nicehash/debug/raw', async () => {
+    const s = await currentSettings();
+    if (!s.apiKey || !s.apiSecret || !s.orgId) {
+      return { error: 'API key, secret, and organization id are required.' };
+    }
+    const client = createNiceHashClient({
+      baseUrl: s.baseUrl,
+      credentials: { apiKey: s.apiKey, apiSecret: s.apiSecret, orgId: s.orgId },
+    });
+    const out: Record<string, unknown> = {};
+    try {
+      await client.syncTime();
+    } catch {
+      /* best effort */
+    }
+    try {
+      const book = await client.getOrderBook(s.algorithm);
+      const stats =
+        book.stats?.[s.priceCurrency] ?? Object.values(book.stats ?? {})[0] ?? null;
+      const orders = [...(stats?.orders ?? [])].sort(
+        (a, b) => Number(b.price) - Number(a.price),
+      );
+      out.orderBook = {
+        currency: s.priceCurrency,
+        totalSpeed: stats?.totalSpeed,
+        marketFactor: stats?.marketFactor,
+        displayMarketFactor: stats?.displayMarketFactor,
+        priceFactor: stats?.priceFactor,
+        displayPriceFactor: stats?.displayPriceFactor,
+        count: orders.length,
+        // Raw entries with every field, so we can spot the miner-count field.
+        topOrders: orders.slice(0, 15),
+        cheapestOrders: orders.slice(-20),
+      };
+    } catch (err) {
+      out.orderBookError = err instanceof Error ? err.message : String(err);
+    }
+    try {
+      const my = await client.getMyOrders({ algorithm: s.algorithm, market: s.market });
+      out.myOrders = my.list ?? [];
+    } catch (err) {
+      out.myOrdersError = err instanceof Error ? err.message : String(err);
+    }
+    return out;
+  });
+
   return app;
 }

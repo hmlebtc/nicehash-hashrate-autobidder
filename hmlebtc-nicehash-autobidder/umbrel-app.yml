@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.1"
+version: "0.6.2"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,15 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.2 - diagnostics for marginal price + delivered speed.
+
+  Adds a read-only debug endpoint (/api/nicehash/debug/raw) that dumps the raw
+  NiceHash order-book entries and your raw order objects, so the exact fields
+  for the per-order miner count and delivered speed can be identified and our
+  parsing corrected. Investigating two reports: the marginal/anchor reading too
+  high vs the order book, and delivered hashrate showing 0 when the order is
+  actually receiving some.
+
   v0.6.1 - smarter walk-up + clearer price chart.
 
   Walk-up no longer uses a fixed step: while under-filled it jumps to just above
