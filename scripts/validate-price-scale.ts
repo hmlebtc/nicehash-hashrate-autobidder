@@ -98,10 +98,11 @@ async function main(): Promise<void> {
     .filter((p) => p > 0)
     .sort((a, b) => a - b);
   const cheapest = standardPrices[0];
-  // Half the cheapest live STANDARD (uncompetitive -> won't be matched), or a
-  // tiny fallback when the book has no STANDARD orders. Override with
-  // NICEHASH_VALIDATE_PRICE.
-  const submitPrice = num('NICEHASH_VALIDATE_PRICE', cheapest ? cheapest * 0.5 : 0.0001);
+  // Default to the cheapest live STANDARD price: guaranteed-valid (others use
+  // it) and, tying at the bottom of the book, it's filled last - so in the
+  // ~1s before we cancel it won't match (and even a momentary match spends a
+  // financially negligible amount). Override with NICEHASH_VALIDATE_PRICE.
+  const submitPrice = num('NICEHASH_VALIDATE_PRICE', cheapest ?? 0.0001);
   const submitLimit = num('NICEHASH_VALIDATE_LIMIT', minSpeed);
   const submitAmount = num('NICEHASH_VALIDATE_AMOUNT', minOrder);
 
