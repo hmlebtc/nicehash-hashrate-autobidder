@@ -2,6 +2,16 @@
 
 ## 2026-06-29
 
+### `[UI]` Instant (optimistic) run-mode switching
+
+Switching DRY-RUN / PAUSE / LIVE now flips the mode badge to the target mode
+immediately — with a small spinner while the change is confirmed in the
+background — instead of waiting on the request round trip (and the in-flight
+tick) before showing anything. The server already applies the mode in memory
+the moment the request lands; the UI no longer looks frozen during the change.
+Also surfaces the live algorithm limits (price down-step, min order, min speed)
+on the Test connection NiceHash row.
+
 ### `[Feature]` Track-to-fill bidding (walk up to win, walk down to save)
 
 The controller now manages the live order as a closed loop instead of just

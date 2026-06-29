@@ -54,7 +54,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .mode-DRY_RUN { background: #3b82f633; color: #60a5fa; }
   .mode-LIVE { background: #34d39933; color: var(--green); }
   .mode-PAUSED { background: #facc1533; color: var(--gold); }
-  .badge.switching { background: #facc1533; color: var(--gold); animation: nhpulse 1s ease-in-out infinite; }
+  .badge.switching { animation: nhpulse 1s ease-in-out infinite; }
   .badge.switching::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nhspin .7s linear infinite; }
   @keyframes nhspin { to { transform: rotate(360deg); } }
   @keyframes nhpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
@@ -325,21 +325,31 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   });
 
   // ---- run mode ------------------------------------------------------------
+  // The server applies the mode in memory the instant the request lands, so we
+  // update the UI optimistically (badge flips to the target mode immediately,
+  // with a small spinner while we confirm) rather than waiting on the round
+  // trip - switching feels instant and never looks frozen.
   var modeBusy = false;
-  function modeSwitching(on) {
-    modeBusy = on;
-    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.disabled = on; });
-    if (on) { var badge = $('modeBadge'); badge.textContent = 'switching…'; badge.className = 'badge switching'; }
+  function setModeOptimistic(mode) {
+    modeBusy = true;
+    var badge = $('modeBadge');
+    badge.textContent = mode;                         // show the target mode now
+    badge.className = 'badge mode-' + mode + ' switching'; // mode colour + spinner = confirming
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+      b.disabled = true;
+    });
   }
   async function setMode(mode) {
     if (modeBusy) return;
     if (mode === 'LIVE' && !confirm('Switch to LIVE? The bidder will place and manage REAL orders.')) return;
-    modeSwitching(true); // instant feedback: the round trip can take a moment
+    setModeOptimistic(mode); // instant feedback
     try {
       await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
-    } catch (e) { /* surfaced by the refresh below */ }
-    modeSwitching(false);
-    await refreshStatus(); // re-paints the badge + buttons from the applied mode
+    } catch (e) { /* the refresh below repaints the true state on failure */ }
+    modeBusy = false;
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.disabled = false; });
+    refreshStatus(); // confirm: repaints the solid badge from the server (clears the spinner)
   }
   Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
