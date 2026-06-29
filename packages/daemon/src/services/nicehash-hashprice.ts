@@ -8,10 +8,10 @@
  * order prices (displayPriceFactor "EH") - so it can be compared directly to
  * our bid and the market anchor.
  *
- * This is an ESTIMATE: it uses mainnet emission + network hashrate and assumes
- * the SHA-256 price-display unit (EH). It never drives bidding unless the
- * operator configures the dynamic hashprice cap; it primarily feeds the
- * dashboard. The controller reads {@link HashpriceOracle.latest} (sync, last
+ * This is an ESTIMATE: it uses the last ~day of actual block rewards (subsidy +
+ * fees) divided by the difficulty-implied network hashrate (the same basis as
+ * Luxor's Hashrate Index spot hashprice), in the SHA-256 price-display unit (EH).
+ * It feeds the dashboard and the dynamic price cap. The controller reads {@link HashpriceOracle.latest} (sync, last
  * fetched); the daemon calls {@link HashpriceOracle.refresh} on a schedule.
  */
 
@@ -30,6 +30,8 @@ export interface HashpriceOracleOptions {
 
 const SATS_PER_BTC = 100_000_000;
 const H_PER_EH = 1e18;
+/** Bitcoin's target block interval (s); difficulty × 2^32 / this = hashrate. */
+const BLOCK_TIME_SECONDS = 600;
 
 export class HashpriceOracle {
   private readonly source: HashpriceSource;
@@ -82,18 +84,25 @@ export class HashpriceOracle {
   }
 
   private async fetchMempool(): Promise<number | null> {
-    const [hashrate, dailyBtc] = await Promise.all([
-      this.getJson<{ currentHashrate?: number }>('/api/v1/mining/hashrate/3d').then((d) =>
-        Number(d.currentHashrate),
+    const [difficulty, dailyBtc] = await Promise.all([
+      this.getJson<{ currentDifficulty?: number }>('/api/v1/mining/hashrate/3d').then((d) =>
+        Number(d.currentDifficulty),
       ),
       // Sum of block rewards (subsidy + fees) over the last ~144 blocks ≈ 1 day.
       this.getJson<{ totalReward?: number | string }>('/api/v1/mining/reward-stats/144').then(
         (d) => Number(d.totalReward) / SATS_PER_BTC,
       ),
     ]);
-    if (!(hashrate > 0) || !(dailyBtc > 0)) return null;
+    if (!(difficulty > 0) || !(dailyBtc > 0)) return null;
+    // Use the *difficulty-implied* network hashrate (difficulty × 2^32 / target
+    // block time), not the measured 3-day hashrate: difficulty is what actually
+    // sets your share of blocks, and it's the basis Luxor's Hashrate Index uses
+    // for its spot hashprice - so our value tracks that index rather than drifting
+    // a couple percent off it on measured-hashrate noise.
+    const networkHs = (difficulty * 2 ** 32) / BLOCK_TIME_SECONDS;
+    if (!(networkHs > 0)) return null;
     // BTC per (H/s) per day, scaled to per EH/day.
-    return (dailyBtc / hashrate) * H_PER_EH;
+    return (dailyBtc / networkHs) * H_PER_EH;
   }
 
   private async getJson<T>(path: string): Promise<T> {

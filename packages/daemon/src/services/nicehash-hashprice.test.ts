@@ -3,16 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { HashpriceOracle } from './nicehash-hashprice.js';
 
 /** Fake fetch returning canned JSON per mempool endpoint. */
-function fakeFetch(data: { hashrate?: number; totalReward?: number }, fail = false): typeof fetch {
+function fakeFetch(data: { difficulty?: number; totalReward?: number }, fail = false): typeof fetch {
   return vi.fn(async (url: string | URL | Request) => {
     if (fail) throw new Error('network down');
     const u = String(url);
     const body = u.includes('/mining/hashrate/')
-      ? { currentHashrate: data.hashrate }
+      ? { currentDifficulty: data.difficulty }
       : { totalReward: data.totalReward };
     return { ok: true, status: 200, json: async () => body } as Response;
   }) as unknown as typeof fetch;
 }
+
+// hashprice = dailyBtc / (difficulty × 2^32 / 600) × 1e18 (BTC/EH/day).
+const DIFFICULTY = 1e14;
+const DAILY_BTC = 450;
+const NETWORK_HS = (DIFFICULTY * 2 ** 32) / 600;
+const EXPECTED = (DAILY_BTC / NETWORK_HS) * 1e18;
+const GOOD = { difficulty: DIFFICULTY, totalReward: DAILY_BTC * 100_000_000 };
 
 describe('HashpriceOracle', () => {
   it('source "none" never fetches and stays null', async () => {
@@ -23,39 +30,20 @@ describe('HashpriceOracle', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('computes BTC/EH/day from mempool hashrate + daily reward', async () => {
-    // 600 EH/s network, 450 BTC/day reward -> 450/600 = 0.75 BTC/EH/day.
-    const oracle = new HashpriceOracle({
-      source: 'mempool',
-      fetchImpl: fakeFetch({ hashrate: 6e20, totalReward: 450 * 100_000_000 }),
-    });
+  it('computes BTC/EH/day from difficulty-implied hashrate + daily reward', async () => {
+    const oracle = new HashpriceOracle({ source: 'mempool', fetchImpl: fakeFetch(GOOD) });
     const hp = await oracle.refresh();
-    expect(hp).toBeCloseTo(0.75, 9);
-    expect(oracle.latest()).toBeCloseTo(0.75, 9);
+    expect(hp).toBeCloseTo(EXPECTED, 12);
+    expect(oracle.latest()).toBeCloseTo(EXPECTED, 12);
   });
 
   it('keeps the last good value when a refresh fails', async () => {
-    const now = { t: 1000 };
-    const oracle = new HashpriceOracle({
-      source: 'mempool',
-      ttlMs: 100,
-      now: () => now.t,
-      fetchImpl: fakeFetch({ hashrate: 6e20, totalReward: 450 * 100_000_000 }),
-    });
-    await oracle.refresh();
-    expect(oracle.latest()).toBeCloseTo(0.75, 9);
-
-    // Swap in a failing fetch via a fresh oracle sharing the value is not
-    // possible; instead simulate by constructing one that fails after success.
-    const failing = new HashpriceOracle({ source: 'mempool', fetchImpl: fakeFetch({}, true) });
-    // seed it by reflecting the prior value through a successful call first
-    const ok = new HashpriceOracle({
-      source: 'mempool',
-      fetchImpl: fakeFetch({ hashrate: 6e20, totalReward: 450 * 100_000_000 }),
-    });
+    const ok = new HashpriceOracle({ source: 'mempool', fetchImpl: fakeFetch(GOOD) });
     await ok.refresh();
-    expect(ok.latest()).toBeCloseTo(0.75, 9);
-    // failing oracle never succeeded -> stays null, does not throw
+    expect(ok.latest()).toBeCloseTo(EXPECTED, 12);
+
+    // A fresh oracle that only ever fails stays null and does not throw.
+    const failing = new HashpriceOracle({ source: 'mempool', fetchImpl: fakeFetch({}, true) });
     expect(await failing.refresh()).toBeNull();
   });
 
@@ -65,7 +53,7 @@ describe('HashpriceOracle', () => {
       source: 'mempool',
       ttlMs: 1000,
       now: () => now.t,
-      fetchImpl: fakeFetch({ hashrate: 6e20, totalReward: 450 * 100_000_000 }),
+      fetchImpl: fakeFetch(GOOD),
     });
     expect(oracle.isStale()).toBe(true);
     await oracle.refresh();
@@ -74,10 +62,10 @@ describe('HashpriceOracle', () => {
     expect(oracle.isStale()).toBe(true);
   });
 
-  it('returns null on absurd inputs (zero hashrate)', async () => {
+  it('returns null on absurd inputs (zero difficulty)', async () => {
     const oracle = new HashpriceOracle({
       source: 'mempool',
-      fetchImpl: fakeFetch({ hashrate: 0, totalReward: 450 * 100_000_000 }),
+      fetchImpl: fakeFetch({ difficulty: 0, totalReward: DAILY_BTC * 100_000_000 }),
     });
     expect(await oracle.refresh()).toBeNull();
   });

@@ -117,7 +117,6 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     pool_fee_pct: cfg.pool_fee_pct ?? 0,
     dynamic_cap_enabled: cfg.dynamic_cap_enabled ?? false,
     dynamic_cap_buffer_btc: cfg.dynamic_cap_buffer_btc ?? 0,
-    edit_price_deadband_pct: cfg.price_edit_deadband_pct,
   };
   if (!result) {
     return {

@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.5"
+version: "0.6.6"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.6 - zoomable charts, hashprice matches Hashrate Index.
+
+  The Hashrate and Price charts are now interactive: scroll to zoom (shift =
+  vertical, alt = horizontal), drag to pan, drag the bottom edge to resize, and a
+  reset button returns to the full view.
+
+  Hashprice now divides the daily block reward by the difficulty-implied network
+  hashrate (the basis Luxor's Hashrate Index uses) instead of the measured 3-day
+  hashrate, so the dashboard hashprice - and the dynamic cap derived from it -
+  lines up with the index instead of reading a couple percent low.
+
+  Also removes the legacy "Edit-price deadband (%)" config knob (a sensible
+  internal default is kept).
+
   v0.6.5 - dynamic price cap.
 
   The bid ceiling can now track the market. The new dynamic cap = hashprice x
