@@ -52,6 +52,9 @@ services:
       NICEHASH_TARGET_SPEED: "1"
       NICEHASH_OVERPAY: "0.0001"
       NICEHASH_MAX_PRICE: "0.02"
+      # Network-hashprice estimate for the cost-vs-hashprice tile + P&L.
+      # "mempool" (mempool.space, keyless) or "none" to disable.
+      NICEHASH_HASHPRICE_SOURCE: mempool
 
       # --- Credentials + pool ---
       # Left blank on purpose - enter these on the dashboard Config tab. They

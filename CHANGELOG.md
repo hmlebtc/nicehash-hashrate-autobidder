@@ -9,7 +9,11 @@ The Umbrel compose now points at `https://api2.nicehash.com` with
 **blank** — you enter your own on the Config tab. These env values only seed
 settings on first install; the daemon then boots from the values saved in
 the app database, so updates never clobber them and existing installs keep
-their saved config.
+their saved config. Fresh installs also default the hashprice source to
+`mempool` (keyless) so the cost-vs-hashprice tile and P&L estimate work out
+of the box; switch it to `none` to disable. (Hashrate Index / Luxor was
+considered but needs a per-user API key for the same number, so mempool
+stays the default.)
 
 ### `[UI]` Autobidder theme + config field help
 
