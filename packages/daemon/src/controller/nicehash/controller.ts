@@ -50,6 +50,12 @@ export interface NiceHashControllerDeps {
   readonly events?: NiceHashEventsRepo;
   /** Configured minimum floor (display units) - recorded into metrics. */
   readonly floorUnits?: number;
+  /**
+   * Conversion from a speed-display unit (e.g. PH) to a price-display unit
+   * (e.g. EH): marketFactor / priceFactor. Used to express the burn rate
+   * (price x delivered) in BTC/day. Defaults to 1 (no conversion).
+   */
+  readonly speedToPriceUnit?: number;
 }
 
 export class NiceHashController {
@@ -98,7 +104,12 @@ export class NiceHashController {
     if (this.deps.metrics) {
       try {
         await this.deps.metrics.record(
-          buildMetricsRow(result.state, hashprice, this.deps.floorUnits ?? null),
+          buildMetricsRow(
+            result.state,
+            hashprice,
+            this.deps.floorUnits ?? null,
+            this.deps.speedToPriceUnit ?? 1,
+          ),
         );
       } catch {
         /* ignore - metrics are non-critical */
@@ -164,6 +175,7 @@ function buildMetricsRow(
   state: NiceHashState,
   hashprice: number | null,
   floorUnits: number | null,
+  speedToPriceUnit: number,
 ): NiceHashMetricRow {
   const owned = state.owned_orders;
   const primary = owned.find((o) => isActionableOrder(o)) ?? owned[0];
@@ -180,7 +192,9 @@ function buildMetricsRow(
     target_units: state.config.target_speed_units,
     floor_units: floorUnits,
     available_amount_btc: sum(owned, (o) => o.available_amount_btc),
-    spend_rate_btc_day: sum(owned, (o) => o.price_btc * o.accepted_speed_units),
+    // Burn rate in BTC/day = price (BTC per price-unit/day) x delivered speed
+    // converted from the speed unit (PH) to the price unit (EH).
+    spend_rate_btc_day: sum(owned, (o) => o.price_btc * o.accepted_speed_units) * speedToPriceUnit,
     hashprice_btc_per_unit_day: hashprice,
     owned_count: owned.length,
     unknown_count: state.unknown_orders.length,

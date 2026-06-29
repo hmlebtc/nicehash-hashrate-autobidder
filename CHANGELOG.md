@@ -2,6 +2,17 @@
 
 ## 2026-06-29
 
+### `[Feature]` Dashboard data API: metrics, history, summary, run-now
+
+New HTTP endpoints backing the upcoming charts/tiles/History UI:
+`GET /api/nicehash/metrics?range=` (downsampled time series for the
+hashrate + price charts), `GET /api/nicehash/history` (order-event audit
+trail with action/order/date/Δ-price filters), `GET /api/nicehash/summary`
+(window averages, uptime, lifetime spend, current hashprice for the tiles
++ P&L), and `POST /api/nicehash/run-now` ("Run decision now" - a guarded
+out-of-band tick that can't overlap the loop). The order burn rate is now
+expressed in BTC/day via the speed-unit→price-unit (PH→EH) conversion.
+
 ### `[Feature]` Network-hashprice oracle (estimate)
 
 Since NiceHash exposes no income data, the daemon now derives the SHA-256

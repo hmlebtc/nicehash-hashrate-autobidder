@@ -6,7 +6,10 @@ import { NiceHashStateStore } from '../controller/nicehash/state-store.js';
 import { SECRET_MASK, settingsFromEnv, type NiceHashSettings } from '../controller/nicehash/settings.js';
 import type { NiceHashControllerConfig } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult } from '../controller/nicehash/tick.js';
-import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
+import { closeDatabase, openDatabase, type DatabaseHandle } from '../state/db.js';
+import { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
+import { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
+import { NiceHashEventsRepo } from '../state/repos/nicehash_order_events.js';
 import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 import { createNiceHashHttpServer, type NiceHashHttpDeps } from './nicehash-server.js';
 
@@ -253,5 +256,107 @@ describe('NiceHash HTTP server', () => {
     const body = res.json();
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/clock unreachable/);
+  });
+});
+
+describe('NiceHash HTTP server - metrics / history / summary / run-now', () => {
+  let handle: DatabaseHandle;
+  let app: FastifyInstance;
+  let metricsRepo: NiceHashMetricsRepo;
+  let eventsRepo: NiceHashEventsRepo;
+  let ledger: NiceHashOrdersRepo;
+  let runNow: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    handle = await openDatabase({ path: ':memory:' });
+    metricsRepo = new NiceHashMetricsRepo(handle.db);
+    eventsRepo = new NiceHashEventsRepo(handle.db);
+    ledger = new NiceHashOrdersRepo(handle.db);
+    runNow = vi.fn(async () => ({ ok: true }));
+
+    const now = Date.now();
+    for (let i = 0; i < 5; i++) {
+      await metricsRepo.record({
+        ts: now - (5 - i) * 60_000,
+        run_mode: 'LIVE',
+        api_ok: 1,
+        balance_btc: 0.01,
+        anchor_price_btc: 0.0102,
+        our_price_btc: 0.0103,
+        total_speed_units: 500,
+        accepted_speed_units: 0.9,
+        limit_units: 1,
+        target_units: 1,
+        floor_units: 0.01,
+        available_amount_btc: 0.0008,
+        spend_rate_btc_day: 0.00001,
+        hashprice_btc_per_unit_day: 0.0098,
+        owned_count: 1,
+        unknown_count: 0,
+      });
+    }
+    await eventsRepo.record({
+      ts: now - 120_000, order_id: 'o1', action: 'CREATE', run_mode: 'LIVE', outcome: 'EXECUTED',
+      price_before: null, price_after: 0.0102, limit_before: null, limit_after: 1,
+      amount_btc: 0.001, anchor_price_btc: 0.0102, reason: 'create', detail: 'ok',
+    });
+    await eventsRepo.record({
+      ts: now - 60_000, order_id: 'o1', action: 'EDIT_PRICE', run_mode: 'LIVE', outcome: 'EXECUTED',
+      price_before: 0.0102, price_after: 0.0103, limit_before: null, limit_after: null,
+      amount_btc: null, anchor_price_btc: 0.0102, reason: 'track', detail: 'ok',
+    });
+
+    const store = new NiceHashStateStore('LIVE');
+    app = await createNiceHashHttpServer({
+      store,
+      ledger,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+      metrics: metricsRepo,
+      events: eventsRepo,
+      hashprice: () => 0.0098,
+      runNow,
+    });
+  });
+  afterEach(async () => {
+    await app.close();
+    await closeDatabase(handle);
+  });
+
+  it('GET /api/nicehash/metrics returns the windowed series', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/metrics?range=24h' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.range).toBe('24h');
+    expect(body.rows.length).toBe(5);
+    expect(body.rows[0].our_price_btc).toBe(0.0103);
+  });
+
+  it('GET /api/nicehash/history filters by action', async () => {
+    const all = (await app.inject({ method: 'GET', url: '/api/nicehash/history' })).json();
+    expect(all.events.length).toBe(2);
+    const edits = (
+      await app.inject({ method: 'GET', url: '/api/nicehash/history?action=EDIT_PRICE' })
+    ).json();
+    expect(edits.events.length).toBe(1);
+    expect(edits.events[0].action).toBe('EDIT_PRICE');
+  });
+
+  it('GET /api/nicehash/summary returns tiles + lifetime spend + hashprice', async () => {
+    const body = (await app.inject({ method: 'GET', url: '/api/nicehash/summary?range=24h' })).json();
+    expect(body.summary.samples).toBe(5);
+    expect(body.summary.uptime_pct).toBe(100);
+    expect(body.summary.avg_our_price_btc).toBeCloseTo(0.0103, 9);
+    expect(body.hashprice_now).toBe(0.0098);
+    expect(body.lifetime_spent_btc).toBe(0);
+    expect(body.current.ts).toBeGreaterThan(0);
+  });
+
+  it('POST /api/nicehash/run-now triggers a tick', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/nicehash/run-now' });
+    expect(res.json()).toEqual({ ok: true });
+    expect(runNow).toHaveBeenCalledTimes(1);
   });
 });

@@ -131,6 +131,12 @@ async function main(): Promise<void> {
   const hashpriceOracle = new HashpriceOracle({ source: settings.hashpriceSource });
   await hashpriceOracle.refresh();
 
+  // Speed-unit (PH) -> price-unit (EH) conversion = marketFactor / priceFactor.
+  // Used to express the order burn rate in BTC/day in the metrics. 1 = no-op.
+  const mf = Number(algo.marketFactor);
+  const pf = Number(algo.priceFactor);
+  const speedToPriceUnit = mf > 0 && pf > 0 ? mf / pf : 1;
+
   // Shared store: the loop writes each tick here, the HTTP API reads it, and
   // the run mode lives here so the dashboard can flip DRY-RUN / LIVE / PAUSED.
   // The boot mode decides the starting run mode (RESUME demotes PAUSED).
@@ -149,6 +155,7 @@ async function main(): Promise<void> {
     metrics: metricsRepo,
     events: eventsRepo,
     floorUnits: settings.minimumFloorUnits,
+    speedToPriceUnit,
   });
 
   // Prune the time-series + audit log to the configured retention window on
@@ -165,6 +172,26 @@ async function main(): Promise<void> {
   };
   await prune();
 
+  // Single guarded tick driver, shared by the loop and the "Run decision now"
+  // HTTP endpoint so the two can never run concurrently.
+  let ticking = false;
+  const doTick = async (): Promise<{ ok: boolean; error?: string }> => {
+    if (ticking) return { ok: false, error: 'a decision tick is already running' };
+    ticking = true;
+    try {
+      const result = await controller.tick();
+      store.setLast(result);
+      logTick(result);
+      return { ok: true };
+    } catch (err) {
+      const error = (err as Error)?.message ?? String(err);
+      console.error(`tick error: ${error}`);
+      return { ok: false, error };
+    } finally {
+      ticking = false;
+    }
+  };
+
   const httpPort = Number(process.env.NICEHASH_HTTP_PORT ?? 3010);
   const app = await createNiceHashHttpServer({
     store,
@@ -173,6 +200,10 @@ async function main(): Promise<void> {
     config,
     buildNumber: readBuildNumber(),
     tickSeconds: settings.tickSeconds,
+    metrics: metricsRepo,
+    events: eventsRepo,
+    hashprice: () => hashpriceOracle.latest(),
+    runNow: doTick,
   });
   await app.listen({ port: httpPort, host: '0.0.0.0' });
 
@@ -208,13 +239,7 @@ async function main(): Promise<void> {
   while (!stopping) {
     // Refresh the hashprice estimate when stale (cheap no-op when source=none).
     if (hashpriceOracle.isStale()) await hashpriceOracle.refresh();
-    try {
-      const result = await controller.tick();
-      store.setLast(result);
-      logTick(result);
-    } catch (err) {
-      console.error(`tick error: ${(err as Error)?.message ?? String(err)}`);
-    }
+    await doTick();
     if (Date.now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
       await prune();
       lastPruneAt = Date.now();
