@@ -10,6 +10,8 @@
  *     duplicate order while blind to the one we may already have.
  */
 
+import { parseDecimal } from '@hashrate-autopilot/nicehash-client';
+
 import type { MarketAnchor, NiceHashControllerConfig, NiceHashState, RunMode } from './types.js';
 import { availableBtcFromBalance, marketAnchorFromBook, reconcileOrders } from './wire.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
@@ -56,6 +58,26 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     );
     owned = split.owned;
     unknown = split.unknown;
+
+    // The myOrders LIST under-reports delivered speed (it can read 0 even while
+    // the per-order detail shows a live draw), so refresh each of our orders'
+    // accepted speed from the order-detail endpoint. Best-effort: a failed
+    // detail read just keeps the list value, and we never lower a reading
+    // (take the larger of the two same-tick numbers).
+    owned = await Promise.all(
+      owned.map(async (o) => {
+        try {
+          const detail = await service.getOrder(o.order_id);
+          const detailSpeed = parseDecimal(detail.acceptedCurrentSpeed);
+          if (Number.isFinite(detailSpeed) && detailSpeed > o.accepted_speed_units) {
+            return { ...o, accepted_speed_units: detailSpeed };
+          }
+        } catch {
+          /* keep the list-reported speed on detail-read failure */
+        }
+        return o;
+      }),
+    );
   } catch (err) {
     ordersOk = false;
     ordersError = errMsg(err);
@@ -65,7 +87,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   let market: MarketAnchor | null = null;
   let marketError: string | null = null;
   try {
-    const book = await service.getOrderBook(config.algorithm);
+    const book = await service.getOrderBook(config.algorithm, deps.currency);
     market = marketAnchorFromBook(book, config.target_speed_units, deps.knownOrderIds, deps.currency);
   } catch (err) {
     marketError = errMsg(err); // market stays null

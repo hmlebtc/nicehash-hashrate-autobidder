@@ -2,6 +2,26 @@
 
 ## 2026-06-29
 
+### `[Fix]` Anchor reads the true marginal (paginate the order book)
+
+The NiceHash order-book endpoint returns only the **top ~100 orders by price**,
+and in a liquid SHA256 market every one of those is already filled — so the
+cheapest order we could see (~0.477) sat far above the real marginal (~0.457),
+and the anchor (and our bid) anchored to the top of the book instead of the
+floor. The bidder now **walks the order book page by page** down to where orders
+stop having miners, so it sees the genuine cheapest filled order and bids just
+above *that*. The raw debug endpoint now reports `pagesFetched`,
+`totalPageCount`, and the computed `marginalFilledPrice`.
+
+### `[Fix]` Delivered hashrate no longer stuck at 0
+
+The `myOrders` list endpoint can report `acceptedCurrentSpeed` as 0 even while an
+order is drawing a little hashrate. Each of our orders is now refreshed from the
+per-order detail endpoint (best-effort; a failed detail read keeps the list
+value and never blocks the tick), so the delivered-speed reading reflects the
+live draw. The deeper cause was the bid sitting below the fill line — corrected
+by the anchor fix above, which puts the bid where it actually wins hashrate.
+
 ### `[Infra]` Raw-orderbook / raw-order debug endpoint
 
 Adds a read-only `GET /api/nicehash/debug/raw` that returns the raw NiceHash

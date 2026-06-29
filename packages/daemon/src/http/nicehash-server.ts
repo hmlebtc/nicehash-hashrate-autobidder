@@ -17,6 +17,7 @@ import fastifyCors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { createNiceHashClient, NiceHashApiError } from '@hashrate-autopilot/nicehash-client';
+import type { OrderBookEntry, OrderBookResponse } from '@hashrate-autopilot/nicehash-client';
 
 import { NICEHASH_DASHBOARD_HTML } from './nicehash-dashboard-html.js';
 import {
@@ -433,20 +434,52 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
       /* best effort */
     }
     try {
-      const book = await client.getOrderBook(s.algorithm);
-      const stats =
-        book.stats?.[s.priceCurrency] ?? Object.values(book.stats ?? {})[0] ?? null;
-      const orders = [...(stats?.orders ?? [])].sort(
-        (a, b) => Number(b.price) - Number(a.price),
-      );
+      // Walk pages downward (price-descending) until we cross the marginal -
+      // the orderBook caps each page at ~100 orders, so the floor (cheapest
+      // order still receiving hashrate) lives several pages below the top.
+      const PAGE_SIZE = 100;
+      const MAX_PAGES = 25;
+      const merged: OrderBookEntry[] = [];
+      const seen = new Set<string>();
+      let firstStats: OrderBookResponse['stats'][string] | null = null;
+      let pagesFetched = 0;
+      let totalPageCount: number | undefined;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const book = await client.getOrderBook(s.algorithm, { size: PAGE_SIZE, page });
+        const stats = book.stats?.[s.priceCurrency] ?? Object.values(book.stats ?? {})[0] ?? null;
+        if (page === 0) firstStats = stats;
+        totalPageCount = stats?.pagination?.totalPageCount;
+        const pageOrders = stats?.orders ?? [];
+        pagesFetched = page + 1;
+        let added = 0;
+        let sawUnfilled = false;
+        for (const o of pageOrders) {
+          const key = o.id ?? `${o.price}|${o.limit}|${o.type ?? ''}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(o);
+          added++;
+          if (o.alive !== false && (o.rigsCount ?? 0) === 0) sawUnfilled = true;
+        }
+        if (added === 0) break;
+        if (sawUnfilled) break;
+        if (totalPageCount !== undefined && page + 1 >= totalPageCount) break;
+        if (pageOrders.length < PAGE_SIZE) break;
+      }
+      const orders = merged.sort((a, b) => Number(b.price) - Number(a.price));
+      const filled = orders.filter((o) => o.alive !== false && (o.rigsCount ?? 0) > 0);
       out.orderBook = {
         currency: s.priceCurrency,
-        totalSpeed: stats?.totalSpeed,
-        marketFactor: stats?.marketFactor,
-        displayMarketFactor: stats?.displayMarketFactor,
-        priceFactor: stats?.priceFactor,
-        displayPriceFactor: stats?.displayPriceFactor,
+        totalSpeed: firstStats?.totalSpeed,
+        marketFactor: firstStats?.marketFactor,
+        displayMarketFactor: firstStats?.displayMarketFactor,
+        priceFactor: firstStats?.priceFactor,
+        displayPriceFactor: firstStats?.displayPriceFactor,
         count: orders.length,
+        pagesFetched,
+        totalPageCount,
+        // The marginal we anchor on: cheapest order still receiving hashrate.
+        marginalFilledPrice: filled.length > 0 ? filled[filled.length - 1]!.price : null,
         // Raw entries with every field, so we can spot the miner-count field.
         topOrders: orders.slice(0, 15),
         cheapestOrders: orders.slice(-20),

@@ -72,7 +72,16 @@ export interface NiceHashClient {
   getAlgorithms(): Promise<MiningAlgorithmsResponse>;
   /** Fetch one algorithm's marketplace settings; throws if not found. */
   getAlgorithmSetting(algorithm: string): Promise<MiningAlgorithmSetting>;
-  getOrderBook(algorithm: string): Promise<OrderBookResponse>;
+  /**
+   * One page of the order book. The endpoint sorts orders by price descending
+   * and returns at most `size` orders per page (NiceHash default 100), so the
+   * cheapest orders - and the true marginal - live in later pages. Pass
+   * `{ size, page }` to walk deeper than the default top-100 window.
+   */
+  getOrderBook(
+    algorithm: string,
+    opts?: { size?: number; page?: number },
+  ): Promise<OrderBookResponse>;
   getAccountBalance(currency?: string): Promise<AccountBalance>;
   getMyOrders(opts: {
     algorithm: string;
@@ -241,11 +250,11 @@ export function createNiceHashClient(config: NiceHashClientConfig = {}): NiceHas
       return found;
     },
 
-    getOrderBook: (algorithm: string) =>
+    getOrderBook: (algorithm: string, opts?: { size?: number; page?: number }) =>
       request<OrderBookResponse>({
         method: 'GET',
         path: '/main/api/v2/hashpower/orderBook',
-        query: { algorithm },
+        query: { algorithm, size: opts?.size, page: opts?.page },
         auth: 'optional',
         retry: 'read',
       }),

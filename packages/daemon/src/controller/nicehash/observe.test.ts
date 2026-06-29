@@ -48,6 +48,15 @@ function service(over: Partial<NiceHashService> = {}): NiceHashService {
       ],
     })),
     getOrderBook: vi.fn(async () => BOOK),
+    // Detail read defaults to the same (zero) delivered speed the list shows,
+    // so enrichment is a no-op unless a test overrides it.
+    getOrder: vi.fn(async (id: string) => ({
+      id,
+      price: '0.0102',
+      limit: '4',
+      amount: '0.01',
+      acceptedCurrentSpeed: '0',
+    })),
     getAccountBalance: vi.fn(async () => ({ currency: 'TBTC', totalBalance: '0.5', available: '0.5' })),
     ...over,
   } as unknown as NiceHashService;
@@ -70,6 +79,37 @@ describe('observe', () => {
     expect(state.balance_btc).toBe(0.5);
     expect(state.market?.anchor_price_btc).toBe(0.0102);
     expect(state.tick_at).toBe(1_700_000_000_000);
+  });
+
+  it('refreshes owned-order delivered speed from the order-detail endpoint', async () => {
+    // The myOrders list reports 0 for "mine"; the detail endpoint shows a live
+    // draw. observe should adopt the larger reading.
+    const svc = service({
+      getOrder: vi.fn(async (id: string) => ({
+        id,
+        price: '0.0102',
+        limit: '4',
+        amount: '0.01',
+        acceptedCurrentSpeed: '0.0002',
+      })) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.accepted_speed_units).toBe(0.0002);
+    expect(svc.getOrder).toHaveBeenCalledWith('mine');
+  });
+
+  it('keeps the list-reported speed when the order-detail read fails', async () => {
+    const svc = service({
+      getOrder: vi.fn(async () => {
+        throw new Error('detail boom');
+      }) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    expect(state.owned_orders.find((o) => o.order_id === 'mine')?.accepted_speed_units).toBe(0);
+    // A detail-read failure must not flip ordersOk / blank the market.
+    expect(state.market).not.toBeNull();
+    expect(state.orders_error == null).toBe(true);
   });
 
   it('forces market=null and records the error when the my-orders read fails (refuse to act blind)', async () => {
