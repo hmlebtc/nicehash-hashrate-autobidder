@@ -26,6 +26,10 @@ import type {
   NiceHashEventsRepo,
   NiceHashOrderEventInput,
 } from '../../state/repos/nicehash_order_events.js';
+import type {
+  NiceHashDecisionLogRepo,
+  NiceHashLogInput,
+} from '../../state/repos/nicehash_decision_log.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
 import { tick as runTick, type NiceHashTickResult, type TickOutcome } from './tick.js';
 import { isActionableOrder, type NiceHashState, type RunMode } from './types.js';
@@ -48,6 +52,8 @@ export interface NiceHashControllerDeps {
   readonly metrics?: NiceHashMetricsRepo;
   /** Optional audit sink: one row per attempted order mutation (History page). */
   readonly events?: NiceHashEventsRepo;
+  /** Optional debug sink: one decision summary row per tick (Logs page). */
+  readonly decisionLog?: NiceHashDecisionLogRepo;
   /** Configured minimum floor (display units) - recorded into metrics. */
   readonly floorUnits?: number;
   /**
@@ -125,6 +131,13 @@ export class NiceHashController {
             /* ignore - history is non-critical */
           }
         }
+      }
+    }
+    if (this.deps.decisionLog) {
+      try {
+        await this.deps.decisionLog.record(buildDecisionRow(result));
+      } catch {
+        /* ignore - the debug log is non-critical */
       }
     }
 
@@ -262,4 +275,43 @@ function toOrderEvent(outcome: TickOutcome, state: NiceHashState): NiceHashOrder
     case 'CANCEL_ORDER':
       return { ...base, action: 'CANCEL', order_id: p.order_id };
   }
+}
+
+/** Build the per-tick decision-log row (Logs page) summarising what happened. */
+function buildDecisionRow(result: NiceHashTickResult): NiceHashLogInput {
+  const s = result.state;
+  const outs = result.outcomes;
+  const failed = outs.some((o) => o.outcome === 'FAILED');
+  const blocked = outs.some((o) => o.outcome === 'BLOCKED');
+  const paused = result.proposals.some((p) => p.kind === 'PAUSE');
+  const marketDown = !s.market;
+
+  const level: NiceHashLogInput['level'] = failed
+    ? 'error'
+    : blocked || paused || marketDown
+      ? 'warn'
+      : 'info';
+
+  let message: string;
+  if (marketDown) message = 'market unavailable (order book / my-orders read failed)';
+  else if (result.proposals.length === 0) message = 'holding — no action';
+  else message = result.proposals.map((p, i) => `${p.kind} → ${outs[i]?.outcome ?? '?'}`).join(', ');
+
+  const lines = result.proposals.map((p, i) => {
+    const o = outs[i];
+    let verdict = '?';
+    if (o) {
+      if (o.outcome === 'BLOCKED') verdict = `BLOCKED(${o.reason})`;
+      else if (o.outcome === 'FAILED') verdict = `FAILED: ${o.error}`;
+      else verdict = o.outcome + ('note' in o && o.note ? ` · ${o.note}` : '');
+    }
+    return `${p.kind}: ${p.reason} -> ${verdict}`;
+  });
+  const detail = [
+    `run=${s.run_mode} balance=${s.balance_btc ?? '?'} anchor=${s.market?.anchor_price_btc ?? 'n/a'} ` +
+      `hashprice=${s.hashprice_btc_per_unit_day ?? 'n/a'} owned=${s.owned_orders.length} unknown=${s.unknown_orders.length}`,
+    ...lines,
+  ].join('\n');
+
+  return { ts: s.tick_at, level, kind: 'TICK', run_mode: s.run_mode, message, detail };
 }

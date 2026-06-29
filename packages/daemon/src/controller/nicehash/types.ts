@@ -102,10 +102,17 @@ export interface NiceHashControllerConfig {
   /** Mining-pool fee, percent. Default 0. */
   readonly pool_fee_pct?: number;
   /**
-   * When true, the bid is capped at the fee-adjusted break-even hashprice
-   * (= hashprice / (1 + (nicehash_fee_pct + pool_fee_pct)/100)) whenever a
-   * hashprice is available, so bid + fees never exceed the hashrate's earnings.
-   * Default false (no break-even cap).
+   * Master switch for the fees & break-even feature. When false, the fee
+   * percentages and the break-even cap are ignored entirely by the bidder
+   * (pricing falls back to overpay + fixed/dynamic ceilings). Default false.
+   */
+  readonly use_break_even?: boolean;
+  /**
+   * When true (and `use_break_even` is on), the bid is capped at the
+   * fee-adjusted break-even hashprice (= hashprice / (1 + (nicehash_fee_pct +
+   * pool_fee_pct)/100)) whenever a hashprice is available, so bid + fees never
+   * exceed the hashrate's earnings. When false, fees are still shown in the
+   * dashboard but the bid is not capped. Default false.
    */
   readonly cap_at_break_even?: boolean;
 }

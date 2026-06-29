@@ -57,10 +57,17 @@ export interface NiceHashSettings {
   /** Mining-pool fee, percent (e.g. 1). */
   readonly poolFeePct: number;
   /**
-   * When true, never bid above the fee-adjusted break-even hashprice
-   * (= hashprice / (1 + (niceHashFee + poolFee)/100)) when a hashprice is
-   * available - so a bid plus both fees never exceeds what the rented hashrate
-   * earns.
+   * Master switch for the fees & break-even feature. When false, the fees and
+   * the break-even cap are ignored by the bidder and hidden from the dashboard
+   * P&L / break-even tiles; pricing falls back to overpay + ceilings only.
+   */
+  readonly useBreakEven: boolean;
+  /**
+   * When true (and {@link useBreakEven} is on), never bid above the
+   * fee-adjusted break-even hashprice (= hashprice / (1 + (niceHashFee +
+   * poolFee)/100)) when a hashprice is available - so a bid plus both fees never
+   * exceeds what the rented hashrate earns. When false the fees are still shown
+   * but the bid is not capped.
    */
   readonly capAtBreakEven: boolean;
   // --- Daemon / data ---
@@ -71,6 +78,8 @@ export interface NiceHashSettings {
   readonly priceSource: string;
   /** Days of tick-metrics + order-event history to retain. */
   readonly retentionDays: number;
+  /** Days of decision/error logs to retain (Logs tab). */
+  readonly logRetentionDays: number;
 }
 
 /** Sentinel returned in place of the real secret by {@link maskSettings}. */
@@ -141,11 +150,13 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
+    useBreakEven: b(env, 'NICEHASH_USE_BREAKEVEN', true),
     capAtBreakEven: b(env, 'NICEHASH_CAP_AT_BREAKEVEN', true),
     bootMode: asBootMode(env.NICEHASH_BOOT_MODE),
     hashpriceSource: asHashpriceSource(env.NICEHASH_HASHPRICE_SOURCE),
     priceSource: s(env, 'NICEHASH_PRICE_SOURCE', 'coingecko'),
     retentionDays: n(env, 'NICEHASH_RETENTION_DAYS', 30),
+    logRetentionDays: n(env, 'NICEHASH_LOG_RETENTION_DAYS', 30),
   };
 }
 
@@ -176,6 +187,7 @@ export function toControllerConfig(
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
     nicehash_fee_pct: settings.niceHashFeePct,
     pool_fee_pct: settings.poolFeePct,
+    use_break_even: settings.useBreakEven,
     cap_at_break_even: settings.capAtBreakEven,
   };
 }
@@ -245,6 +257,7 @@ export function mergeSettings(
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
+    useBreakEven: bool('useBreakEven'),
     capAtBreakEven: bool('capAtBreakEven'),
     bootMode: asBootMode(typeof patch.bootMode === 'string' ? patch.bootMode : existing.bootMode),
     hashpriceSource: asHashpriceSource(
@@ -252,5 +265,6 @@ export function mergeSettings(
     ),
     priceSource: str('priceSource'),
     retentionDays: num('retentionDays'),
+    logRetentionDays: num('logRetentionDays'),
   };
 }

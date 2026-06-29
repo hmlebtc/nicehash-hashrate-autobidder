@@ -261,6 +261,17 @@ export interface NiceHashTickMetricsTable {
   unknown_count: number;
 }
 
+/** Per-tick decision + error log (Logs page). */
+export interface NiceHashDecisionLogTable {
+  id: Generated<number>;
+  ts: number;
+  level: string;
+  kind: string;
+  run_mode: string | null;
+  message: string;
+  detail: string | null;
+}
+
 /** NiceHash order-mutation audit trail (History page). */
 export interface NiceHashOrderEventsTable {
   id: Generated<number>;
@@ -723,6 +734,7 @@ export interface Database {
   nicehash_settings: NiceHashSettingsTable;
   nicehash_tick_metrics: NiceHashTickMetricsTable;
   nicehash_order_events: NiceHashOrderEventsTable;
+  nicehash_decision_log: NiceHashDecisionLogTable;
   deferred_actions: DeferredActionsTable;
   decisions: DecisionsTable;
   spend_events: SpendEventsTable;

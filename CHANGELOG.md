@@ -2,6 +2,38 @@
 
 ## 2026-06-29
 
+### `[Fix]` Only treat live NiceHash orders as "unknown"
+
+Reconciliation flagged any account order missing from the ledger as unknown
+and forced the bot to PAUSE - including old Stopped/Completed/Cancelled
+orders, which blocked it from ever creating a new order. Only live orders
+(not DEAD/CANCELLED/COMPLETED/ERROR/EXPIRED/STOPPED) are considered now, so an
+account with only past orders no longer pauses the bidder.
+
+### `[Feature]` Logs tab for decisions + errors
+
+A new Logs tab records one row per control-loop tick (what it decided and
+why, including holds, blocks, and pauses) plus an error row for any failed
+tick - so you can see why the bot did or didn't act. Filter by
+info/warn/error level, and set how long to keep logs (15/30/60/90 days) under
+Config → Daemon & data → Log retention.
+
+### `[Feature]` Connectivity test covers every dependency
+
+"Test connection" now probes all four external dependencies independently and
+reports each on its own row: the NiceHash API (signed read), your pool (TCP
+reachability), the hashprice source, and the BTC price source. A dependency
+that isn't configured yet (e.g. no pool host) is shown as skipped rather than
+hiding the others.
+
+### `[UI]` Master fees/break-even switch + deadband moved
+
+The Fees & break-even section gains a master "Use fees & break-even in
+calculations" toggle: off, the fees are ignored by the bidder and hidden from
+the break-even tiles and the fee-aware P&L; on, they drive break-even and
+(optionally) the bid cap as before. The edit-price deadband moved from
+Strategy into this section.
+
 ### `[Feature]` Configurable fees + fee-adjusted break-even
 
 Added NiceHash-fee and pool-fee percentage settings (default 3% / 1%). The

@@ -99,11 +99,25 @@ describe('NiceHash HTTP server', () => {
   beforeEach(async () => {
     store = new NiceHashStateStore('DRY_RUN');
     settings = fakeSettingsRepo(settingsFromEnv({}));
+    // The /test endpoint probes the BTC price source over fetch; stub it so the
+    // suite is deterministic and offline. (Pool + hashprice checks are skipped
+    // by default: no pool host, hashprice source = none.)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ bitcoin: { usd: 65000 } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
     app = await createNiceHashHttpServer(deps(store, settings.repo));
   });
   afterEach(async () => {
     await app.close();
     hoisted.client = null;
+    vi.unstubAllGlobals();
   });
 
   it('GET /api/health returns ok + build', async () => {
@@ -197,14 +211,20 @@ describe('NiceHash HTTP server', () => {
     await app2.close();
   });
 
-  it('POST /api/nicehash/test rejects when credentials are missing', async () => {
+  const nhCheck = (body: { checks: { name: string; ok: boolean; skipped?: boolean; detail: string }[] }) =>
+    body.checks.find((c) => c.name === 'NiceHash API')!;
+
+  it('POST /api/nicehash/test reports the NiceHash check failed when credentials are missing', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/nicehash/test', payload: {} });
     expect(res.statusCode).toBe(200);
-    expect(res.json().ok).toBe(false);
-    expect(res.json().error).toMatch(/required/i);
+    const body = res.json();
+    expect(body.ok).toBe(false); // a failed (non-skipped) check fails the overall result
+    const nh = nhCheck(body);
+    expect(nh.ok).toBe(false);
+    expect(nh.detail).toMatch(/required/i);
   });
 
-  it('POST /api/nicehash/test reports a successful signed read', async () => {
+  it('POST /api/nicehash/test probes pool, hashprice, BTC price, and the NiceHash API', async () => {
     hoisted.client = {
       syncTime: vi.fn(async () => -42),
       getAlgorithmSetting: vi.fn(async () => ({ marketFactor: '1000000000000000', displayMarketFactor: 'PH', displayPriceFactor: 'EH' })),
@@ -216,14 +236,31 @@ describe('NiceHash HTTP server', () => {
       payload: { apiKey: 'k', apiSecret: 's', orgId: 'o', balanceCurrency: 'TBTC' },
     });
     const body = res.json();
+    // Four independent checks, in order.
+    expect(body.checks.map((c: { name: string }) => c.name)).toEqual([
+      'NiceHash API',
+      'Pool',
+      'Hashprice source',
+      'BTC price source',
+    ]);
+    const nh = nhCheck(body);
+    expect(nh.ok).toBe(true);
+    expect(nh.detail).toContain('-42ms');
+    expect(nh.detail).toContain('1000000000000000');
+    expect(nh.detail).toContain('0.005 TBTC');
+    // No pool host / hashprice source configured -> skipped (don't fail overall).
+    const pool = body.checks.find((c: { name: string }) => c.name === 'Pool');
+    expect(pool.skipped).toBe(true);
+    const hp = body.checks.find((c: { name: string }) => c.name === 'Hashprice source');
+    expect(hp.skipped).toBe(true);
+    // BTC price comes from the stubbed fetch.
+    const btc = body.checks.find((c: { name: string }) => c.name === 'BTC price source');
+    expect(btc.ok).toBe(true);
+    expect(btc.detail).toContain('65,000');
     expect(body.ok).toBe(true);
-    expect(body.clockOffsetMs).toBe(-42);
-    expect(body.marketFactor).toBe('1000000000000000');
-    expect(body.balance).toBe('0.005');
-    expect(body.balanceCurrency).toBe('TBTC');
   });
 
-  it('POST /api/nicehash/test still reports OK when only the balance read fails', async () => {
+  it('POST /api/nicehash/test still reports the NiceHash check OK when only the balance read fails', async () => {
     hoisted.client = {
       syncTime: vi.fn(async () => 0),
       getAlgorithmSetting: vi.fn(async () => ({ marketFactor: '1', displayMarketFactor: 'PH' })),
@@ -236,13 +273,13 @@ describe('NiceHash HTTP server', () => {
       url: '/api/nicehash/test',
       payload: { apiKey: 'k', apiSecret: 's', orgId: 'o' },
     });
-    const body = res.json();
-    expect(body.ok).toBe(true);
-    expect(body.balance).toBeNull();
-    expect(body.balanceError).toMatch(/permission/);
+    const nh = nhCheck(res.json());
+    expect(nh.ok).toBe(true);
+    expect(nh.detail).toMatch(/balance read failed/);
+    expect(nh.detail).toMatch(/permission/);
   });
 
-  it('POST /api/nicehash/test returns ok:false when the signed read throws', async () => {
+  it('POST /api/nicehash/test marks the NiceHash check failed when the signed read throws', async () => {
     hoisted.client = {
       syncTime: vi.fn(async () => {
         throw new Error('clock unreachable');
@@ -255,7 +292,9 @@ describe('NiceHash HTTP server', () => {
     });
     const body = res.json();
     expect(body.ok).toBe(false);
-    expect(body.error).toMatch(/clock unreachable/);
+    const nh = nhCheck(body);
+    expect(nh.ok).toBe(false);
+    expect(nh.detail).toMatch(/clock unreachable/);
   });
 });
 

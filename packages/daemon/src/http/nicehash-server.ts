@@ -32,6 +32,9 @@ import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
 import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 import type { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
 import type { NiceHashEventsRepo } from '../state/repos/nicehash_order_events.js';
+import type { NiceHashDecisionLogRepo } from '../state/repos/nicehash_decision_log.js';
+import { probePool } from '../services/pool-health.js';
+import { HashpriceOracle } from '../services/nicehash-hashprice.js';
 
 export interface NiceHashHttpDeps {
   readonly store: NiceHashStateStore;
@@ -44,6 +47,7 @@ export interface NiceHashHttpDeps {
   /** Time-series + history sinks (charts, tiles, P&L, History page). */
   readonly metrics?: NiceHashMetricsRepo;
   readonly events?: NiceHashEventsRepo;
+  readonly decisionLog?: NiceHashDecisionLogRepo;
   /** Latest network-hashprice estimate (BTC/EH/day), or null. */
   readonly hashprice?: () => number | null;
   /** Trigger an out-of-band controller tick (the "Run decision now" button). */
@@ -109,7 +113,9 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     refill_when_runway_hours: cfg.refill_when_runway_hours,
     nicehash_fee_pct: cfg.nicehash_fee_pct ?? 0,
     pool_fee_pct: cfg.pool_fee_pct ?? 0,
+    use_break_even: cfg.use_break_even ?? false,
     cap_at_break_even: cfg.cap_at_break_even ?? false,
+    edit_price_deadband_pct: cfg.price_edit_deadband_pct,
   };
   if (!result) {
     return {
@@ -192,6 +198,27 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     return { events };
   });
 
+  // Decision + error log (Logs page), with optional level filter.
+  app.get('/api/nicehash/logs', async (req) => {
+    if (!deps.decisionLog) return { logs: [] };
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const levels = q.level
+      ? q.level.split(',').map((l) => l.trim().toLowerCase()).filter(Boolean)
+      : undefined;
+    const num = (v: string | undefined): number | undefined => {
+      if (v === undefined || v === '') return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const logs = await deps.decisionLog.list({
+      ...(levels && levels.length > 0 ? { levels } : {}),
+      ...(num(q.since) !== undefined ? { sinceMs: num(q.since)! } : {}),
+      ...(num(q.limit) !== undefined ? { limit: num(q.limit)! } : {}),
+      ...(num(q.offset) !== undefined ? { offset: num(q.offset)! } : {}),
+    });
+    return { logs };
+  });
+
   // Summary tiles + profit & loss for a window.
   app.get('/api/nicehash/summary', async (req) => {
     const range = String((req.query as { range?: unknown })?.range ?? '24h');
@@ -250,45 +277,124 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     return { config: maskSettings(merged), note: 'Saved. Restart the app to apply connection/strategy changes; run mode applies immediately.' };
   });
 
-  // Connectivity test: build a throwaway client from the saved settings + any
-  // posted overrides, then exercise the signed read path. Read-only.
+  // Connectivity test: probe every external dependency the bidder relies on
+  // from the values currently in the form (merged onto the saved settings).
+  // All probes are read-only and each is reported independently, so one
+  // failure (e.g. no pool yet) never hides the status of the others:
+  //   1. NiceHash API   - signed read path (time sync + algorithm + balance)
+  //   2. Pool           - TCP reachability of the stratum endpoint
+  //   3. Hashprice src  - the network-hashprice oracle returns a value
+  //   4. BTC price src  - the BTC/USD oracle returns a price
   app.post('/api/nicehash/test', async (req) => {
     const patch = (req.body ?? {}) as Partial<Record<keyof NiceHashSettings, unknown>>;
     const s = mergeSettings(await currentSettings(), patch);
+    type Check = { name: string; ok: boolean; skipped?: boolean; detail: string };
+    const checks: Check[] = [];
+
+    // 1. NiceHash signed read path.
     if (!s.apiKey || !s.apiSecret || !s.orgId) {
-      return { ok: false, error: 'API key, secret, and organization id are all required.' };
-    }
-    const client = createNiceHashClient({
-      baseUrl: s.baseUrl,
-      credentials: { apiKey: s.apiKey, apiSecret: s.apiSecret, orgId: s.orgId },
-    });
-    try {
-      const clockOffsetMs = await client.syncTime();
-      const algo = await client.getAlgorithmSetting(s.algorithm);
-      let balance: string | null = null;
-      let balanceError: string | null = null;
+      checks.push({
+        name: 'NiceHash API',
+        ok: false,
+        detail: 'API key, secret, and organization id are all required.',
+      });
+    } else {
+      const client = createNiceHashClient({
+        baseUrl: s.baseUrl,
+        credentials: { apiKey: s.apiKey, apiSecret: s.apiSecret, orgId: s.orgId },
+      });
       try {
-        balance = (await client.getAccountBalance(s.balanceCurrency)).available;
+        const clockOffsetMs = await client.syncTime();
+        const algo = await client.getAlgorithmSetting(s.algorithm);
+        let balanceStr: string;
+        try {
+          const bal = (await client.getAccountBalance(s.balanceCurrency)).available;
+          balanceStr = `balance ${bal} ${s.balanceCurrency}`;
+        } catch (err) {
+          balanceStr = `balance read failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        const off = `${clockOffsetMs >= 0 ? '+' : ''}${clockOffsetMs}ms`;
+        checks.push({
+          name: 'NiceHash API',
+          ok: true,
+          detail: `${s.algorithm} ok · clock offset ${off} · marketFactor ${algo.marketFactor} · ${balanceStr}`,
+        });
       } catch (err) {
-        balanceError = err instanceof Error ? err.message : String(err);
+        const detail =
+          err instanceof NiceHashApiError
+            ? `HTTP ${err.status}: ${err.message}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        checks.push({ name: 'NiceHash API', ok: false, detail });
       }
-      return {
-        ok: true,
-        clockOffsetMs,
-        algorithm: s.algorithm,
-        marketFactor: algo.marketFactor,
-        displayMarketFactor: algo.displayMarketFactor,
-        displayPriceFactor: algo.displayPriceFactor ?? null,
-        balance,
-        balanceCurrency: s.balanceCurrency,
-        balanceError,
-      };
-    } catch (err) {
-      if (err instanceof NiceHashApiError) {
-        return { ok: false, error: err.message, status: err.status };
-      }
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+
+    // 2. Pool TCP reachability.
+    if (!s.poolHost) {
+      checks.push({ name: 'Pool', ok: false, skipped: true, detail: 'No pool host configured yet.' });
+    } else {
+      const probe = await probePool({ host: s.poolHost, port: s.poolPort });
+      checks.push({
+        name: 'Pool',
+        ok: probe.reachable,
+        detail: probe.reachable
+          ? `${s.poolHost}:${s.poolPort} reachable (${probe.latency_ms}ms)`
+          : `${s.poolHost}:${s.poolPort} unreachable: ${probe.error}`,
+      });
+    }
+
+    // 3. Network-hashprice source.
+    if (s.hashpriceSource === 'none') {
+      checks.push({
+        name: 'Hashprice source',
+        ok: false,
+        skipped: true,
+        detail: 'Disabled (source = none).',
+      });
+    } else {
+      try {
+        const oracle = new HashpriceOracle({ source: s.hashpriceSource });
+        const v = await oracle.refresh();
+        checks.push(
+          v !== null && v > 0
+            ? { name: 'Hashprice source', ok: true, detail: `${s.hashpriceSource}: ${v.toFixed(8)} BTC/EH/day` }
+            : { name: 'Hashprice source', ok: false, detail: `${s.hashpriceSource}: no value returned` },
+        );
+      } catch (err) {
+        checks.push({
+          name: 'Hashprice source',
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 4. BTC price source (CoinGecko simple price).
+    try {
+      const res = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+        { headers: { accept: 'application/json' } },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = (await res.json()) as { bitcoin?: { usd?: number } };
+      const usd = j.bitcoin?.usd;
+      checks.push(
+        typeof usd === 'number' && usd > 0
+          ? { name: 'BTC price source', ok: true, detail: `${s.priceSource}: $${usd.toLocaleString('en-US')}` }
+          : { name: 'BTC price source', ok: false, detail: `${s.priceSource}: no price returned` },
+      );
+    } catch (err) {
+      checks.push({
+        name: 'BTC price source',
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Overall "ok" ignores intentionally-skipped checks (no pool / source off).
+    const ok = checks.every((c) => c.ok || c.skipped);
+    return { ok, checks };
   });
 
   return app;

@@ -94,8 +94,32 @@ function unknownOrderFromWire(order: HashpowerOrder): UnknownOrderSnapshot {
 }
 
 /**
+ * Order statuses that are NOT a live concern for the unknown-order safeguard: a
+ * stopped/finished/dead order on the account neither delivers hashrate nor
+ * spends, so a foreign order in one of these states must not force a PAUSE.
+ * Only genuinely live/open foreign orders (e.g. ACTIVE) should.
+ */
+const NON_LIVE_STATUSES = new Set([
+  'DEAD',
+  'CANCELLED',
+  'CANCELED',
+  'COMPLETED',
+  'COMPLETE',
+  'ERROR',
+  'EXPIRED',
+  'STOPPED',
+]);
+
+/** True when a foreign (non-owned) order is live enough to warrant a PAUSE. */
+export function isLiveForeignOrder(order: HashpowerOrder): boolean {
+  return !NON_LIVE_STATUSES.has(codeOf(order.status).toUpperCase());
+}
+
+/**
  * Split the account's hash-power orders into ours (present in the ledger) and
- * unknown (not in the ledger). Unknown orders force the controller to PAUSE.
+ * unknown (not in the ledger). Only *live* foreign orders count as unknown -
+ * stopped/completed orders are ignored so prior manual orders don't pin the
+ * controller to PAUSE. Unknown (live, foreign) orders force a PAUSE.
  */
 export function reconcileOrders(
   wireOrders: readonly HashpowerOrder[],
@@ -107,7 +131,7 @@ export function reconcileOrders(
   for (const order of wireOrders) {
     if (knownOrderIds.has(order.id)) {
       owned.push(ownedOrderFromWire(order, lastPriceDecreaseById.get(order.id) ?? null));
-    } else {
+    } else if (isLiveForeignOrder(order)) {
       unknown.push(unknownOrderFromWire(order));
     }
   }

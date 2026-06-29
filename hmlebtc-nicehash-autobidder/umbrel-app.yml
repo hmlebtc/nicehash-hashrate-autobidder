@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.4.0"
+version: "0.5.0"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,23 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.5.0 - Logs tab, connectivity tests, and a master fees switch.
+
+  New Logs tab: one row per control-loop tick (what it decided and why, plus
+  holds, blocks, pauses) and an error row for any failed tick, with an
+  info/warn/error filter and a configurable retention window (15/30/60/90 days).
+
+  Test connection now checks all four dependencies independently - the NiceHash
+  API, your pool (TCP reachability), the hashprice source, and the BTC price
+  source - and reports each result on its own row, so one missing piece never
+  hides the rest.
+
+  Fixes a bug where old Stopped/Completed NiceHash orders were treated as
+  "unknown" and forced the bot to PAUSE: only live orders count now, so the
+  bidder can create orders again. The fees & break-even section gains a master
+  "Use fees & break-even in calculations" switch and now holds the edit-price
+  deadband.
+
   v0.4.0 - configurable fees + fee-adjusted break-even.
 
   Adds NiceHash-fee and pool-fee percentage fields. From them the bot computes

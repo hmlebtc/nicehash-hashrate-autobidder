@@ -76,6 +76,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .pill { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
   .ok { background: #34d39933; color: var(--green); } .blocked { background: #64748b33; color: var(--muted); }
   .failed { background: #f8717133; color: var(--red); } .dry { background: #3b82f633; color: #60a5fa; }
+  .lvl-info { background: #64748b33; color: var(--muted); } .lvl-warn { background: #facc1533; color: var(--gold); } .lvl-error { background: #f8717133; color: var(--red); }
+  .logdetail { color: var(--faint); font-size: 11px; white-space: pre-wrap; margin-top: 5px; font-family: ui-monospace, monospace; }
   h2.section { font-size: 13px; color: var(--orange); margin: 24px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
   .chartcard { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
   .chartcard .head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -112,6 +114,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   <nav>
     <button data-page="status" class="active">Status</button>
     <button data-page="history">History</button>
+    <button data-page="logs">Logs</button>
     <button data-page="config">Config</button>
   </nav>
   <div class="grow"></div>
@@ -221,6 +224,26 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </table>
   </section>
 
+  <!-- ===================== LOGS ===================== -->
+  <section id="page-logs" class="page">
+    <h2 class="section">Decision &amp; error log</h2>
+    <p class="muted">One row per control-loop tick (what it decided and why), plus error rows for failed ticks.
+      Retention is set on the Config page (Daemon &amp; data → Log retention). Newest first.</p>
+    <div class="btnrow">
+      <span class="toggle" id="logLevels">
+        <button data-lvl="info" class="active">info</button>
+        <button data-lvl="warn" class="active">warn</button>
+        <button data-lvl="error" class="active">error</button>
+      </span>
+      <button id="logReload">Reload</button>
+      <span class="msg" id="logMsg"></span>
+    </div>
+    <table>
+      <thead><tr><th>When</th><th>Level</th><th>Mode</th><th>Summary</th></tr></thead>
+      <tbody id="logRows"><tr><td colspan="4" class="muted">—</td></tr></tbody>
+    </table>
+  </section>
+
   <!-- ===================== CONFIG ===================== -->
   <section id="page-config" class="page">
     <h2 class="section">Configuration</h2>
@@ -254,14 +277,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function fmtSpeed(ph, d) { var v = cvSpeed(ph); return v == null ? '—' : v.toFixed(d == null ? 2 : d); }
   function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
-  function totalFeePct() { var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
-  function breakEvenBtc(hp) { return (hp == null) ? null : hp / (1 + totalFeePct() / 100); }
+  function useBreakEvenOn() { var c = lastStatus && lastStatus.config; return !!(c && c.use_break_even); }
+  function totalFeePct() { if (!useBreakEvenOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
+  function breakEvenBtc(hp) { return (hp == null || !useBreakEvenOn()) ? null : hp / (1 + totalFeePct() / 100); }
 
   // ---- routing -------------------------------------------------------------
   function showPage(p) {
     Array.prototype.forEach.call(document.querySelectorAll('.page'), function (el) { el.classList.toggle('active', el.id === 'page-' + p); });
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('active', b.getAttribute('data-page') === p); });
     if (p === 'history') loadHistory();
+    if (p === 'logs') loadLogs();
     if (p === 'config' && !configLoaded) loadConfig();
     if (p === 'status') { loadMetrics(); loadSummary(); }
   }
@@ -396,7 +421,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
     html += tile('Avg hashprice', fmtPrice(s.avg_hashprice_btc_per_unit_day, 6), priceUnit());
-    html += tile('Break-even', fmtPrice(be, 6), priceUnit() + ' · after ' + totalFeePct() + '% fees');
+    html += tile('Break-even', fmtPrice(be, 6), useBreakEvenOn() ? (priceUnit() + ' · after ' + totalFeePct() + '% fees') : 'fees & break-even off');
     html += tile('Margin to break-even', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? '' : (margin >= 0 ? 'under break-even' : 'OVER break-even'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
@@ -417,7 +442,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var html = '';
     html += tile('Balance', fmtBtc(bal), 'BTC');
     html += tile('Lifetime spent', fmtBtc(sum ? sum.lifetime_spent_btc : null), 'BTC');
-    html += tile('Spend + fees / day', fmtBtc(effSpend, 6), 'BTC/day · incl. ' + totalFeePct() + '% fees');
+    html += tile('Spend + fees / day', fmtBtc(effSpend, 6), useBreakEvenOn() ? ('BTC/day · incl. ' + totalFeePct() + '% fees') : 'BTC/day · fees off');
     html += tile('Est. income / day', fmtBtc(income, 6), 'BTC/day · at hashprice');
     html += tile('Est. net / day', net == null ? '—' : (net >= 0 ? '+' : '') + fmtBtc(net, 6), 'BTC/day', net == null ? '' : (net >= 0 ? 'pos' : 'neg'));
     html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / cost', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
@@ -524,6 +549,29 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   $('histReload').addEventListener('click', loadHistory);
   $('histOrder').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadHistory(); });
 
+  // ---- logs page -----------------------------------------------------------
+  async function loadLogs() {
+    $('logMsg').textContent = 'loading…';
+    var lvls = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#logLevels button.active'), function (b) { lvls.push(b.getAttribute('data-lvl')); });
+    if (!lvls.length) { $('logRows').innerHTML = '<tr><td colspan="4" class="muted">no levels selected</td></tr>'; $('logMsg').textContent = ''; return; }
+    var qs = 'limit=500&level=' + lvls.join(',');
+    try {
+      var r = await fetch('/api/nicehash/logs?' + qs); var rows = (await r.json()).logs || [];
+      $('logRows').innerHTML = rows.length ? rows.map(function (e) {
+        var lc = 'lvl-' + esc(e.level);
+        var detail = e.detail ? '<div class="logdetail">' + esc(e.detail) + '</div>' : '';
+        return '<tr><td>' + new Date(e.ts).toLocaleString() + '</td><td><span class="pill ' + lc + '">' + esc(e.level) +
+          '</span></td><td class="muted">' + esc(e.run_mode || '') + '</td><td>' + esc(e.message) + detail + '</td></tr>';
+      }).join('') : '<tr><td colspan="4" class="muted">no log entries match the filter</td></tr>';
+      $('logMsg').textContent = rows.length + ' entr' + (rows.length === 1 ? 'y' : 'ies');
+    } catch (e) { $('logMsg').textContent = 'failed to load logs'; }
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#logLevels button'), function (b) {
+    b.addEventListener('click', function () { b.classList.toggle('active'); loadLogs(); });
+  });
+  $('logReload').addEventListener('click', loadLogs);
+
   // ---- config page ---------------------------------------------------------
   var CFG = [
     { group: 'Connection', items: [
@@ -542,7 +590,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number', 'Cushion added above the market anchor. Higher = more reliably filled but costs more; lower = cheaper but drops out sooner when rivals raise.'],
       ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Hard ceiling on the order price. The bidder never pays more than this, even if it means not winning the full target.'],
       ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number', 'Dynamic ceiling = network hashprice + this (BTC/EH/day). Stops overpaying when hashprice falls. 0 disables it; needs a hashprice source.'],
-      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'],
       ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
@@ -551,9 +598,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
       ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number', 'Engage cheap mode when our bid is below this percentage of the network hashprice (e.g. 95).'] ] },
     { group: 'Fees & break-even', items: [
+      ['useBreakEven', 'Use fees & break-even in calculations', 'checkbox', 'Master switch. When on, the fees below feed the break-even tiles, the fee-adjusted P&L, and (optionally) the bid cap. When off, fees are ignored everywhere and pricing uses only overpay + the price ceilings.'],
       ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Used to compute your fee-adjusted break-even.'],
       ['poolFeePct', 'Pool fee (%)', 'number', 'Your mining pool fee (typically ~1%). Break-even = hashprice / (1 + (NiceHash fee + pool fee)/100) - the most you can bid and still cover the bid plus both fees out of the hashprice.'],
-      ['capAtBreakEven', 'Cap bids at break-even', 'checkbox', 'Never bid above the fee-adjusted break-even hashprice, so a bid plus both fees never exceeds what the rented hashrate earns. Needs a hashprice source; in markets priced above break-even the bot will sit at break-even and may not win, by design.'] ] },
+      ['capAtBreakEven', 'Cap bids at break-even', 'checkbox', 'Never bid above the fee-adjusted break-even hashprice, so a bid plus both fees never exceeds what the rented hashrate earns. Needs the master switch above + a hashprice source; in markets priced above break-even the bot will sit at break-even and may not win, by design.'],
+      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'] ] },
     { group: 'Pool', items: [
       ['poolHost', 'Pool host', 'text', 'Your stratum pool hostname. The app registers it with NiceHash automatically (no fee).'],
       ['poolPort', 'Pool port', 'number', 'Stratum port of your pool.'],
@@ -563,7 +612,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['bootMode', 'Boot mode', 'select:DRY_RUN,RESUME,LIVE', 'Run mode on restart: DRY_RUN always starts safe; RESUME keeps the last mode (PAUSED is demoted to DRY_RUN); LIVE boots straight into trading.'],
       ['hashpriceSource', 'Hashprice source', 'select:none,mempool', 'Network-hashprice source for the cost-vs-hashprice tile and the estimated P&L. "mempool" uses mempool.space (mainnet); "none" disables those estimates.'],
       ['priceSource', 'BTC price source', 'text', 'BTC/USD source for display purposes (reserved for a future USD toggle).'],
-      ['retentionDays', 'History retention (days)', 'number', 'How many days of per-tick metrics and order history to keep before pruning.'] ] }
+      ['retentionDays', 'History retention (days)', 'number', 'How many days of per-tick metrics and order history to keep before pruning.'],
+      ['logRetentionDays', 'Log retention (days)', 'select:15,30,60,90', 'How many days of decision + error logs (the Logs tab) to keep before pruning.'] ] }
   ];
   function buildConfigForm() {
     var html = '';
@@ -613,14 +663,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     catch (e) { $('cfgMsg').textContent = 'save failed'; }
   }
   async function testConfig() {
-    $('testMsg').innerHTML = 'testing…';
+    $('testMsg').innerHTML = 'testing pool, hashprice, BTC price & NiceHash API…';
     try {
       var r = await fetch('/api/nicehash/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
       var j = await r.json();
-      if (j.ok) {
-        var bal = (j.balance == null) ? ('— (' + esc(j.balanceError || 'n/a') + ')') : (esc(j.balance) + ' ' + esc(j.balanceCurrency));
-        $('testMsg').innerHTML = '<span class="pill ok">OK</span> clock offset ' + esc(j.clockOffsetMs) + 'ms · ' + esc(j.algorithm) + ' marketFactor ' + esc(j.marketFactor) + ' · balance ' + bal;
-      } else { $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(j.error || 'unknown error') + (j.status ? (' (HTTP ' + esc(j.status) + ')') : ''); }
+      var checks = j.checks || [];
+      if (!checks.length) {
+        $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(j.error || 'no checks returned');
+        return;
+      }
+      var rows = checks.map(function (c) {
+        var pill = c.skipped ? '<span class="pill blocked">SKIPPED</span>' : c.ok ? '<span class="pill ok">OK</span>' : '<span class="pill failed">FAILED</span>';
+        return '<tr><td>' + esc(c.name) + '</td><td>' + pill + '</td><td class="muted">' + esc(c.detail || '') + '</td></tr>';
+      }).join('');
+      $('testMsg').innerHTML = '<table style="margin-top:10px"><thead><tr><th>Check</th><th>Result</th><th>Detail</th></tr></thead><tbody>' + rows + '</tbody></table>';
     } catch (e) { $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(e.message || String(e)); }
   }
   $('cfgSave').addEventListener('click', saveConfig);

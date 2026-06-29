@@ -39,7 +39,9 @@ describe('settingsFromEnv', () => {
     expect(s.retentionDays).toBe(30);
     expect(s.niceHashFeePct).toBe(3);
     expect(s.poolFeePct).toBe(1);
+    expect(s.useBreakEven).toBe(true);
     expect(s.capAtBreakEven).toBe(true);
+    expect(s.logRetentionDays).toBe(30);
   });
 
   it('reads overrides from env and coerces numbers', () => {
@@ -115,12 +117,19 @@ describe('mergeSettings', () => {
     expect(mergeSettings(base(), { hashpriceSource: 'bogus' }).hashpriceSource).toBe('none');
   });
 
-  it('coerces the fee fields and the break-even cap toggle', () => {
-    const m = mergeSettings(base(), { niceHashFeePct: '2.5', poolFeePct: '0.5', capAtBreakEven: 'false' });
+  it('coerces the fee fields and the break-even toggles', () => {
+    const m = mergeSettings(base(), {
+      niceHashFeePct: '2.5',
+      poolFeePct: '0.5',
+      capAtBreakEven: 'false',
+      useBreakEven: 'false',
+    });
     expect(m.niceHashFeePct).toBe(2.5);
     expect(m.poolFeePct).toBe(0.5);
     expect(m.capAtBreakEven).toBe(false);
+    expect(m.useBreakEven).toBe(false);
     expect(mergeSettings(base(), { capAtBreakEven: true }).capAtBreakEven).toBe(true);
+    expect(mergeSettings(base(), { useBreakEven: true }).useBreakEven).toBe(true);
   });
 });
 
@@ -193,14 +202,15 @@ describe('toControllerConfig', () => {
     expect(enabled.cheap_target_speed_units).toBe(10);
   });
 
-  it('carries the fees + break-even cap into the controller config', () => {
+  it('carries the fees + break-even toggles into the controller config', () => {
     const cfg = toControllerConfig(
-      { ...base(), niceHashFeePct: 3, poolFeePct: 1, capAtBreakEven: true },
+      { ...base(), niceHashFeePct: 3, poolFeePct: 1, useBreakEven: true, capAtBreakEven: true },
       algo,
       'p',
     );
     expect(cfg.nicehash_fee_pct).toBe(3);
     expect(cfg.pool_fee_pct).toBe(1);
+    expect(cfg.use_break_even).toBe(true);
     expect(cfg.cap_at_break_even).toBe(true);
   });
 });
