@@ -3,23 +3,27 @@
  * Braiins' `cheapestAskForDepth`.
  *
  * NiceHash has no ask book: there are only competing *buy* orders, and sellers
- * deliver their hashrate to the highest-priced live orders first. So the price
- * we must beat to get `target` delivered is the **marginal price** - the price
- * of the cheapest order that is *currently being filled*. NiceHash highlights
- * exactly this price in purple in its order book.
+ * deliver their hashrate to the highest-priced live orders first. The price we
+ * must beat is therefore the **marginal price** - the price of the *cheapest
+ * order that is currently receiving hashrate*. NiceHash highlights exactly this
+ * price in purple in its order book. Bidding a hair above it jumps the queue
+ * ahead of everything priced lower, and in any liquid market that is enough to
+ * win a normal target; how much we actually draw is then bounded by our own
+ * order limit, not by the anchor.
  *
- * We derive it from each competitor's `accepted_speed_units` (the speed it is
- * actually receiving), NOT its `limit` (its price-cap, which may be far larger
- * than what it draws). Placing a higher-priced order displaces the cheapest
- * filled orders and frees the hashrate they were getting, so to win `target`
- * we walk the *filled* orders cheapest -> dearest, accumulating their delivered
- * speed until it covers `target`; that order's price is the one to outbid.
+ * We detect "currently receiving hashrate" via each competitor's
+ * `accepted_speed_units` (the speed it is actually drawing), NOT its `limit`
+ * (its price-cap, which may be far larger than what it draws). That is what
+ * keeps an idle or over-capped high-priced order - a large `limit` resting high
+ * but delivering ~nothing (e.g. a BUSINESS ceiling order) - from dragging the
+ * anchor to the top of the book: it simply isn't a filled order.
  *
- * Using delivered speed (not the cap) is what fixes the "anchor pinned to the
- * top of the book" bug: an idle or over-capped high-priced order - a large
- * `limit` resting high but delivering ~nothing (e.g. a BUSINESS ceiling order)
- * - contributes 0 here and is ignored, instead of swallowing supply near the
- * top and dragging the anchor up.
+ * We deliberately do NOT try to "accumulate" the target across the cheapest
+ * filled orders. In a deep market that walks the anchor far up the book (and
+ * relies on per-order delivered-speed accuracy we don't have); it also bids
+ * well above the floor, which is the opposite of what the operator wants. The
+ * floor + the operator's overpay cushion is the right bid; the fixed/dynamic
+ * ceiling still caps the worst case.
  *
  * The caller must pass *competitors only* (our own resting order excluded) and
  * the market's `totalSpeed`. The result feeds `decide()`, which adds the
@@ -43,30 +47,20 @@ export function computeMarketAnchor(
 
   const prices = valid.map((o) => o.price_btc);
   const lowest = prices.length > 0 ? Math.min(...prices) : null;
-  const target = Math.max(0, targetUnits);
 
-  // Orders actually receiving hashrate define the live fill floor (NiceHash's
-  // purple marginal). Walk them cheapest -> dearest, accumulating the speed
-  // each delivers; the order at which the freed hashrate first covers `target`
-  // is the price to beat. Idle / over-capped high orders draw 0 and drop out.
-  const filled = valid
+  // The marginal price = the cheapest order currently receiving hashrate
+  // (NiceHash's purple). This is the price to beat.
+  const filledPrices = valid
     .filter((o) => (o.accepted_speed_units ?? 0) > 0)
-    .sort((a, b) => a.price_btc - b.price_btc);
+    .map((o) => o.price_btc);
 
-  if (filled.length > 0) {
-    let freed = 0;
-    for (const o of filled) {
-      freed += o.accepted_speed_units ?? 0;
-      if (freed >= target) {
-        return { anchor_price_btc: o.price_btc, total_speed_units: totalSpeedUnits, thin: false };
-      }
-    }
-    // Even displacing every filled order can't free the full target: we cannot
-    // win all of it. Outbid the dearest filled order to grab what supply allows.
+  if (filledPrices.length > 0) {
     return {
-      anchor_price_btc: filled[filled.length - 1]!.price_btc,
+      anchor_price_btc: Math.min(...filledPrices),
       total_speed_units: totalSpeedUnits,
-      thin: true,
+      // "Thin" only when the target plainly exceeds the whole market's supply -
+      // a best-effort flag; we still anchor at the floor and grab what we can.
+      thin: totalSpeedUnits > 0 && targetUnits >= totalSpeedUnits,
     };
   }
 
