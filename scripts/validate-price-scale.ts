@@ -33,7 +33,9 @@ import {
 import { readConnection } from '../packages/daemon/src/controller/nicehash/config-from-env.js';
 import { ensurePool } from '../packages/daemon/src/controller/nicehash/pool-manager.js';
 import { NiceHashService } from '../packages/daemon/src/services/nicehash-service.js';
+import { applyTestnetDefaults } from './testnet-env.js';
 
+applyTestnetDefaults();
 const env = process.env;
 const num = (k: string, d: number): number => {
   const v = env[k];
@@ -157,6 +159,8 @@ async function main(): Promise<void> {
       poolId,
       marketFactor: algo.marketFactor,
       displayMarketFactor: algo.displayMarketFactor,
+      priceFactor: algo.priceFactor ?? '',
+      displayPriceFactor: algo.displayPriceFactor ?? '',
     });
     createdId = created.id;
     console.log(`  created id=${created.id}`);

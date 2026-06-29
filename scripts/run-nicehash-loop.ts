@@ -20,6 +20,7 @@ import {
 } from '../packages/daemon/src/controller/nicehash/config-from-env.js';
 import { tick, type NiceHashTickResult } from '../packages/daemon/src/controller/nicehash/tick.js';
 import { NiceHashService } from '../packages/daemon/src/services/nicehash-service.js';
+import { applyTestnetDefaults } from './testnet-env.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -42,6 +43,7 @@ function logTick(res: NiceHashTickResult): void {
 }
 
 async function main(): Promise<void> {
+  applyTestnetDefaults();
   const conn = readConnection(process.env);
   const client = createNiceHashClient({ baseUrl: conn.baseUrl, credentials: conn.credentials });
   const service = new NiceHashService({ client });

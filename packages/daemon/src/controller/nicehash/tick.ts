@@ -60,6 +60,8 @@ export async function tick(deps: NiceHashTickDeps): Promise<NiceHashTickResult> 
     type: deps.orderType ?? 'STANDARD',
     marketFactor: algo.marketFactor,
     displayMarketFactor: algo.displayMarketFactor,
+    priceFactor: algo.priceFactor ?? '',
+    displayPriceFactor: algo.displayPriceFactor ?? '',
   };
 
   const outcomes: TickOutcome[] = [];

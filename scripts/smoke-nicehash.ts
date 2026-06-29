@@ -27,6 +27,8 @@ import {
   parseDecimal,
 } from '@hashrate-autopilot/nicehash-client';
 
+import { applyTestnetDefaults } from './testnet-env.js';
+
 function required(name: string): string {
   const v = process.env[name];
   if (!v) {
@@ -42,6 +44,7 @@ function mask(secret: string): string {
 }
 
 async function main() {
+  applyTestnetDefaults();
   const apiKey = required('NICEHASH_API_KEY');
   const apiSecret = required('NICEHASH_API_SECRET');
   const orgId = required('NICEHASH_ORG_ID');

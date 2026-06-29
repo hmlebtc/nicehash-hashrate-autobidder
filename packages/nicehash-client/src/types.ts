@@ -42,6 +42,10 @@ export interface MiningAlgorithmSetting {
    */
   readonly priceDownStep?: string;
   readonly minimalPoolDifficulty?: string;
+  /** Opaque price scaling factor - echo verbatim on order mutations (EH). */
+  readonly priceFactor?: string;
+  /** Opaque price display factor label (e.g. "EH"). */
+  readonly displayPriceFactor?: string;
 }
 
 export interface MiningAlgorithmsResponse {
@@ -216,16 +220,26 @@ export interface CreateOrderParams {
   readonly poolId: string;
   readonly marketFactor: string;
   readonly displayMarketFactor: string;
+  /**
+   * Price-side factors. The current API needs BOTH factor pairs - speed
+   * (`marketFactor`/`displayMarketFactor`, PH) and price
+   * (`priceFactor`/`displayPriceFactor`, EH) - or it rejects the create with
+   * `2997: MISSING_DISPLAYMARKETFACTOR_DATA`.
+   */
+  readonly priceFactor: string;
+  readonly displayPriceFactor: string;
 }
 
 /**
  * Price and/or limit change for a live order. At least one of `price` /
- * `limit` must be set; `marketFactor` / `displayMarketFactor` are required
- * by NiceHash on every update.
+ * `limit` must be set; all four factor fields are required by NiceHash on
+ * every update (same factor-group requirement as create).
  */
 export interface UpdatePriceAndLimitParams {
   readonly price?: string;
   readonly limit?: string;
   readonly marketFactor: string;
   readonly displayMarketFactor: string;
+  readonly priceFactor: string;
+  readonly displayPriceFactor: string;
 }

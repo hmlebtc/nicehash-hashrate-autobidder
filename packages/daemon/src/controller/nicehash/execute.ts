@@ -25,6 +25,9 @@ export interface NiceHashExecuteContext {
   /** Echoed verbatim from the algorithm metadata on every order mutation. */
   readonly marketFactor: string;
   readonly displayMarketFactor: string;
+  /** Price-side factors - required alongside the speed factors (see types). */
+  readonly priceFactor: string;
+  readonly displayPriceFactor: string;
 }
 
 export type ExecutionResult =
@@ -90,6 +93,8 @@ export async function executeProposal(
           poolId: proposal.pool_id,
           marketFactor: ctx.marketFactor,
           displayMarketFactor: ctx.displayMarketFactor,
+          priceFactor: ctx.priceFactor,
+          displayPriceFactor: ctx.displayPriceFactor,
         });
         return {
           proposal,
@@ -103,6 +108,8 @@ export async function executeProposal(
           price: dec(proposal.new_price_btc),
           marketFactor: ctx.marketFactor,
           displayMarketFactor: ctx.displayMarketFactor,
+          priceFactor: ctx.priceFactor,
+          displayPriceFactor: ctx.displayPriceFactor,
         });
         return {
           proposal,
@@ -115,6 +122,8 @@ export async function executeProposal(
           limit: dec(proposal.new_limit_units),
           marketFactor: ctx.marketFactor,
           displayMarketFactor: ctx.displayMarketFactor,
+          priceFactor: ctx.priceFactor,
+          displayPriceFactor: ctx.displayPriceFactor,
         });
         return {
           proposal,

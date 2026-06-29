@@ -15,11 +15,13 @@ function ctx(over: Partial<NiceHashClient> = {}): NiceHashExecuteContext {
   } as unknown as NiceHashClient;
   return {
     client,
-    market: 'EU',
-    algorithm: 'SHA256',
+    market: 'BTC',
+    algorithm: 'SHA256ASICBOOST',
     type: 'STANDARD',
-    marketFactor: '1000000000000',
-    displayMarketFactor: '1000000000000',
+    marketFactor: '1000000000000000',
+    displayMarketFactor: 'PH',
+    priceFactor: '1000000000000000000',
+    displayPriceFactor: 'EH',
   };
 }
 
@@ -49,15 +51,17 @@ describe('executeProposal - LIVE', () => {
     if (res.outcome !== 'EXECUTED') throw new Error('unreachable');
     expect(res.orderId).toBe('new-order');
     expect(c.client.createOrder).toHaveBeenCalledWith({
-      market: 'EU',
-      algorithm: 'SHA256',
+      market: 'BTC',
+      algorithm: 'SHA256ASICBOOST',
       type: 'STANDARD',
       amount: '0.01',
       price: '0.00051',
       limit: '10',
       poolId: 'pool-1',
-      marketFactor: '1000000000000',
-      displayMarketFactor: '1000000000000',
+      marketFactor: '1000000000000000',
+      displayMarketFactor: 'PH',
+      priceFactor: '1000000000000000000',
+      displayPriceFactor: 'EH',
     });
   });
 
@@ -72,8 +76,10 @@ describe('executeProposal - LIVE', () => {
     });
     expect(c.client.updatePriceAndLimit).toHaveBeenCalledWith('o1', {
       price: '0.0006',
-      marketFactor: '1000000000000',
-      displayMarketFactor: '1000000000000',
+      marketFactor: '1000000000000000',
+      displayMarketFactor: 'PH',
+      priceFactor: '1000000000000000000',
+      displayPriceFactor: 'EH',
     });
   });
 
@@ -88,8 +94,10 @@ describe('executeProposal - LIVE', () => {
     });
     expect(c.client.updatePriceAndLimit).toHaveBeenCalledWith('o1', {
       limit: '20',
-      marketFactor: '1000000000000',
-      displayMarketFactor: '1000000000000',
+      marketFactor: '1000000000000000',
+      displayMarketFactor: 'PH',
+      priceFactor: '1000000000000000000',
+      displayPriceFactor: 'EH',
     });
   });
 
