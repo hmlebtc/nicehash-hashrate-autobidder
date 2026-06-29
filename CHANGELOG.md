@@ -2,6 +2,28 @@
 
 ## 2026-06-29
 
+### `[Feature]` Live config (auto-save, no restart)
+
+Config edits now auto-save as you change each field and apply **live within one
+tick** — no Umbrel restart needed. The daemon re-reads the saved settings every
+tick and rebuilds its strategy config, re-registers the pool if its stratum
+identity changed, and swaps the hashprice oracle if you change the source.
+(Changing the NiceHash API key/secret/org or the base URL still needs a restart.)
+
+### `[Fix]` Walk-down now follows the marginal down even when under-filled
+
+Walk-down was gated behind being "filled", so an order delivering ~0 while priced
+above the marginal sat high and never followed the price down (it kept trying to
+walk up). The bidder now tracks the floor (marginal + overpay) both ways
+regardless of fill: above the floor it walks **down** toward it (throttled to
+NiceHash's down-step / 10-min cooldown), below it and under-filled it walks
+**up**, and while filled at/under the floor it holds the cheaper bid. Removes the
+climb-past-the-floor escalation that pinned the bid high.
+
+### `[UI]` Browser-tab icon
+
+Adds a favicon so the dashboard shows an app icon in the browser tab.
+
 ### `[Fix]` Status tiles reflect the live tick (not a 30s-cached average)
 
 The dynamic-cap and margin tiles were computed from the range-average hashprice

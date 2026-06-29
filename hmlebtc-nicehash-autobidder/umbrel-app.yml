@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.8"
+version: "0.6.9"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,22 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.9 - live config (no restart), walk-down fix.
+
+  Config edits now auto-save and apply live within one tick - no Umbrel restart
+  for routine tuning (overpay, caps, fees, dynamic cap, target, min-fill, walk-up,
+  cheap mode, refill, pool worker). Pool stratum changes re-register the pool and a
+  hashprice-source change swaps the oracle. (Changing the API key/secret/org or
+  base URL still needs a restart.)
+
+  Walk-down now follows the marginal down even when the order is under-filled:
+  previously a bid sitting above the marginal but delivering ~0 stayed high and
+  never came down. The bidder tracks the floor (marginal + overpay) both ways -
+  down when overpaying (throttled to NiceHash's down-step / 10-min rule), up when
+  below it and under-filled, holding the cheaper bid while filled.
+
+  Also adds a browser-tab icon.
+
   v0.6.8 - live status tiles, order balance + time remaining.
 
   The dynamic-cap and margin tiles now use the current hashprice (the value the
