@@ -11,7 +11,7 @@
  * Config comes from env (see config-from-env.ts). Run: `pnpm daemon:nicehash`.
  */
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { createNiceHashClient } from '@hashrate-autopilot/nicehash-client';
@@ -21,12 +21,22 @@ import {
   readConnection,
 } from './controller/nicehash/config-from-env.js';
 import { NiceHashController } from './controller/nicehash/controller.js';
+import { NiceHashStateStore } from './controller/nicehash/state-store.js';
 import type { NiceHashTickResult } from './controller/nicehash/tick.js';
+import { createNiceHashHttpServer } from './http/nicehash-server.js';
 import { NiceHashService } from './services/nicehash-service.js';
 import { closeDatabase, openDatabase } from './state/db.js';
 import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function readBuildNumber(): number {
+  try {
+    return parseInt(readFileSync('BUILD_NUMBER', 'utf8').trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 function logTick(res: NiceHashTickResult): void {
   const s = res.state;
@@ -58,6 +68,10 @@ async function main(): Promise<void> {
   }
   const ledger = new NiceHashOrdersRepo(handle.db);
 
+  // Shared store: the loop writes each tick here, the HTTP API reads it, and
+  // the run mode lives here so the dashboard can flip DRY-RUN / LIVE / PAUSED.
+  const store = new NiceHashStateStore(rc.runMode);
+
   const controller = new NiceHashController({
     service,
     client,
@@ -65,12 +79,23 @@ async function main(): Promise<void> {
     config: rc.config,
     currency: rc.currency,
     balanceCurrency: rc.balanceCurrency,
-    runMode: () => rc.runMode,
+    runMode: () => store.getRunMode(),
   });
+
+  const httpPort = Number(process.env.NICEHASH_HTTP_PORT ?? 3010);
+  const app = await createNiceHashHttpServer({
+    store,
+    ledger,
+    config: rc.config,
+    buildNumber: readBuildNumber(),
+    tickSeconds: rc.tickSeconds,
+  });
+  await app.listen({ port: httpPort, host: '0.0.0.0' });
 
   console.log('NiceHash daemon starting');
   console.log(`  base=${conn.baseUrl} algorithm=${conn.algorithm} market=${rc.config.market}`);
   console.log(`  run_mode=${rc.runMode} tick=${rc.tickSeconds}s db=${dbPath} pool_id=${rc.config.pool_id || '(none)'}`);
+  console.log(`  HTTP API on :${httpPort} (GET /api/nicehash/status, POST /api/nicehash/run-mode)`);
   if (rc.runMode === 'LIVE') {
     console.log(
       '  ⚠️  LIVE: marketplace mutations enabled. Confirm the submit-price scale on a funded testnet order first (docs/NICEHASH_ADAPTATION.md §6).',
@@ -85,6 +110,7 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     console.log(`\n${sig} received - shutting down…`);
+    await app.close();
     await closeDatabase(handle);
     process.exit(0);
   };
@@ -93,7 +119,9 @@ async function main(): Promise<void> {
 
   while (!stopping) {
     try {
-      logTick(await controller.tick());
+      const result = await controller.tick();
+      store.setLast(result);
+      logTick(result);
     } catch (err) {
       console.error(`tick error: ${(err as Error)?.message ?? String(err)}`);
     }
