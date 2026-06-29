@@ -84,14 +84,25 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .lvl-info { background: #64748b33; color: var(--muted); } .lvl-warn { background: #facc1533; color: var(--gold); } .lvl-error { background: #f8717133; color: var(--red); }
   .logdetail { color: var(--faint); font-size: 11px; white-space: pre-wrap; margin-top: 5px; font-family: ui-monospace, monospace; }
   h2.section { font-size: 13px; color: var(--orange); margin: 24px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .activity { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .activity-head { display: flex; align-items: center; gap: 10px; }
+  .activity-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--orange); margin: 0; }
+  .activity-head .act-next-in { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .activity-now { font-size: 17px; font-weight: 600; margin: 10px 0 3px; }
+  .activity-next { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .tickbar { height: 6px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .tickbar > div { height: 100%; width: 0%; background: var(--orange); transition: width .9s linear; }
+  .activity-foot { display: flex; align-items: center; gap: 12px; margin-top: 11px; }
   .chartcard { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
   .chartcard .head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .chartcard h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--orange); margin: 0; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
-  /* Drag the bottom edge to grow a chart vertically; scroll to zoom, drag to pan. */
-  canvas { width: 100%; height: 220px; display: block; margin-top: 8px; resize: vertical; overflow: hidden; min-height: 140px; cursor: grab; }
+  /* Drag the wrapper's bottom edge to grow a chart vertically; scroll to zoom, drag to pan. */
+  .chartwrap { height: 220px; min-height: 140px; margin-top: 8px; resize: vertical; overflow: hidden; }
+  .chartwrap canvas { width: 100%; height: 100%; display: block; margin: 0; cursor: grab; }
+  canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
   .btn-reset { margin-left: auto; font-size: 11px; padding: 2px 9px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; }
   .btn-reset:hover { color: var(--text); border-color: var(--muted); }
   .chart-hint { font-size: 10px; color: var(--muted); margin: 2px 0 0 2px; }
@@ -144,19 +155,28 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   <!-- ===================== STATUS ===================== -->
   <section id="page-status" class="page active">
     <div id="unknownWarn"></div>
+
+    <div class="activity">
+      <div class="activity-head">
+        <h2>What's happening</h2>
+        <span class="badge" id="actMode">—</span>
+        <span class="act-next-in" id="nextTick"></span>
+      </div>
+      <div class="activity-now" id="actNow">—</div>
+      <div class="activity-next" id="nextAction">—</div>
+      <div class="tickbar" title="time until the next decision"><div id="tickFill"></div></div>
+      <div class="activity-foot">
+        <button id="runNow" class="primary">Run decision now</button>
+        <span class="msg" id="actLast"></span>
+      </div>
+    </div>
+
     <div class="grid">
       <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice">—</div><div class="muted" id="curPriceUnit"></div></div>
       <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered">—</div><div class="muted" id="curDeliveredUnit"></div></div>
       <div class="card"><h2>Available balance</h2><div class="big" id="balance">—</div><div class="muted">BTC</div></div>
       <div class="card"><h2>Market anchor</h2><div class="big" id="anchor">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
       <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
-      <div class="card"><h2>Next action</h2>
-        <div id="nextAction" class="muted">—</div>
-        <div class="btnrow" style="margin-bottom:0">
-          <button id="runNow" class="primary">Run decision now</button>
-          <span class="msg" id="nextTick"></span>
-        </div>
-      </div>
     </div>
 
     <div class="rangebar" id="rangebar">
@@ -176,9 +196,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#64748b"></i>target</span>
           <span><i class="swatch" style="background:#64748b"></i>min fill</span>
         </div>
-        <button class="btn-reset" data-chart="hashChart">⟲ reset zoom</button>
+        <button class="btn-reset" data-chart="hashChart">⟲ reset zoom &amp; size</button>
       </div>
-      <canvas id="hashChart"></canvas>
+      <div class="chartwrap"><canvas id="hashChart"></canvas></div>
       <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
     </div>
 
@@ -195,9 +215,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
           <span><i class="swatch" style="background:#f87171;border-radius:50%;width:6px;height:6px"></i>cancel</span>
         </div>
-        <button class="btn-reset" data-chart="priceChart">⟲ reset zoom</button>
+        <button class="btn-reset" data-chart="priceChart">⟲ reset zoom &amp; size</button>
       </div>
-      <canvas id="priceChart"></canvas>
+      <div class="chartwrap"><canvas id="priceChart"></canvas></div>
       <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
     </div>
 
@@ -309,6 +329,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
   function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
   function dynamicCapBtc(hp) { return (hp == null || !dynamicCapOn()) ? null : hp * (1 - totalFeePct() / 100) - capBufferBtc(); }
+  function isLiveOrderStatus(st) { st = (st || '').toString().toUpperCase(); return !!st && ['CANCELLED', 'CANCELED', 'COMPLETED', 'COMPLETE', 'DEAD', 'STOPPED', 'EXPIRED', 'ERROR'].indexOf(st) < 0; }
 
   // ---- routing -------------------------------------------------------------
   function showPage(p) {
@@ -454,7 +475,14 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   }
 
   function redraw(canvas) { var c = canvas._chart; if (c) drawChart(canvas, c.series, c.opts); }
-  function resetZoom(canvas) { canvas._view = null; redraw(canvas); }
+  function resetZoom(canvas) {
+    canvas._view = null;
+    // Also undo any manual vertical resize: clearing the wrapper's inline height
+    // reverts it to the CSS default (220px).
+    var wrap = canvas.parentElement;
+    if (wrap && wrap.classList.contains('chartwrap')) wrap.style.height = '';
+    redraw(canvas);
+  }
 
   // Wheel = zoom (shift: vertical only, alt: horizontal only), drag = pan. The
   // view is a data-coordinate window kept on the canvas so it survives redraws
@@ -589,6 +617,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
   }
 
+  // Live countdown + progress bar to the next decision. Driven both by
+  // renderStatus (on each data refresh) and a 1s timer for smooth ticking.
+  function updateTickCountdown() {
+    var s = lastStatus, fill = $('tickFill'), nt = $('nextTick');
+    if (!s || !s.tick_at || !s.tick_seconds) { if (fill) fill.style.width = '0%'; return; }
+    var period = s.tick_seconds * 1000;
+    var elapsed = Date.now() - s.tick_at;
+    var pct = Math.max(0, Math.min(100, (elapsed / period) * 100));
+    if (fill) fill.style.width = pct.toFixed(1) + '%';
+    if (nt) nt.textContent = 'next decision in ~' + Math.max(0, Math.ceil((period - elapsed) / 1000)) + 's';
+  }
+
   function renderStatus() {
     var s = lastStatus; if (!s) return;
     if (!modeBusy) {
@@ -599,10 +639,13 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('build').textContent = 'build ' + s.build;
 
     var orders = s.owned_orders || [];
-    var primary = orders[0];
-    $('curPrice').textContent = primary ? fmtPrice(primary.price_btc) : (s.market ? '—' : '—');
-    $('curPriceUnit').textContent = priceUnit();
-    $('curDelivered').textContent = fmtSpeed(orders.reduce(function (a, o) { return a + (o.accepted_speed_units || 0); }, 0));
+    // Only a LIVE order is "our current bid" - owned_orders also carries recently
+    // cancelled/completed rows (from the ledger), which must not drive the tiles.
+    var live = orders.filter(function (o) { return isLiveOrderStatus(o.status); });
+    var primary = live[0];
+    $('curPrice').textContent = primary ? fmtPrice(primary.price_btc) : '—';
+    $('curPriceUnit').textContent = primary ? priceUnit() : 'no active order';
+    $('curDelivered').textContent = fmtSpeed(live.reduce(function (a, o) { return a + (o.accepted_speed_units || 0); }, 0));
     $('curDeliveredUnit').textContent = speedUnit();
     $('balance').textContent = fmtBtc(s.balance_btc);
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
@@ -611,11 +654,24 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
 
     var props = s.proposals || [];
-    $('nextAction').innerHTML = props.length ? props.map(function (p) { return esc(p.kind) + ' — ' + esc(p.reason); }).join('<br>') : 'holding — no action';
-    if (s.tick_at && s.tick_seconds) {
-      var nextAt = s.tick_at + s.tick_seconds * 1000, secs = Math.max(0, Math.round((nextAt - Date.now()) / 1000));
-      $('nextTick').textContent = 'next tick in ~' + secs + 's';
-    }
+    var outs = s.outcomes || [];
+
+    // --- "What's happening" panel ---
+    var am = $('actMode'); am.textContent = s.run_mode; am.className = 'badge mode-' + s.run_mode;
+    var nowMsg;
+    if (s.run_mode === 'PAUSED') nowMsg = 'Paused — no decisions are running.';
+    else if (s.orders_error) nowMsg = 'Holding — can’t read your NiceHash orders.';
+    else if (!s.market) nowMsg = 'Holding — market unavailable.';
+    else if (primary) nowMsg = 'Tracking order ' + (primary.order_id || '').slice(0, 8) + ' at ' + fmtPrice(primary.price_btc) + ' ' + priceUnit() + ' · delivering ' + fmtSpeed(primary.accepted_speed_units) + ' ' + speedUnit();
+    else if (props.length && props[0].kind === 'CREATE_ORDER') nowMsg = 'No active order — placing a new bid this cycle.';
+    else nowMsg = 'Holding — no order yet, waiting for conditions.';
+    $('actNow').textContent = nowMsg;
+    $('nextAction').innerHTML = props.length
+      ? ('Next: ' + props.map(function (p) { return esc(p.kind) + ' — ' + esc(p.reason); }).join('<br>'))
+      : 'Next: hold — no action expected next tick.';
+    var lastOut = outs.length ? outs.map(function (o) { return o.outcome + (o.detail ? (' · ' + o.detail) : ''); }).join(' / ') : '';
+    $('actLast').textContent = (s.tick_at ? ('last decision ' + new Date(s.tick_at).toLocaleTimeString()) : 'no decision yet') + (lastOut ? (' · ' + lastOut) : '');
+    updateTickCountdown();
 
     $('orders').innerHTML = orders.length ? orders.map(function (o) {
       return '<tr><td><code>' + esc((o.order_id || '').slice(0, 8)) + '</code></td><td>' + fmtPrice(o.price_btc) +
@@ -829,6 +885,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === UI.range); });
   refreshStatus(); loadMetrics(); loadSummary();
   setInterval(refreshStatus, 5000);
+  setInterval(updateTickCountdown, 1000);
   setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); loadSummary(); } }, 30000);
   window.addEventListener('resize', renderCharts);
 })();

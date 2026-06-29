@@ -45,6 +45,18 @@ function dec(n: number, decimals = 8): string {
   return parseFloat(n.toFixed(decimals)).toString();
 }
 
+/**
+ * Format an order PRICE for the wire. NiceHash quotes hash-power prices to 4
+ * decimal places (the order book is all 0.4488, 0.4546, …) and rejects finer
+ * precision with `2997 Invalid input: PRICE_DATA_SCALE`. The dynamic cap
+ * (hashprice × fees − buffer) and other derived prices carry many decimals, so
+ * snap to 4 dp here. Floor (not round) so a cap-/break-even-clamped bid never
+ * creeps back above its ceiling; the epsilon absorbs float noise on 4-dp values.
+ */
+function decPrice(n: number): string {
+  return dec(Math.floor(n * 1e4 + 1e-6) / 1e4, 8);
+}
+
 function dryRunNote(proposal: Proposal): string {
   switch (proposal.kind) {
     case 'CREATE_ORDER':
@@ -88,7 +100,7 @@ export async function executeProposal(
           algorithm: ctx.algorithm,
           type: ctx.type,
           amount: dec(proposal.amount_btc),
-          price: dec(proposal.price_btc),
+          price: decPrice(proposal.price_btc),
           limit: dec(proposal.limit_units),
           poolId: proposal.pool_id,
           marketFactor: ctx.marketFactor,
@@ -105,7 +117,7 @@ export async function executeProposal(
       }
       case 'EDIT_PRICE': {
         await ctx.client.updatePriceAndLimit(proposal.order_id, {
-          price: dec(proposal.new_price_btc),
+          price: decPrice(proposal.new_price_btc),
           marketFactor: ctx.marketFactor,
           displayMarketFactor: ctx.displayMarketFactor,
           priceFactor: ctx.priceFactor,

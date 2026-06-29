@@ -2,6 +2,34 @@
 
 ## 2026-06-29
 
+### `[Fix]` Orders no longer rejected for price scale (PRICE_DATA_SCALE)
+
+LIVE order creation was failing with `2997 Invalid input: PRICE_DATA_SCALE`
+because a dynamic-cap-clamped bid carried 8 decimals (e.g. 0.45444046) while
+NiceHash quotes hash-power prices to 4 dp. Order prices are now snapped to 4 dp
+(floored, so a capped bid never creeps back above its ceiling) before they're
+sent, for both create and re-price.
+
+### `[Fix]` Top tiles show the active order, not a cancelled one
+
+"Price (current bid)" / "Delivered" were reading the first owned row, which could
+be a recently cancelled order (kept in the ledger), so they showed a stale price
+with no live order. They now use the live/active order only, and read
+"no active order" when there isn't one.
+
+### `[UI]` "What's happening" panel with a live next-tick countdown
+
+Adds a prominent status panel showing what the bot is doing right now (tracking
+an order / placing a bid / holding / paused), the action planned for the next
+tick, and a progress bar + countdown to the next decision. Replaces the small
+"Next action" tile.
+
+### `[UI]` Charts: reliable vertical resize + reset
+
+Charts now live in a resizable wrapper so dragging the bottom edge to grow them
+works reliably, and the per-chart button (now "⟲ reset zoom & size") also
+restores the default height, not just the zoom.
+
 ### `[UI]` Zoomable / resizable charts
 
 The Hashrate and Price charts can now be explored: scroll to zoom (shift =
