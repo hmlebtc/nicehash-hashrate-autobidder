@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.5.0"
+version: "0.5.1"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,16 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.5.1 - fix the market anchor (price to beat).
+
+  The "Market anchor" was computed from each competing order's price *cap*
+  (limit), so a single idle high-priced order with a large cap but ~no actual
+  hashrate could drag the anchor far above the real market - e.g. showing ~0.50
+  when NiceHash's marginal (purple) price was ~0.44. The anchor is now derived
+  from the speed each order is *actually* receiving, so it matches NiceHash's
+  purple marginal: the cheapest order still being filled. Bids now sit just
+  above that floor instead of overpaying toward the safety cap.
+
   v0.5.0 - Logs tab, connectivity tests, and a master fees switch.
 
   New Logs tab: one row per control-loop tick (what it decided and why, plus

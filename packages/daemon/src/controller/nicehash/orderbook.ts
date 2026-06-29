@@ -2,22 +2,28 @@
  * NiceHash pricing-anchor computation - the buyer-competition analogue of
  * Braiins' `cheapestAskForDepth`.
  *
- * Braiins exposes ask-side *supply*; the controller found the cheapest price
- * with enough supply for the target and bid just above it. NiceHash is the
- * opposite shape: there is no ask book, only competing *buy* orders plus the
- * total deliverable speed in the market. Sellers deliver to the highest-priced
- * live orders first, so the price we must beat to get `target` delivered is the
- * **marginal price**: walk competitors from the highest price down, subtracting
- * the speed each would consume; the competitor at which the supply still left
- * would drop below `target` sets the price we have to outbid.
+ * NiceHash has no ask book: there are only competing *buy* orders, and sellers
+ * deliver their hashrate to the highest-priced live orders first. So the price
+ * we must beat to get `target` delivered is the **marginal price** - the price
+ * of the cheapest order that is *currently being filled*. NiceHash highlights
+ * exactly this price in purple in its order book.
+ *
+ * We derive it from each competitor's `accepted_speed_units` (the speed it is
+ * actually receiving), NOT its `limit` (its price-cap, which may be far larger
+ * than what it draws). Placing a higher-priced order displaces the cheapest
+ * filled orders and frees the hashrate they were getting, so to win `target`
+ * we walk the *filled* orders cheapest -> dearest, accumulating their delivered
+ * speed until it covers `target`; that order's price is the one to outbid.
+ *
+ * Using delivered speed (not the cap) is what fixes the "anchor pinned to the
+ * top of the book" bug: an idle or over-capped high-priced order - a large
+ * `limit` resting high but delivering ~nothing (e.g. a BUSINESS ceiling order)
+ * - contributes 0 here and is ignored, instead of swallowing supply near the
+ * top and dragging the anchor up.
  *
  * The caller must pass *competitors only* (our own resting order excluded) and
  * the market's `totalSpeed`. The result feeds `decide()`, which adds the
  * overpay cushion and clamps to the safety ceiling.
- *
- * This is the one piece whose exact behaviour depends on NiceHash's
- * undocumented seller-allocation and wants live/testnet validation; the model
- * here is the documented best understanding and is bounded by the safety caps.
  */
 
 import type { CompetingOrder, MarketAnchor } from './types.js';
@@ -27,55 +33,49 @@ export function computeMarketAnchor(
   totalSpeedUnits: number,
   targetUnits: number,
 ): MarketAnchor {
-  const valid = competitors
-    .filter(
-      (o) =>
-        Number.isFinite(o.price_btc) &&
-        o.price_btc > 0 &&
-        Number.isFinite(o.limit_units) &&
-        o.limit_units >= 0,
-    )
-    .sort((a, b) => b.price_btc - a.price_btc);
+  const valid = competitors.filter(
+    (o) =>
+      Number.isFinite(o.price_btc) &&
+      o.price_btc > 0 &&
+      Number.isFinite(o.limit_units) &&
+      o.limit_units >= 0,
+  );
 
-  const highest = valid.length > 0 ? valid[0]!.price_btc : null;
-  const lowest = valid.length > 0 ? valid[valid.length - 1]!.price_btc : null;
+  const prices = valid.map((o) => o.price_btc);
+  const lowest = prices.length > 0 ? Math.min(...prices) : null;
+  const target = Math.max(0, targetUnits);
 
-  // No deliverable supply: nothing to position against. Best effort is to sit
-  // above the top of the book (thin).
-  if (!(totalSpeedUnits > 0)) {
-    return { anchor_price_btc: highest, total_speed_units: 0, thin: true };
-  }
+  // Orders actually receiving hashrate define the live fill floor (NiceHash's
+  // purple marginal). Walk them cheapest -> dearest, accumulating the speed
+  // each delivers; the order at which the freed hashrate first covers `target`
+  // is the price to beat. Idle / over-capped high orders draw 0 and drop out.
+  const filled = valid
+    .filter((o) => (o.accepted_speed_units ?? 0) > 0)
+    .sort((a, b) => a.price_btc - b.price_btc);
 
-  // Target exceeds all supply: we can never get the full target, so bid above
-  // the top to grab as much as exists (thin).
-  if (targetUnits >= totalSpeedUnits) {
-    return { anchor_price_btc: highest, total_speed_units: totalSpeedUnits, thin: true };
-  }
-
-  // Walk competitors high -> low, consuming supply. The competitor that would
-  // push the remaining supply below `target` is the one to outbid.
-  //
-  // A capped order can take up to its `limit`. An *uncapped* (limit 0) order is
-  // not assumed to swallow all supply - that would let an idle high-priced
-  // ceiling order (e.g. a BUSINESS order resting at a high price but delivering
-  // nothing) wrongly drag the anchor to the top. Instead an uncapped order is
-  // counted by its actual draw (`accepted_speed_units`), so an uncapped order
-  // delivering 0 consumes 0.
-  let remaining = totalSpeedUnits;
-  for (const o of valid) {
-    const potential = o.limit_units > 0 ? o.limit_units : (o.accepted_speed_units ?? 0);
-    const consume = Math.min(potential, remaining);
-    if (remaining - consume < targetUnits) {
-      return { anchor_price_btc: o.price_btc, total_speed_units: totalSpeedUnits, thin: false };
+  if (filled.length > 0) {
+    let freed = 0;
+    for (const o of filled) {
+      freed += o.accepted_speed_units ?? 0;
+      if (freed >= target) {
+        return { anchor_price_btc: o.price_btc, total_speed_units: totalSpeedUnits, thin: false };
+      }
     }
-    remaining -= consume;
-    if (remaining <= 0) {
-      return { anchor_price_btc: o.price_btc, total_speed_units: totalSpeedUnits, thin: false };
-    }
+    // Even displacing every filled order can't free the full target: we cannot
+    // win all of it. Outbid the dearest filled order to grab what supply allows.
+    return {
+      anchor_price_btc: filled[filled.length - 1]!.price_btc,
+      total_speed_units: totalSpeedUnits,
+      thin: true,
+    };
   }
 
-  // Spare supply remains even after every competitor: we can be filled at the
-  // bottom of the book. Sit just above the cheapest rival (or null with no
-  // competitors - caller falls back to a floor).
-  return { anchor_price_btc: lowest, total_speed_units: totalSpeedUnits, thin: false };
+  // Nothing is being delivered to any competitor: no live competition to
+  // outbid. With deliverable supply we can sit at the bottom of the book (or
+  // the floor when the book is empty); with none, flag the market as thin.
+  return {
+    anchor_price_btc: lowest,
+    total_speed_units: totalSpeedUnits,
+    thin: !(totalSpeedUnits > 0),
+  };
 }
