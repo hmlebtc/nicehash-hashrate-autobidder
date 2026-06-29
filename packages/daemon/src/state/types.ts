@@ -207,6 +207,30 @@ export interface OwnedBidsTable {
 }
 
 // ---------------------------------------------------------------------------
+// nicehash_orders (NiceHash client-side ownership ledger)
+// ---------------------------------------------------------------------------
+
+/**
+ * The NiceHash analogue of `owned_bids`: which hash-power orders the autopilot
+ * created and therefore considers its own. Reconciled every tick against
+ * `myOrders`. Amounts are in BTC (NiceHash quotes BTC, not sat); `limit_units`
+ * is in the algorithm's display speed unit (PH/s for SHA256ASICBOOST).
+ */
+export interface NiceHashOrdersTable {
+  order_id: string;
+  created_at: number;
+  last_known_status: string | null;
+  price_btc: number | null;
+  amount_btc: number | null;
+  limit_units: number | null;
+  /** Latest `payedAmount` (cumulative spend) snapshot, BTC; monotonic. */
+  payed_amount_btc: Generated<number>;
+  last_price_decrease_at: number | null;
+  pool_id: string | null;
+  abandoned: Generated<0 | 1>;
+}
+
+// ---------------------------------------------------------------------------
 // deferred_actions
 // ---------------------------------------------------------------------------
 
@@ -646,6 +670,7 @@ export interface Database {
   pool_blocks: PoolBlocksTable;
   runtime_state: RuntimeStateTable;
   owned_bids: OwnedBidsTable;
+  nicehash_orders: NiceHashOrdersTable;
   deferred_actions: DeferredActionsTable;
   decisions: DecisionsTable;
   spend_events: SpendEventsTable;
