@@ -39,8 +39,8 @@ describe('settingsFromEnv', () => {
     expect(s.retentionDays).toBe(30);
     expect(s.niceHashFeePct).toBe(3);
     expect(s.poolFeePct).toBe(1);
-    expect(s.useBreakEven).toBe(true);
-    expect(s.capAtBreakEven).toBe(true);
+    expect(s.dynamicCapEnabled).toBe(true);
+    expect(s.dynamicCapBufferBtc).toBe(0);
     expect(s.logRetentionDays).toBe(30);
   });
 
@@ -117,19 +117,18 @@ describe('mergeSettings', () => {
     expect(mergeSettings(base(), { hashpriceSource: 'bogus' }).hashpriceSource).toBe('none');
   });
 
-  it('coerces the fee fields and the break-even toggles', () => {
+  it('coerces the fee fields and the dynamic-cap settings', () => {
     const m = mergeSettings(base(), {
       niceHashFeePct: '2.5',
       poolFeePct: '0.5',
-      capAtBreakEven: 'false',
-      useBreakEven: 'false',
+      dynamicCapEnabled: 'false',
+      dynamicCapBufferBtc: '0.005',
     });
     expect(m.niceHashFeePct).toBe(2.5);
     expect(m.poolFeePct).toBe(0.5);
-    expect(m.capAtBreakEven).toBe(false);
-    expect(m.useBreakEven).toBe(false);
-    expect(mergeSettings(base(), { capAtBreakEven: true }).capAtBreakEven).toBe(true);
-    expect(mergeSettings(base(), { useBreakEven: true }).useBreakEven).toBe(true);
+    expect(m.dynamicCapEnabled).toBe(false);
+    expect(m.dynamicCapBufferBtc).toBe(0.005);
+    expect(mergeSettings(base(), { dynamicCapEnabled: true }).dynamicCapEnabled).toBe(true);
   });
 });
 
@@ -213,15 +212,21 @@ describe('toControllerConfig', () => {
     expect(enabled.cheap_target_speed_units).toBe(10);
   });
 
-  it('carries the fees + break-even toggles into the controller config', () => {
+  it('carries the fees + dynamic-cap settings into the controller config', () => {
     const cfg = toControllerConfig(
-      { ...base(), niceHashFeePct: 3, poolFeePct: 1, useBreakEven: true, capAtBreakEven: true },
+      {
+        ...base(),
+        niceHashFeePct: 3,
+        poolFeePct: 1,
+        dynamicCapEnabled: true,
+        dynamicCapBufferBtc: 0.005,
+      },
       algo,
       'p',
     );
     expect(cfg.nicehash_fee_pct).toBe(3);
     expect(cfg.pool_fee_pct).toBe(1);
-    expect(cfg.use_break_even).toBe(true);
-    expect(cfg.cap_at_break_even).toBe(true);
+    expect(cfg.dynamic_cap_enabled).toBe(true);
+    expect(cfg.dynamic_cap_buffer_btc).toBe(0.005);
   });
 });

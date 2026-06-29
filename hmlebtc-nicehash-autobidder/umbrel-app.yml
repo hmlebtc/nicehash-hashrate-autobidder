@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.4"
+version: "0.6.5"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.5 - dynamic price cap.
+
+  The bid ceiling can now track the market. The new dynamic cap = hashprice x
+  (1 - (NiceHash fee + pool fee)/100) - your profit buffer: the most you can pay
+  and still keep a margin after both fees come out of the hashprice. It's a
+  backstop alongside the fixed Max price (the lower of the two binds), and falls
+  back to the Max price if the hashprice source is down. The buffer is an
+  absolute BTC/EH/day amount (0 = pure break-even).
+
+  The Config "Fees & break-even" section is replaced by a "Dynamic price cap"
+  section (enable, NiceHash fee %, pool fee %, profit buffer); the edit-price
+  deadband moves to Strategy, and the Status tiles / price-chart line become
+  "Dynamic cap" / "Margin to cap".
+
   v0.6.4 - correct floor, single managed order, instant walk-ups.
 
   Floor/anchor: the order book interleaves zero-miner orders above the real

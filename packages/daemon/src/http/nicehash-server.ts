@@ -115,8 +115,8 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     refill_when_runway_hours: cfg.refill_when_runway_hours,
     nicehash_fee_pct: cfg.nicehash_fee_pct ?? 0,
     pool_fee_pct: cfg.pool_fee_pct ?? 0,
-    use_break_even: cfg.use_break_even ?? false,
-    cap_at_break_even: cfg.cap_at_break_even ?? false,
+    dynamic_cap_enabled: cfg.dynamic_cap_enabled ?? false,
+    dynamic_cap_buffer_btc: cfg.dynamic_cap_buffer_btc ?? 0,
     edit_price_deadband_pct: cfg.price_edit_deadband_pct,
   };
   if (!result) {

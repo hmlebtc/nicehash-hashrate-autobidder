@@ -64,19 +64,18 @@ export interface NiceHashSettings {
   /** Mining-pool fee, percent (e.g. 1). */
   readonly poolFeePct: number;
   /**
-   * Master switch for the fees & break-even feature. When false, the fees and
-   * the break-even cap are ignored by the bidder and hidden from the dashboard
-   * P&L / break-even tiles; pricing falls back to overpay + ceilings only.
+   * Master switch for the dynamic price cap. When on, the bid is capped at the
+   * fee-adjusted, buffered hashprice and the dashboard shows the cap tiles /
+   * fee-aware P&L. When off, the fees and cap are ignored and pricing uses only
+   * overpay + the fixed/premium ceilings.
    */
-  readonly useBreakEven: boolean;
+  readonly dynamicCapEnabled: boolean;
   /**
-   * When true (and {@link useBreakEven} is on), never bid above the
-   * fee-adjusted break-even hashprice (= hashprice / (1 + (niceHashFee +
-   * poolFee)/100)) when a hashprice is available - so a bid plus both fees never
-   * exceeds what the rented hashrate earns. When false the fees are still shown
-   * but the bid is not capped.
+   * Profit buffer for the dynamic cap, an absolute amount in BTC/EH/day held
+   * back below the fee-adjusted hashprice: dynamic cap = hashprice x (1 -
+   * (niceHashFee + poolFee)/100) - this. 0 = pure break-even (no margin).
    */
-  readonly capAtBreakEven: boolean;
+  readonly dynamicCapBufferBtc: number;
   // --- Daemon / data ---
   readonly bootMode: BootMode;
   /** Network-hashprice oracle provider. */
@@ -158,8 +157,8 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
-    useBreakEven: b(env, 'NICEHASH_USE_BREAKEVEN', true),
-    capAtBreakEven: b(env, 'NICEHASH_CAP_AT_BREAKEVEN', true),
+    dynamicCapEnabled: b(env, 'NICEHASH_DYNAMIC_CAP', true),
+    dynamicCapBufferBtc: n(env, 'NICEHASH_DYNAMIC_CAP_BUFFER', 0),
     bootMode: asBootMode(env.NICEHASH_BOOT_MODE),
     hashpriceSource: asHashpriceSource(env.NICEHASH_HASHPRICE_SOURCE),
     priceSource: s(env, 'NICEHASH_PRICE_SOURCE', 'coingecko'),
@@ -218,8 +217,8 @@ export function toControllerConfig(
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
     nicehash_fee_pct: settings.niceHashFeePct,
     pool_fee_pct: settings.poolFeePct,
-    use_break_even: settings.useBreakEven,
-    cap_at_break_even: settings.capAtBreakEven,
+    dynamic_cap_enabled: settings.dynamicCapEnabled,
+    dynamic_cap_buffer_btc: settings.dynamicCapBufferBtc,
     speed_display_unit: speedUnitLabel(Number(algo.marketFactor)),
   };
 }
@@ -290,8 +289,8 @@ export function mergeSettings(
     walkUpEnabled: bool('walkUpEnabled'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
-    useBreakEven: bool('useBreakEven'),
-    capAtBreakEven: bool('capAtBreakEven'),
+    dynamicCapEnabled: bool('dynamicCapEnabled'),
+    dynamicCapBufferBtc: num('dynamicCapBufferBtc'),
     bootMode: asBootMode(typeof patch.bootMode === 'string' ? patch.bootMode : existing.bootMode),
     hashpriceSource: asHashpriceSource(
       typeof patch.hashpriceSource === 'string' ? patch.hashpriceSource : existing.hashpriceSource,

@@ -146,39 +146,41 @@ export interface NiceHashControllerConfig {
   readonly cheap_threshold_pct: number;
   /** Target speed while cheap mode is engaged (display units). */
   readonly cheap_target_speed_units: number;
-  /** NiceHash marketplace fee, percent. Default 0 (no fee effect). */
+  /** NiceHash marketplace fee, percent. Feeds the dynamic cap + P&L. Default 0. */
   readonly nicehash_fee_pct?: number;
-  /** Mining-pool fee, percent. Default 0. */
+  /** Mining-pool fee, percent. Feeds the dynamic cap + P&L. Default 0. */
   readonly pool_fee_pct?: number;
   /**
-   * Master switch for the fees & break-even feature. When false, the fee
-   * percentages and the break-even cap are ignored entirely by the bidder
-   * (pricing falls back to overpay + fixed/dynamic ceilings). Default false.
+   * Master switch for the dynamic price cap. When on, the bid is capped at the
+   * fee-adjusted, buffered hashprice (see {@link dynamicCapPrice}) whenever a
+   * hashprice is available, so the bid plus fees never eats into your chosen
+   * profit margin. When off, pricing uses only overpay + the fixed/premium
+   * ceilings. Default false.
    */
-  readonly use_break_even?: boolean;
+  readonly dynamic_cap_enabled?: boolean;
   /**
-   * When true (and `use_break_even` is on), the bid is capped at the
-   * fee-adjusted break-even hashprice (= hashprice / (1 + (nicehash_fee_pct +
-   * pool_fee_pct)/100)) whenever a hashprice is available, so bid + fees never
-   * exceed the hashrate's earnings. When false, fees are still shown in the
-   * dashboard but the bid is not capped. Default false.
+   * Profit buffer for the dynamic cap, an absolute amount in BTC/price-unit/day
+   * held back below the fee-adjusted hashprice. dynamic cap = hashprice x
+   * (1 - (nicehash_fee + pool_fee)/100) - this. Default 0 (pure break-even).
    */
-  readonly cap_at_break_even?: boolean;
+  readonly dynamic_cap_buffer_btc?: number;
 }
 
 /**
- * Fee-adjusted break-even bid: the most you can pay per price-unit/day and still
- * cover the bid plus the NiceHash + pool fees out of the hashprice. Returns null
- * when the hashprice is unavailable.
+ * The dynamic price cap: the most you can pay per price-unit/day and still keep
+ * your chosen profit buffer after the NiceHash + pool fees come out of the
+ * hashprice. `cap = hashprice x (1 - (nicehash_fee + pool_fee)/100) - buffer`.
+ * Returns null when the hashprice is unavailable.
  */
-export function breakEvenPrice(
+export function dynamicCapPrice(
   hashprice: number | null,
   niceHashFeePct = 0,
   poolFeePct = 0,
+  bufferBtc = 0,
 ): number | null {
   if (hashprice === null || !Number.isFinite(hashprice)) return null;
   const totalFee = (niceHashFeePct || 0) + (poolFeePct || 0);
-  return hashprice / (1 + totalFee / 100);
+  return hashprice * (1 - totalFee / 100) - (bufferBtc || 0);
 }
 
 export interface NiceHashState {

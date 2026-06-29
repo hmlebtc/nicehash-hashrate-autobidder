@@ -183,7 +183,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#22d3ee"></i>marginal (purple)</span>
           <span><i class="swatch" style="background:#38bdf8"></i>next filled tier</span>
           <span><i class="swatch" style="background:#a78bfa"></i>hashprice</span>
-          <span><i class="swatch" style="background:#34d399"></i>break-even</span>
+          <span><i class="swatch" style="background:#34d399"></i>dynamic cap</span>
           <span><i class="swatch" style="background:#f87171"></i>hard cap</span>
           <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
           <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
@@ -297,9 +297,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function fmtSpeed(ph, d) { var v = cvSpeed(ph); return v == null ? '—' : v.toFixed(d == null ? 2 : d); }
   function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
-  function useBreakEvenOn() { var c = lastStatus && lastStatus.config; return !!(c && c.use_break_even); }
-  function totalFeePct() { if (!useBreakEvenOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
-  function breakEvenBtc(hp) { return (hp == null || !useBreakEvenOn()) ? null : hp / (1 + totalFeePct() / 100); }
+  function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
+  function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
+  function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
+  function dynamicCapBtc(hp) { return (hp == null || !dynamicCapOn()) ? null : hp * (1 - totalFeePct() / 100) - capBufferBtc(); }
 
   // ---- routing -------------------------------------------------------------
   function showPage(p) {
@@ -457,8 +458,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
     var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
     var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });
-    // Hard cap = the configured max price (flat reference line). Break-even (if
-    // fees are on) sits below it.
+    // Hard cap = the configured max price (flat reference line). The dynamic cap
+    // (if enabled) is the fee-adjusted, buffered hashprice and sits below it.
     var cfg = lastStatus && lastStatus.config;
     var hardcap = cfg && cfg.max_price_btc_per_unit_day ? cfg.max_price_btc_per_unit_day : null;
     var price = [
@@ -466,7 +467,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       { color: '#22d3ee', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
       { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
       { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
-      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(breakEvenBtc(r.hashprice_btc_per_unit_day)) }; }) },
+      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
       { color: '#f87171', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
@@ -479,15 +480,15 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function renderTiles() {
     var s = lastSummary && lastSummary.summary;
     if (!s) { $('tiles').innerHTML = ''; return; }
-    var be = breakEvenBtc(s.avg_hashprice_btc_per_unit_day);
-    var margin = (be != null && s.avg_our_price_btc != null) ? (be - s.avg_our_price_btc) : null;
+    var cap = dynamicCapBtc(s.avg_hashprice_btc_per_unit_day);
+    var margin = (cap != null && s.avg_our_price_btc != null) ? (cap - s.avg_our_price_btc) : null;
     var html = '';
     html += tile('Uptime', s.uptime_pct == null ? '—' : s.uptime_pct.toFixed(1), '%');
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
     html += tile('Avg hashprice', fmtPrice(s.avg_hashprice_btc_per_unit_day, 6), priceUnit());
-    html += tile('Break-even', fmtPrice(be, 6), useBreakEvenOn() ? (priceUnit() + ' · after ' + totalFeePct() + '% fees') : 'fees & break-even off');
-    html += tile('Margin to break-even', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? '' : (margin >= 0 ? 'under break-even' : 'OVER break-even'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
+    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice − ' + totalFeePct() + '% fees − buffer') : 'dynamic cap off');
+    html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? '' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
   }
@@ -507,7 +508,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var html = '';
     html += tile('Balance', fmtBtc(bal), 'BTC');
     html += tile('Lifetime spent', fmtBtc(sum ? sum.lifetime_spent_btc : null), 'BTC');
-    html += tile('Spend + fees / day', fmtBtc(effSpend, 6), useBreakEvenOn() ? ('BTC/day · incl. ' + totalFeePct() + '% fees') : 'BTC/day · fees off');
+    html += tile('Spend + fees / day', fmtBtc(effSpend, 6), dynamicCapOn() ? ('BTC/day · incl. ' + totalFeePct() + '% fees') : 'BTC/day · fees off');
     html += tile('Est. income / day', fmtBtc(income, 6), 'BTC/day · at hashprice');
     html += tile('Est. net / day', net == null ? '—' : (net >= 0 ? '+' : '') + fmtBtc(net, 6), 'BTC/day', net == null ? '' : (net >= 0 ? 'pos' : 'neg'));
     html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / cost', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
@@ -659,24 +660,23 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['tickSeconds', 'Tick seconds', 'number', 'Seconds between control-loop decisions (observe → price → act).'],
       ['targetSpeedUnits', 'Target speed (PH/s)', 'number', 'How much hashrate you want delivered. The bidder prices to win this much from the market.'],
       ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number', 'Cushion added above the market anchor. Higher = more reliably filled but costs more; lower = cheaper but drops out sooner when rivals raise.'],
-      ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Hard ceiling on the order price. The bidder never pays more than this, even if it means not winning the full target.'],
-      ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number', 'Dynamic ceiling = network hashprice + this (BTC/EH/day). Stops overpaying when hashprice falls. 0 disables it; needs a hashprice source.'],
+      ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Absolute hard ceiling on the order price (a backstop). The bidder never pays more than this even if the dynamic cap is higher or the hashprice source is down.'],
+      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'],
       ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
-      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier, every tick (raises are unconstrained on NiceHash), until filled or a price/break-even cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'] ] },
+      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier, every tick (raises are unconstrained on NiceHash), until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
       ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number', 'Engage cheap mode when our bid is below this percentage of the network hashprice (e.g. 95).'] ] },
-    { group: 'Fees & break-even', items: [
-      ['useBreakEven', 'Use fees & break-even in calculations', 'checkbox', 'Master switch. When on, the fees below feed the break-even tiles, the fee-adjusted P&L, and (optionally) the bid cap. When off, fees are ignored everywhere and pricing uses only overpay + the price ceilings.'],
-      ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Used to compute your fee-adjusted break-even.'],
-      ['poolFeePct', 'Pool fee (%)', 'number', 'Your mining pool fee (typically ~1%). Break-even = hashprice / (1 + (NiceHash fee + pool fee)/100) - the most you can bid and still cover the bid plus both fees out of the hashprice.'],
-      ['capAtBreakEven', 'Cap bids at break-even', 'checkbox', 'Never bid above the fee-adjusted break-even hashprice, so a bid plus both fees never exceeds what the rented hashrate earns. Needs the master switch above + a hashprice source; in markets priced above break-even the bot will sit at break-even and may not win, by design.'],
-      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'] ] },
+    { group: 'Dynamic price cap', items: [
+      ['dynamicCapEnabled', 'Enable dynamic cap', 'checkbox', 'When on, the bid is capped at the fee-adjusted, buffered hashprice (the formula below), so the bid plus both fees never eats into your profit buffer. The fixed Max price still applies as an absolute backstop (effective cap = the lower of the two). Needs a hashprice source; if hashprice is unavailable the bot falls back to the Max price. Off = pricing uses overpay + Max price only.'],
+      ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Subtracted from hashprice in the dynamic cap and the fee-aware P&L.'],
+      ['poolFeePct', 'Pool fee (%)', 'number', 'Your mining pool fee (typically ~1%). Subtracted from hashprice in the dynamic cap and the fee-aware P&L.'],
+      ['dynamicCapBufferBtc', 'Profit buffer (BTC/EH/day)', 'number', 'Margin held back below the fee-adjusted hashprice. Dynamic cap = hashprice × (1 − (NiceHash fee + pool fee)/100) − this buffer. Higher = more profit headroom but you may not win when the market runs hot; 0 = pure break-even (no margin).'] ] },
     { group: 'Pool', items: [
       ['poolHost', 'Pool host', 'text', 'Your stratum pool hostname. The app registers it with NiceHash automatically (no fee).'],
       ['poolPort', 'Pool port', 'number', 'Stratum port of your pool.'],

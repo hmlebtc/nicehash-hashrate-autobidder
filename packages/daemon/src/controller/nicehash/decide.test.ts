@@ -22,7 +22,7 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     price_down_step_btc: 0.0000001,
     cheap_threshold_pct: 0,
     cheap_target_speed_units: 0,
-    use_break_even: true,
+    dynamic_cap_enabled: false,
     ...over,
   };
 }
@@ -125,8 +125,8 @@ describe('decide - create', () => {
     expect(p.price_btc).toBe(0.001);
   });
 
-  it('caps the bid at the fee-adjusted break-even when capAtBreakEven is on', () => {
-    // hashprice 0.0008, fees 3% + 1% => break-even 0.0008/1.04 ≈ 0.00076923.
+  it('caps the bid at the dynamic cap (hashprice − fees − buffer) when enabled', () => {
+    // hashprice 0.0008, fees 3% + 1% = 4%, buffer 0 => cap = 0.0008 × 0.96 = 0.000768.
     // anchor 0.0009 + overpay would be 0.00091, so the cap binds.
     const out = decide(
       state({
@@ -135,17 +135,18 @@ describe('decide - create', () => {
         config: config({
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
-          cap_at_break_even: true,
+          dynamic_cap_enabled: true,
           max_price_btc_per_unit_day: 1,
         }),
       }),
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04, 9);
+    expect(p.price_btc).toBeCloseTo(0.0008 * 0.96, 9);
   });
 
-  it('does not cap at break-even when the toggle is off (anchor + overpay wins)', () => {
+  it('subtracts the absolute profit buffer from the dynamic cap', () => {
+    // cap = 0.0008 × 0.96 − 0.00005 = 0.000718.
     const out = decide(
       state({
         market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
@@ -153,7 +154,26 @@ describe('decide - create', () => {
         config: config({
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
-          cap_at_break_even: false,
+          dynamic_cap_enabled: true,
+          dynamic_cap_buffer_btc: 0.00005,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.0008 * 0.96 - 0.00005, 9);
+  });
+
+  it('does not apply the dynamic cap when disabled (anchor + overpay wins)', () => {
+    const out = decide(
+      state({
+        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.0008,
+        config: config({
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          dynamic_cap_enabled: false,
           max_price_btc_per_unit_day: 1,
         }),
       }),
@@ -163,26 +183,7 @@ describe('decide - create', () => {
     expect(p.price_btc).toBeCloseTo(0.00091, 9);
   });
 
-  it('ignores the break-even cap when the master use_break_even switch is off', () => {
-    const out = decide(
-      state({
-        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
-        hashprice_btc_per_unit_day: 0.0008,
-        config: config({
-          nicehash_fee_pct: 3,
-          pool_fee_pct: 1,
-          use_break_even: false,
-          cap_at_break_even: true,
-          max_price_btc_per_unit_day: 1,
-        }),
-      }),
-    );
-    const p = out[0]!;
-    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.00091, 9);
-  });
-
-  it('ignores the break-even cap when hashprice is unavailable (graceful)', () => {
+  it('falls back to the hard cap when the dynamic cap is enabled but hashprice is unavailable', () => {
     const out = decide(
       state({
         market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
@@ -190,13 +191,14 @@ describe('decide - create', () => {
         config: config({
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
-          cap_at_break_even: true,
+          dynamic_cap_enabled: true,
           max_price_btc_per_unit_day: 1,
         }),
       }),
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    // No hashprice -> dynamic cap inactive -> hard cap (1) doesn't bind -> anchor+overpay.
     expect(p.price_btc).toBeCloseTo(0.00091, 9);
   });
 
