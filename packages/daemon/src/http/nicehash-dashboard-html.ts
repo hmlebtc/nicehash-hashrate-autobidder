@@ -471,7 +471,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('curDeliveredUnit').textContent = speedUnit();
     $('balance').textContent = fmtBtc(s.balance_btc);
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
-    $('anchorUnit').textContent = priceUnit() + ' · price to beat';
+    $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
     $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
     $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
 

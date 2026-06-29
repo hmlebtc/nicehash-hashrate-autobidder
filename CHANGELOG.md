@@ -2,6 +2,20 @@
 
 ## 2026-06-29
 
+### `[Fix]` Market anchor tracks the real marginal (purple) price
+
+The pricing anchor was derived from each competing order's price *cap*
+(`limit`), so a single idle or over-capped high-priced order — a large cap
+resting high but delivering almost no hashrate — exhausted market supply near
+the top of the book and dragged the anchor far above reality (e.g. ~0.50 when
+NiceHash's marginal/purple price was ~0.44). The anchor is now computed from
+the speed each order is *actually* receiving (`acceptedSpeed`): the bidder
+walks the orders currently being filled from cheapest up until their delivered
+speed covers the target, and anchors on that price — exactly the marginal
+order NiceHash highlights in purple. Bids now sit just above that fill floor
+instead of being clamped up against the safety ceiling. The Status "Market
+anchor" tile is relabelled "marginal fill (NiceHash purple)".
+
 ### `[Fix]` Only treat live NiceHash orders as "unknown"
 
 Reconciliation flagged any account order missing from the ledger as unknown
