@@ -231,6 +231,17 @@ export interface NiceHashOrdersTable {
 }
 
 // ---------------------------------------------------------------------------
+// nicehash_settings (operator-editable, dashboard-managed)
+// ---------------------------------------------------------------------------
+
+/** Single-row (id=1) JSON blob of the operator-editable NiceHash settings. */
+export interface NiceHashSettingsTable {
+  id: 1;
+  config_json: string;
+  updated_at: number;
+}
+
+// ---------------------------------------------------------------------------
 // deferred_actions
 // ---------------------------------------------------------------------------
 
@@ -671,6 +682,7 @@ export interface Database {
   runtime_state: RuntimeStateTable;
   owned_bids: OwnedBidsTable;
   nicehash_orders: NiceHashOrdersTable;
+  nicehash_settings: NiceHashSettingsTable;
   deferred_actions: DeferredActionsTable;
   decisions: DecisionsTable;
   spend_events: SpendEventsTable;

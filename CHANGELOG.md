@@ -2,6 +2,17 @@
 
 ## 2026-06-29
 
+### `[Feature]` In-dashboard config screen + connectivity test
+
+The dashboard now has a **⚙ Config** panel (credentials, connection, strategy,
+pool) so the operator can edit settings without touching the compose env, plus a
+**Test connection** button that exercises the signed read path (clock sync,
+algorithm metadata, balance) and reports the result inline. Settings persist to
+a new `nicehash_settings` row and seed from env on first boot; the daemon now
+boots from those persisted settings. Connection/strategy edits apply on the next
+app restart; the run mode applies immediately. The API secret is write-only —
+GET responses mask it and re-posting the mask keeps the stored value.
+
 ### `[Infra]` Package the NiceHash autobidder as an Umbrel community app
 
 The daemon image now runs the NiceHash control loop (`main-nicehash.js`),

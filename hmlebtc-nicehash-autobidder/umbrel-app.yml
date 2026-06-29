@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.1.0"
+version: "0.2.0"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -32,10 +32,15 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
-  v0.1.0 - first release of the NiceHash fork.
+  v0.2.0 - in-dashboard configuration + connectivity test.
 
-  Adapts Hashrate Autopilot to the NiceHash Hash-power marketplace: HMAC-signed
-  NiceHash client, buyer-competition pricing anchor, escrow refill, owned-order
-  ledger, DRY-RUN / LIVE / PAUSED control, and a purpose-built dashboard. The
-  signed-client chain and the order create/read/cancel round-trip are validated
-  end-to-end against the NiceHash testnet.
+  The dashboard now has a Config panel so you can edit credentials, connection,
+  strategy, and pool from the UI instead of the compose file, plus a Test
+  connection button that checks the signed NiceHash API path (clock sync,
+  algorithm metadata, balance) and reports the result inline. Settings persist
+  across restarts and seed from the compose env on first boot. For mainnet you
+  can now set the base URL, balance currency, and API keys entirely from the
+  Config panel. The API secret is write-only and masked in the UI.
+
+  Connection and strategy changes apply on the next app restart; the run mode
+  (DRY-RUN / LIVE / PAUSED) applies immediately.

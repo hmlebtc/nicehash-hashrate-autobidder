@@ -48,6 +48,19 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .failed { background: #f8514933; color: #ff7b72; }
   .dry { background: #1f6feb33; color: #58a6ff; }
   h2.section { font-size: 13px; color: #8b949e; margin: 28px 0 8px; text-transform: uppercase; letter-spacing: .06em; }
+  .cfgbtn { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
+  fieldset { border: 1px solid #21262d; border-radius: 10px; margin: 0 0 16px; padding: 12px 16px; }
+  legend { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
+  .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 16px; }
+  .formgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b949e; }
+  .formgrid input { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid #30363d; background: #0e1116; color: #e6edf3; }
+  .formgrid input:focus { outline: 2px solid #1f6feb; border-color: #1f6feb; }
+  .btnrow { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .btnrow button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
+  .btnrow button.primary { background: #1f6feb; border-color: #1f6feb; }
+  .msg { font-size: 12px; color: #8b949e; }
+  #configSection { display: none; }
+  #configSection.open { display: block; }
   code { color: #79c0ff; }
   footer { padding: 16px 24px; color: #586069; font-size: 11px; border-top: 1px solid #222; }
   a { color: #58a6ff; }
@@ -66,6 +79,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <button data-mode="PAUSED">Pause</button>
     <button data-mode="LIVE">Live</button>
   </div>
+  <button class="cfgbtn" id="cfgToggle">⚙ Config</button>
 </header>
 <main>
   <div id="unknownWarn"></div>
@@ -93,6 +107,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <thead><tr><th>Proposal</th><th>Reason</th><th>Outcome</th></tr></thead>
     <tbody id="actions"><tr><td colspan="3" class="muted">holding — no action</td></tr></tbody>
   </table>
+
+  <section id="configSection">
+    <h2 class="section">Configuration</h2>
+    <p class="muted">Credentials, connection and strategy. The secret is write-only — leave it as
+      the dots to keep the saved value, or type a new one to replace it. <b>Test connection</b> uses the
+      values currently in the form (read-only). <b>Save</b> persists them; connection/strategy changes take
+      effect after an app restart, the run mode applies immediately.</p>
+    <div id="configForm"></div>
+    <div class="btnrow">
+      <button id="cfgTest">Test connection</button>
+      <button id="cfgSave" class="primary">Save</button>
+      <span class="msg" id="cfgMsg"></span>
+    </div>
+    <div class="msg" id="testMsg"></div>
+  </section>
 </main>
 <footer>
   <span id="build"></span> · auto-refreshes every 5s · DRY-RUN mutates nothing.
@@ -172,6 +201,115 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       $('sub').textContent = 'connection error';
     }
   }
+
+  // ---- Configuration screen -------------------------------------------------
+  var FIELDS = [
+    { group: 'Connection', items: [
+      ['apiKey', 'API key', 'text'],
+      ['apiSecret', 'API secret', 'password'],
+      ['orgId', 'Organization ID', 'text'],
+      ['baseUrl', 'Base URL', 'text']
+    ]},
+    { group: 'Strategy', items: [
+      ['algorithm', 'Algorithm', 'text'],
+      ['market', 'Market', 'text'],
+      ['priceCurrency', 'Order-book currency', 'text'],
+      ['balanceCurrency', 'Balance currency', 'text'],
+      ['tickSeconds', 'Tick seconds', 'number'],
+      ['targetSpeedUnits', 'Target speed (PH/s)', 'number'],
+      ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number'],
+      ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number'],
+      ['orderBudgetBtc', 'Order budget (BTC)', 'number'],
+      ['refillAmountBtc', 'Refill amount (BTC)', 'number'],
+      ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number']
+    ]},
+    { group: 'Pool', items: [
+      ['poolHost', 'Pool host', 'text'],
+      ['poolPort', 'Pool port', 'number'],
+      ['poolUser', 'Pool user', 'text'],
+      ['poolPassword', 'Pool password', 'text']
+    ]}
+  ];
+
+  function buildConfigForm() {
+    var html = '';
+    FIELDS.forEach(function (g) {
+      html += '<fieldset><legend>' + esc(g.group) + '</legend><div class="formgrid">';
+      g.items.forEach(function (it) {
+        var step = it[2] === 'number' ? ' step="any"' : '';
+        var auto = it[2] === 'password' ? ' autocomplete="off"' : '';
+        html += '<label>' + esc(it[1]) + '<input id="cfg_' + it[0] + '" type="' + it[2] + '"' + step + auto + ' /></label>';
+      });
+      html += '</div></fieldset>';
+    });
+    $('configForm').innerHTML = html;
+  }
+
+  function fillConfig(cfg) {
+    FIELDS.forEach(function (g) { g.items.forEach(function (it) {
+      var el = $('cfg_' + it[0]);
+      if (el) el.value = (cfg[it[0]] === null || cfg[it[0]] === undefined) ? '' : cfg[it[0]];
+    }); });
+  }
+
+  function collectConfig() {
+    var out = {};
+    FIELDS.forEach(function (g) { g.items.forEach(function (it) {
+      var el = $('cfg_' + it[0]);
+      if (el) out[it[0]] = el.value;
+    }); });
+    return out;
+  }
+
+  var configLoaded = false;
+  async function loadConfig() {
+    try {
+      var r = await fetch('/api/nicehash/config');
+      var j = await r.json();
+      fillConfig(j.config || {});
+      configLoaded = true;
+    } catch (e) { $('cfgMsg').textContent = 'failed to load config'; }
+  }
+
+  async function saveConfig() {
+    $('cfgMsg').textContent = 'saving…';
+    try {
+      var r = await fetch('/api/nicehash/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
+      var j = await r.json();
+      fillConfig(j.config || {});
+      $('cfgMsg').textContent = j.note || 'saved';
+      refresh();
+    } catch (e) { $('cfgMsg').textContent = 'save failed'; }
+  }
+
+  async function testConfig() {
+    $('testMsg').innerHTML = 'testing…';
+    try {
+      var r = await fetch('/api/nicehash/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(collectConfig()) });
+      var j = await r.json();
+      if (j.ok) {
+        var bal = (j.balance === null || j.balance === undefined)
+          ? ('— (' + esc(j.balanceError || 'n/a') + ')')
+          : (esc(j.balance) + ' ' + esc(j.balanceCurrency));
+        $('testMsg').innerHTML = '<span class="pill ok">OK</span> clock offset ' + esc(j.clockOffsetMs) +
+          'ms · ' + esc(j.algorithm) + ' marketFactor ' + esc(j.marketFactor) + ' · balance ' + bal;
+      } else {
+        $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(j.error || 'unknown error') +
+          (j.status ? (' (HTTP ' + esc(j.status) + ')') : '');
+      }
+    } catch (e) { $('testMsg').innerHTML = '<span class="pill failed">FAILED</span> ' + esc(e.message || String(e)); }
+  }
+
+  buildConfigForm();
+  $('cfgToggle').addEventListener('click', function () {
+    var sec = $('configSection');
+    sec.classList.toggle('open');
+    if (sec.classList.contains('open') && !configLoaded) loadConfig();
+    if (sec.classList.contains('open')) sec.scrollIntoView({ behavior: 'smooth' });
+  });
+  $('cfgSave').addEventListener('click', saveConfig);
+  $('cfgTest').addEventListener('click', testConfig);
+
   refresh();
   setInterval(refresh, 5000);
 })();
