@@ -2,6 +2,18 @@
 
 ## 2026-06-29
 
+### `[Feature]` Expanded strategy + daemon settings (parity)
+
+Surfaced the controller's full strategy surface through settings: minimum
+floor, cheap mode (enable / target / threshold), max premium over
+hashprice (dynamic price ceiling), and edit-price deadband - previously
+hardcoded. Added daemon controls: boot mode (always dry-run / resume last
+/ always live, with RESUME demoting PAUSED to DRY-RUN), hashprice oracle
+source, BTC/USD price source, and a configurable history retention window
+(replacing the fixed 30-day prune, now also re-run daily). All settable
+from env and persisted; the dashboard form gains these fields in a later
+phase.
+
 ### `[Infra]` Persist per-tick metrics + order-event history
 
 Toward dashboard feature parity with Hashrate Autopilot: the daemon now

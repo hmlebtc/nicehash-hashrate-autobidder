@@ -6,6 +6,7 @@ import {
   SECRET_MASK,
   maskSettings,
   mergeSettings,
+  resolveBootRunMode,
   settingsFromEnv,
   toControllerConfig,
   type NiceHashSettings,
@@ -28,6 +29,14 @@ describe('settingsFromEnv', () => {
     expect(s.balanceCurrency).toBe('TBTC');
     expect(s.runMode).toBe('DRY_RUN');
     expect(s.tickSeconds).toBe(60);
+    // parity-expansion defaults
+    expect(s.minimumFloorUnits).toBe(0);
+    expect(s.cheapModeEnabled).toBe(false);
+    expect(s.maxPremiumOverHashpriceBtc).toBe(0);
+    expect(s.editPriceDeadbandPct).toBe(20);
+    expect(s.bootMode).toBe('RESUME');
+    expect(s.hashpriceSource).toBe('none');
+    expect(s.retentionDays).toBe(30);
   });
 
   it('reads overrides from env and coerces numbers', () => {
@@ -91,6 +100,29 @@ describe('mergeSettings', () => {
     const merged = mergeSettings(base(), { bogusKey: 'x' } as Record<string, unknown>);
     expect(merged).not.toHaveProperty('bogusKey');
   });
+
+  it('coerces booleans, boot mode, and hashprice source', () => {
+    expect(mergeSettings(base(), { cheapModeEnabled: true }).cheapModeEnabled).toBe(true);
+    expect(mergeSettings(base(), { cheapModeEnabled: 'true' }).cheapModeEnabled).toBe(true);
+    expect(mergeSettings(base(), { cheapModeEnabled: '1' }).cheapModeEnabled).toBe(true);
+    expect(mergeSettings(base(), { cheapModeEnabled: 'false' }).cheapModeEnabled).toBe(false);
+    expect(mergeSettings(base(), { bootMode: 'LIVE' }).bootMode).toBe('LIVE');
+    expect(mergeSettings(base(), { bootMode: 'BOGUS' }).bootMode).toBe('RESUME');
+    expect(mergeSettings(base(), { hashpriceSource: 'mempool' }).hashpriceSource).toBe('mempool');
+    expect(mergeSettings(base(), { hashpriceSource: 'bogus' }).hashpriceSource).toBe('none');
+  });
+});
+
+describe('resolveBootRunMode', () => {
+  it('forces DRY_RUN / LIVE regardless of persisted mode', () => {
+    expect(resolveBootRunMode('DRY_RUN', 'LIVE')).toBe('DRY_RUN');
+    expect(resolveBootRunMode('LIVE', 'PAUSED')).toBe('LIVE');
+  });
+  it('RESUME keeps the persisted mode but demotes PAUSED to DRY_RUN', () => {
+    expect(resolveBootRunMode('RESUME', 'LIVE')).toBe('LIVE');
+    expect(resolveBootRunMode('RESUME', 'DRY_RUN')).toBe('DRY_RUN');
+    expect(resolveBootRunMode('RESUME', 'PAUSED')).toBe('DRY_RUN');
+  });
 });
 
 describe('toControllerConfig', () => {
@@ -123,5 +155,30 @@ describe('toControllerConfig', () => {
     expect(cfg.min_order_amount_btc).toBe(0.001);
     expect(cfg.min_speed_limit_units).toBe(0.1);
     expect(cfg.price_down_step_btc).toBe(0.1); // absolute value of the negative step
+  });
+
+  it('maps the edit-price deadband and the hashprice cap (0 disables)', () => {
+    const off = toControllerConfig({ ...base(), editPriceDeadbandPct: 35 }, algo, 'p');
+    expect(off.price_edit_deadband_pct).toBe(35);
+    expect(off.max_overpay_vs_hashprice_btc_per_unit_day).toBeNull();
+    const on = toControllerConfig({ ...base(), maxPremiumOverHashpriceBtc: 0.002 }, algo, 'p');
+    expect(on.max_overpay_vs_hashprice_btc_per_unit_day).toBe(0.002);
+  });
+
+  it('wires cheap mode only when enabled', () => {
+    const disabled = toControllerConfig(
+      { ...base(), cheapModeEnabled: false, cheapThresholdPct: 95, cheapModeTargetUnits: 10 },
+      algo,
+      'p',
+    );
+    expect(disabled.cheap_threshold_pct).toBe(0);
+    expect(disabled.cheap_target_speed_units).toBe(0);
+    const enabled = toControllerConfig(
+      { ...base(), cheapModeEnabled: true, cheapThresholdPct: 95, cheapModeTargetUnits: 10 },
+      algo,
+      'p',
+    );
+    expect(enabled.cheap_threshold_pct).toBe(95);
+    expect(enabled.cheap_target_speed_units).toBe(10);
   });
 });

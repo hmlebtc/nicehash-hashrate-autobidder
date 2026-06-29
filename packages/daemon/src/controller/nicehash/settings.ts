@@ -12,6 +12,12 @@ import { parseDecimal, type MiningAlgorithmSetting } from '@hashrate-autopilot/n
 
 import type { NiceHashControllerConfig, RunMode } from './types.js';
 
+/** How the daemon picks its run mode on boot. */
+export type BootMode = 'DRY_RUN' | 'RESUME' | 'LIVE';
+
+/** Network-hashprice oracle provider. `none` disables hashprice features. */
+export type HashpriceSource = 'none' | 'mempool' | 'minerstat';
+
 export interface NiceHashSettings {
   readonly apiKey: string;
   readonly apiSecret: string;
@@ -33,6 +39,26 @@ export interface NiceHashSettings {
   readonly poolPort: number;
   readonly poolUser: string;
   readonly poolPassword: string;
+  // --- Strategy (parity expansion) ---
+  /** Minimum-floor speed (display units); a chart reference, default 0. */
+  readonly minimumFloorUnits: number;
+  readonly cheapModeEnabled: boolean;
+  /** Target speed while cheap mode is engaged (display units). */
+  readonly cheapModeTargetUnits: number;
+  /** Engage cheap mode when our bid < this % of hashprice. */
+  readonly cheapThresholdPct: number;
+  /** Dynamic ceiling = hashprice + this (BTC/unit/day); 0 disables. */
+  readonly maxPremiumOverHashpriceBtc: number;
+  /** Re-price only when the move exceeds this % of the overpay cushion. */
+  readonly editPriceDeadbandPct: number;
+  // --- Daemon / data ---
+  readonly bootMode: BootMode;
+  /** Network-hashprice oracle provider. */
+  readonly hashpriceSource: HashpriceSource;
+  /** BTC/USD price oracle for display (dashboard USD toggle). */
+  readonly priceSource: string;
+  /** Days of tick-metrics + order-event history to retain. */
+  readonly retentionDays: number;
 }
 
 /** Sentinel returned in place of the real secret by {@link maskSettings}. */
@@ -46,8 +72,30 @@ const n = (e: Env, k: string, d: number): number => {
   const x = Number(v);
   return Number.isFinite(x) ? x : d;
 };
+const b = (e: Env, k: string, d: boolean): boolean => {
+  const v = e[k];
+  if (v === undefined || v === '') return d;
+  return v === '1' || v.toLowerCase() === 'true';
+};
 function asRunMode(v: string | undefined): RunMode {
   return v === 'LIVE' || v === 'PAUSED' || v === 'DRY_RUN' ? v : 'DRY_RUN';
+}
+function asBootMode(v: string | undefined): BootMode {
+  return v === 'DRY_RUN' || v === 'RESUME' || v === 'LIVE' ? v : 'RESUME';
+}
+function asHashpriceSource(v: string | undefined): HashpriceSource {
+  return v === 'mempool' || v === 'minerstat' || v === 'none' ? v : 'none';
+}
+
+/**
+ * Resolve the run mode the daemon should boot into, given the boot policy and
+ * the last persisted run mode. RESUME demotes PAUSED to DRY_RUN (a paused
+ * order should not silently resume trading after a restart).
+ */
+export function resolveBootRunMode(bootMode: BootMode, persisted: RunMode): RunMode {
+  if (bootMode === 'DRY_RUN') return 'DRY_RUN';
+  if (bootMode === 'LIVE') return 'LIVE';
+  return persisted === 'PAUSED' ? 'DRY_RUN' : persisted;
 }
 
 /** Seed settings from environment variables (first-boot defaults). */
@@ -73,6 +121,16 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     poolPort: n(env, 'NICEHASH_POOL_PORT', 3333),
     poolUser: s(env, 'NICEHASH_POOL_USER', ''),
     poolPassword: s(env, 'NICEHASH_POOL_PASS', 'x'),
+    minimumFloorUnits: n(env, 'NICEHASH_MIN_FLOOR', 0),
+    cheapModeEnabled: b(env, 'NICEHASH_CHEAP_ENABLED', false),
+    cheapModeTargetUnits: n(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
+    cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
+    maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
+    editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
+    bootMode: asBootMode(env.NICEHASH_BOOT_MODE),
+    hashpriceSource: asHashpriceSource(env.NICEHASH_HASHPRICE_SOURCE),
+    priceSource: s(env, 'NICEHASH_PRICE_SOURCE', 'coingecko'),
+    retentionDays: n(env, 'NICEHASH_RETENTION_DAYS', 30),
   };
 }
 
@@ -89,16 +147,18 @@ export function toControllerConfig(
     target_speed_units: settings.targetSpeedUnits,
     overpay_btc_per_unit_day: settings.overpayBtcPerUnitDay,
     max_price_btc_per_unit_day: settings.maxPriceBtcPerUnitDay,
-    max_overpay_vs_hashprice_btc_per_unit_day: null,
+    max_overpay_vs_hashprice_btc_per_unit_day:
+      settings.maxPremiumOverHashpriceBtc > 0 ? settings.maxPremiumOverHashpriceBtc : null,
     order_budget_btc: settings.orderBudgetBtc,
     refill_amount_btc: settings.refillAmountBtc,
     refill_when_runway_hours: settings.refillWhenRunwayHours,
     min_order_amount_btc: parseDecimal(algo.minimalOrderAmount, 0.001),
-    price_edit_deadband_pct: 20,
+    price_edit_deadband_pct: settings.editPriceDeadbandPct,
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
-    cheap_threshold_pct: 0,
-    cheap_target_speed_units: 0,
+    // Cheap mode only engages when enabled AND its target exceeds the normal one.
+    cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
+    cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
   };
 }
 
@@ -124,6 +184,13 @@ export function mergeSettings(
     if (v === undefined) return existing[k] as number;
     const x = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(x) ? x : (existing[k] as number);
+  };
+  const bool = (k: keyof NiceHashSettings): boolean => {
+    const v = patch[k];
+    if (v === undefined) return existing[k] as boolean;
+    if (typeof v === 'boolean') return v;
+    if (typeof v === 'string') return v === '1' || v.toLowerCase() === 'true';
+    return existing[k] as boolean;
   };
   const incomingSecret = patch.apiSecret;
   const apiSecret =
@@ -152,5 +219,17 @@ export function mergeSettings(
     poolPort: num('poolPort'),
     poolUser: str('poolUser'),
     poolPassword: str('poolPassword'),
+    minimumFloorUnits: num('minimumFloorUnits'),
+    cheapModeEnabled: bool('cheapModeEnabled'),
+    cheapModeTargetUnits: num('cheapModeTargetUnits'),
+    cheapThresholdPct: num('cheapThresholdPct'),
+    maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
+    editPriceDeadbandPct: num('editPriceDeadbandPct'),
+    bootMode: asBootMode(typeof patch.bootMode === 'string' ? patch.bootMode : existing.bootMode),
+    hashpriceSource: asHashpriceSource(
+      typeof patch.hashpriceSource === 'string' ? patch.hashpriceSource : existing.hashpriceSource,
+    ),
+    priceSource: str('priceSource'),
+    retentionDays: num('retentionDays'),
   };
 }

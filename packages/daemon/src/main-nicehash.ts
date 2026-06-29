@@ -27,7 +27,11 @@ import { createNiceHashClient } from '@hashrate-autopilot/nicehash-client';
 
 import { NiceHashController } from './controller/nicehash/controller.js';
 import { ensurePool } from './controller/nicehash/pool-manager.js';
-import { settingsFromEnv, toControllerConfig } from './controller/nicehash/settings.js';
+import {
+  resolveBootRunMode,
+  settingsFromEnv,
+  toControllerConfig,
+} from './controller/nicehash/settings.js';
 import { NiceHashStateStore } from './controller/nicehash/state-store.js';
 import type { NiceHashTickResult } from './controller/nicehash/tick.js';
 import { createNiceHashHttpServer } from './http/nicehash-server.js';
@@ -122,7 +126,9 @@ async function main(): Promise<void> {
 
   // Shared store: the loop writes each tick here, the HTTP API reads it, and
   // the run mode lives here so the dashboard can flip DRY-RUN / LIVE / PAUSED.
-  const store = new NiceHashStateStore(settings.runMode);
+  // The boot mode decides the starting run mode (RESUME demotes PAUSED).
+  const bootRunMode = resolveBootRunMode(settings.bootMode, settings.runMode);
+  const store = new NiceHashStateStore(bootRunMode);
 
   const controller = new NiceHashController({
     service,
@@ -134,18 +140,22 @@ async function main(): Promise<void> {
     runMode: () => store.getRunMode(),
     metrics: metricsRepo,
     events: eventsRepo,
+    floorUnits: settings.minimumFloorUnits,
   });
 
-  // Prune the time-series + audit log to a fixed window on boot (the retention
-  // window becomes operator-configurable in a later pass).
-  const RETENTION_MS = 30 * 24 * 60 * 60_000;
-  try {
-    const cutoff = Date.now() - RETENTION_MS;
-    await metricsRepo.pruneOlderThan(cutoff);
-    await eventsRepo.pruneOlderThan(cutoff);
-  } catch {
-    /* non-fatal */
-  }
+  // Prune the time-series + audit log to the configured retention window on
+  // boot (and once per day in the loop below).
+  const retentionMs = Math.max(1, settings.retentionDays) * 24 * 60 * 60_000;
+  const prune = async (): Promise<void> => {
+    try {
+      const cutoff = Date.now() - retentionMs;
+      await metricsRepo.pruneOlderThan(cutoff);
+      await eventsRepo.pruneOlderThan(cutoff);
+    } catch {
+      /* non-fatal */
+    }
+  };
+  await prune();
 
   const httpPort = Number(process.env.NICEHASH_HTTP_PORT ?? 3010);
   const app = await createNiceHashHttpServer({
@@ -160,9 +170,9 @@ async function main(): Promise<void> {
 
   console.log('NiceHash daemon starting');
   console.log(`  base=${settings.baseUrl} algorithm=${settings.algorithm} market=${config.market}`);
-  console.log(`  run_mode=${settings.runMode} tick=${settings.tickSeconds}s db=${dbPath} pool_id=${config.pool_id || '(none)'}`);
+  console.log(`  boot_mode=${settings.bootMode} run_mode=${bootRunMode} tick=${settings.tickSeconds}s db=${dbPath} pool_id=${config.pool_id || '(none)'}`);
   console.log(`  HTTP API on :${httpPort} (dashboard at /, config + connectivity test on the page)`);
-  if (settings.runMode === 'LIVE') {
+  if (bootRunMode === 'LIVE') {
     console.log(
       '  ⚠️  LIVE: marketplace mutations enabled. Confirm the submit-price scale on a funded testnet order first (docs/NICEHASH_ADAPTATION.md §6).',
     );
@@ -185,6 +195,8 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+  let lastPruneAt = Date.now();
+  const PRUNE_INTERVAL_MS = 24 * 60 * 60_000;
   while (!stopping) {
     try {
       const result = await controller.tick();
@@ -192,6 +204,10 @@ async function main(): Promise<void> {
       logTick(result);
     } catch (err) {
       console.error(`tick error: ${(err as Error)?.message ?? String(err)}`);
+    }
+    if (Date.now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
+      await prune();
+      lastPruneAt = Date.now();
     }
     for (let i = 0; i < settings.tickSeconds && !stopping; i++) await sleep(1000);
   }
