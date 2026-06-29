@@ -37,6 +37,9 @@ describe('settingsFromEnv', () => {
     expect(s.bootMode).toBe('RESUME');
     expect(s.hashpriceSource).toBe('none');
     expect(s.retentionDays).toBe(30);
+    expect(s.niceHashFeePct).toBe(3);
+    expect(s.poolFeePct).toBe(1);
+    expect(s.capAtBreakEven).toBe(true);
   });
 
   it('reads overrides from env and coerces numbers', () => {
@@ -111,6 +114,14 @@ describe('mergeSettings', () => {
     expect(mergeSettings(base(), { hashpriceSource: 'mempool' }).hashpriceSource).toBe('mempool');
     expect(mergeSettings(base(), { hashpriceSource: 'bogus' }).hashpriceSource).toBe('none');
   });
+
+  it('coerces the fee fields and the break-even cap toggle', () => {
+    const m = mergeSettings(base(), { niceHashFeePct: '2.5', poolFeePct: '0.5', capAtBreakEven: 'false' });
+    expect(m.niceHashFeePct).toBe(2.5);
+    expect(m.poolFeePct).toBe(0.5);
+    expect(m.capAtBreakEven).toBe(false);
+    expect(mergeSettings(base(), { capAtBreakEven: true }).capAtBreakEven).toBe(true);
+  });
 });
 
 describe('resolveBootRunMode', () => {
@@ -180,5 +191,16 @@ describe('toControllerConfig', () => {
     );
     expect(enabled.cheap_threshold_pct).toBe(95);
     expect(enabled.cheap_target_speed_units).toBe(10);
+  });
+
+  it('carries the fees + break-even cap into the controller config', () => {
+    const cfg = toControllerConfig(
+      { ...base(), niceHashFeePct: 3, poolFeePct: 1, capAtBreakEven: true },
+      algo,
+      'p',
+    );
+    expect(cfg.nicehash_fee_pct).toBe(3);
+    expect(cfg.pool_fee_pct).toBe(1);
+    expect(cfg.cap_at_break_even).toBe(true);
   });
 });

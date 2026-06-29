@@ -97,6 +97,32 @@ export interface NiceHashControllerConfig {
   readonly cheap_threshold_pct: number;
   /** Target speed while cheap mode is engaged (display units). */
   readonly cheap_target_speed_units: number;
+  /** NiceHash marketplace fee, percent. Default 0 (no fee effect). */
+  readonly nicehash_fee_pct?: number;
+  /** Mining-pool fee, percent. Default 0. */
+  readonly pool_fee_pct?: number;
+  /**
+   * When true, the bid is capped at the fee-adjusted break-even hashprice
+   * (= hashprice / (1 + (nicehash_fee_pct + pool_fee_pct)/100)) whenever a
+   * hashprice is available, so bid + fees never exceed the hashrate's earnings.
+   * Default false (no break-even cap).
+   */
+  readonly cap_at_break_even?: boolean;
+}
+
+/**
+ * Fee-adjusted break-even bid: the most you can pay per price-unit/day and still
+ * cover the bid plus the NiceHash + pool fees out of the hashprice. Returns null
+ * when the hashprice is unavailable.
+ */
+export function breakEvenPrice(
+  hashprice: number | null,
+  niceHashFeePct = 0,
+  poolFeePct = 0,
+): number | null {
+  if (hashprice === null || !Number.isFinite(hashprice)) return null;
+  const totalFee = (niceHashFeePct || 0) + (poolFeePct || 0);
+  return hashprice / (1 + totalFee / 100);
 }
 
 export interface NiceHashState {

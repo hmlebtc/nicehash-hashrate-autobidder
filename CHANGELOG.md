@@ -2,6 +2,43 @@
 
 ## 2026-06-29
 
+### `[Feature]` Configurable fees + fee-adjusted break-even
+
+Added NiceHash-fee and pool-fee percentage settings (default 3% / 1%). The
+bot computes a break-even = `hashprice / (1 + (niceHashFee + poolFee)/100)` -
+the highest bid that still covers the bid plus both fees out of the
+hashprice. New Status tiles (Break-even, Margin to break-even), a break-even
+line on the price chart, and a fee-aware profit & loss panel surface it. A
+"Cap bids at break-even" toggle (default on) makes `decide()` never price
+above break-even when a hashprice is available (graceful when it isn't), so
+the bot only rents hashrate that should pay for itself. Settings loaded from
+an older version are backfilled with the new fields' defaults.
+
+### `[Infra]` Default to mainnet; remove baked testnet credentials
+
+The Umbrel compose now points at `https://api2.nicehash.com` with
+`NICEHASH_BALANCE_CURRENCY=BTC` and ships the API key/secret/org + pool
+**blank** — you enter your own on the Config tab. These env values only seed
+settings on first install; the daemon then boots from the values saved in
+the app database, so updates never clobber them and existing installs keep
+their saved config. Fresh installs also default the hashprice source to
+`mempool` (keyless) so the cost-vs-hashprice tile and P&L estimate work out
+of the box; switch it to `none` to disable. (Hashrate Index / Luxor was
+considered but needs a per-user API key for the same number, so mempool
+stays the default.)
+
+### `[UI]` Autobidder theme + config field help
+
+Re-themed the dashboard to match Hashrate Autopilot exactly: the Tailwind
+slate-900 navy background, orange brand/section headers, gold accent
+(active tabs, toggles, primary buttons, focus), and the Autopilot chart
+hues — delivered orange, limit blue, target/floor slate, anchor cyan,
+hashprice violet, and the create/edit/cancel marker colours. Added an
+inline description under every Config field. Clarified that "minimum
+floor" is a hashrate reference line, not a price: the price floor you
+outbid (NiceHash's purple marginal order) is the live market anchor the
+bidder already tracks. Gallery screenshots refreshed.
+
 ### `[UI]` Full dashboard: Status / History / Config, charts, tiles, P&L
 
 Rebuilt the dashboard into a tabbed, Hashrate-Autopilot-style operator UI

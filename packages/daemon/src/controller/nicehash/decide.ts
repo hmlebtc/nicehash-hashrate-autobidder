@@ -19,8 +19,7 @@
  * scale-up. The price-decrease cooldown / down-step clamp live in `gate.ts`.
  */
 
-import { computeMarketAnchor } from './orderbook.js';
-import { isActionableOrder, type NiceHashState, type Proposal } from './types.js';
+import { breakEvenPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
 
 function fmtPrice(btcPerUnitDay: number): string {
   return `${btcPerUnitDay.toFixed(8)} BTC/unit/day`;
@@ -64,7 +63,17 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     dynamicCapConfigured && hashprice !== null
       ? hashprice + config.max_overpay_vs_hashprice_btc_per_unit_day!
       : null;
-  const effectiveCap = dynamicCap !== null ? Math.min(fixedCap, dynamicCap) : fixedCap;
+  let effectiveCap = dynamicCap !== null ? Math.min(fixedCap, dynamicCap) : fixedCap;
+
+  // Fee-adjusted break-even ceiling: bid + NiceHash fee + pool fee must not
+  // exceed what the rented hashrate earns (the hashprice). Applies only when a
+  // hashprice is available, so a transient oracle gap never blocks bidding.
+  const breakEven = breakEvenPrice(hashprice, config.nicehash_fee_pct, config.pool_fee_pct);
+  let cappedByBreakEven = false;
+  if (config.cap_at_break_even && breakEven !== null && breakEven < effectiveCap) {
+    effectiveCap = breakEven;
+    cappedByBreakEven = true;
+  }
 
   const anchor = state.market.anchor_price_btc; // non-null per guard above
   const desired = anchor + config.overpay_btc_per_unit_day;
@@ -97,8 +106,9 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     (config.overpay_btc_per_unit_day * config.price_edit_deadband_pct) / 100,
   );
 
+  const capLabel = cappedByBreakEven ? 'break-even' : 'cap';
   const priceSuffix = cappedByCeiling
-    ? ` (clamped to cap ${fmtPrice(effectiveCap)})`
+    ? ` (clamped to ${capLabel} ${fmtPrice(effectiveCap)})`
     : ` (anchor ${fmtPrice(anchor)} + overpay ${fmtPrice(config.overpay_btc_per_unit_day)})`;
 
   const actionable = owned_orders.filter(isActionableOrder);

@@ -121,6 +121,62 @@ describe('decide - create', () => {
     expect(p.price_btc).toBe(0.001);
   });
 
+  it('caps the bid at the fee-adjusted break-even when capAtBreakEven is on', () => {
+    // hashprice 0.0008, fees 3% + 1% => break-even 0.0008/1.04 ≈ 0.00076923.
+    // anchor 0.0009 + overpay would be 0.00091, so the cap binds.
+    const out = decide(
+      state({
+        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.0008,
+        config: config({
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          cap_at_break_even: true,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04, 9);
+  });
+
+  it('does not cap at break-even when the toggle is off (anchor + overpay wins)', () => {
+    const out = decide(
+      state({
+        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.0008,
+        config: config({
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          cap_at_break_even: false,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.00091, 9);
+  });
+
+  it('ignores the break-even cap when hashprice is unavailable (graceful)', () => {
+    const out = decide(
+      state({
+        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: null,
+        config: config({
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          cap_at_break_even: true,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.00091, 9);
+  });
+
   it('engages cheap mode to scale the speed target up', () => {
     const out = decide(
       state({ config: config({ cheap_threshold_pct: 90, cheap_target_speed_units: 50 }) }),

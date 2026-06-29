@@ -107,6 +107,9 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     max_price_btc_per_unit_day: cfg.max_price_btc_per_unit_day,
     refill_amount_btc: cfg.refill_amount_btc,
     refill_when_runway_hours: cfg.refill_when_runway_hours,
+    nicehash_fee_pct: cfg.nicehash_fee_pct ?? 0,
+    pool_fee_pct: cfg.pool_fee_pct ?? 0,
+    cap_at_break_even: cfg.cap_at_break_even ?? false,
   };
   if (!result) {
     return {
@@ -228,8 +231,11 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     return { run_mode: deps.store.getRunMode() };
   });
 
-  const currentSettings = async (): Promise<NiceHashSettings> =>
-    (await deps.settingsRepo.get()) ?? settingsFromEnv();
+  const currentSettings = async (): Promise<NiceHashSettings> => {
+    const stored = await deps.settingsRepo.get();
+    // Backfill any fields a stored row from an older version lacks.
+    return stored ? mergeSettings(settingsFromEnv(), stored) : settingsFromEnv();
+  };
 
   // Read settings (secret masked).
   app.get('/api/nicehash/config', async () => ({ config: maskSettings(await currentSettings()) }));

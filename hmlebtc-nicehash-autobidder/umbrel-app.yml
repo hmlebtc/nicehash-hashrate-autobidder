@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.3.0"
+version: "0.4.0"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,27 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.4.0 - configurable fees + fee-adjusted break-even.
+
+  Adds NiceHash-fee and pool-fee percentage fields. From them the bot computes
+  your break-even = hashprice / (1 + (NiceHash fee + pool fee)/100): the most
+  you can bid per EH/day and still cover the bid plus both fees out of the
+  hashprice. The Status page shows a Break-even tile, a Margin-to-break-even
+  tile, and a break-even line on the price chart, and the profit & loss panel is
+  now fee-aware. With "Cap bids at break-even" on (default), the bot never bids
+  above break-even - so it only rents hashrate that should pay for itself.
+
+  Also: mainnet by default with blank credentials, the Hashrate Autopilot
+  colour theme, and inline help on every Config field.
+
+  Ships pointed at the NiceHash mainnet API by default with blank credentials -
+  enter your own API key/secret/org and pool on the Config tab (they persist in
+  the app database, so updates keep them). The dashboard is re-themed to the
+  Hashrate Autopilot palette, and every Config field now has an inline
+  description. Clarified that "minimum floor" is a hashrate reference line, not
+  a price - the price floor you outbid (the marginal order shown purple in
+  NiceHash's order book) is the live market anchor, tracked automatically.
+
   v0.3.0 - full dashboard: charts, history, profit & loss.
 
   The dashboard is now a tabbed Status / History / Config app. Status adds a
