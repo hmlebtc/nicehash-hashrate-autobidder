@@ -1,0 +1,108 @@
+/**
+ * DB-backed NiceHash daemon entrypoint (DRY-RUN by default).
+ *
+ * Boots the persistent NiceHash control loop: opens the SQLite store (applying
+ * migrations), builds the signed client + caching service, hydrates the
+ * owned-order ledger, and drives `NiceHashController.tick()` on an interval
+ * with graceful shutdown. In DRY-RUN it logs what it would do and mutates
+ * nothing; flip `NICEHASH_RUN_MODE=LIVE` to enable real orders (only after the
+ * submit-price scale is validated - see docs/NICEHASH_ADAPTATION.md §6).
+ *
+ * Config comes from env (see config-from-env.ts). Run: `pnpm daemon:nicehash`.
+ */
+
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+
+import { createNiceHashClient } from '@hashrate-autopilot/nicehash-client';
+
+import {
+  buildControllerConfig,
+  readConnection,
+} from './controller/nicehash/config-from-env.js';
+import { NiceHashController } from './controller/nicehash/controller.js';
+import type { NiceHashTickResult } from './controller/nicehash/tick.js';
+import { NiceHashService } from './services/nicehash-service.js';
+import { closeDatabase, openDatabase } from './state/db.js';
+import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function logTick(res: NiceHashTickResult): void {
+  const s = res.state;
+  const m = s.market;
+  console.log(
+    `[${new Date(s.tick_at).toISOString()}] mode=${s.run_mode} balance=${s.balance_btc ?? '?'} anchor=${m?.anchor_price_btc ?? 'n/a'} owned=${s.owned_orders.length} unknown=${s.unknown_orders.length}`,
+  );
+  for (let i = 0; i < res.gated.length; i++) {
+    const g = res.gated[i]!;
+    const o = res.outcomes[i]!;
+    const verdict = g.allowed ? o.outcome : `BLOCKED(${'reason' in o ? o.reason : '?'})`;
+    console.log(`  • ${g.proposal.kind}: ${g.proposal.reason} -> ${verdict}`);
+  }
+}
+
+async function main(): Promise<void> {
+  const conn = readConnection(process.env);
+  const client = createNiceHashClient({ baseUrl: conn.baseUrl, credentials: conn.credentials });
+  const service = new NiceHashService({ client });
+  await service.syncTime();
+  const algo = await service.getAlgorithmSetting(conn.algorithm);
+  const rc = buildControllerConfig(algo, process.env);
+
+  const dbPath = process.env.NICEHASH_DB_PATH ?? 'data/nicehash-state.db';
+  if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
+  const handle = await openDatabase({ path: dbPath });
+  if (handle.migrations.applied.length > 0) {
+    console.log(`migrations applied: ${handle.migrations.applied.join(', ')}`);
+  }
+  const ledger = new NiceHashOrdersRepo(handle.db);
+
+  const controller = new NiceHashController({
+    service,
+    client,
+    ledger,
+    config: rc.config,
+    currency: rc.currency,
+    balanceCurrency: rc.balanceCurrency,
+    runMode: () => rc.runMode,
+  });
+
+  console.log('NiceHash daemon starting');
+  console.log(`  base=${conn.baseUrl} algorithm=${conn.algorithm} market=${rc.config.market}`);
+  console.log(`  run_mode=${rc.runMode} tick=${rc.tickSeconds}s db=${dbPath} pool_id=${rc.config.pool_id || '(none)'}`);
+  if (rc.runMode === 'LIVE') {
+    console.log(
+      '  ⚠️  LIVE: marketplace mutations enabled. Confirm the submit-price scale on a funded testnet order first (docs/NICEHASH_ADAPTATION.md §6).',
+    );
+  }
+  if (!rc.config.pool_id) {
+    console.log('  ℹ️  No NICEHASH_POOL_ID set → decide() will not propose CREATE_ORDER.');
+  }
+
+  let stopping = false;
+  const shutdown = async (sig: string): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`\n${sig} received - shutting down…`);
+    await closeDatabase(handle);
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  while (!stopping) {
+    try {
+      logTick(await controller.tick());
+    } catch (err) {
+      console.error(`tick error: ${(err as Error)?.message ?? String(err)}`);
+    }
+    for (let i = 0; i < rc.tickSeconds && !stopping; i++) await sleep(1000);
+  }
+}
+
+main().catch((err: unknown) => {
+  console.error('NiceHash daemon failed to start:');
+  console.error((err as Error)?.message ?? String(err));
+  process.exit(1);
+});
