@@ -2,6 +2,55 @@
 
 ## 2026-06-29
 
+### `[UI]` Instant (optimistic) run-mode switching
+
+Switching DRY-RUN / PAUSE / LIVE now flips the mode badge to the target mode
+immediately — with a small spinner while the change is confirmed in the
+background — instead of waiting on the request round trip (and the in-flight
+tick) before showing anything. The server already applies the mode in memory
+the moment the request lands; the UI no longer looks frozen during the change.
+Also surfaces the live algorithm limits (price down-step, min order, min speed)
+on the Test connection NiceHash row.
+
+### `[Feature]` Track-to-fill bidding (walk up to win, walk down to save)
+
+The controller now manages the live order as a closed loop instead of just
+pinning it to the floor. Each tick it compares delivered hashrate against a
+configurable **minimum fill %** of target. While under-filled it walks the bid
+**up** by a configurable step (raises are unrestricted on NiceHash), waiting a
+**settle window** between steps so a raise has time to attract miners before the
+next bump — escalating until it fills or a price/break-even cap binds. Once
+filled and sitting above the floor, it steps the bid **down** toward the floor,
+bounded by NiceHash's rule of one decrease per 10 minutes of at most
+`priceDownStep` — which also fixes a latent bug where a large downward re-price
+was sent in a single jump and **rejected** by the API. New `last_price_change_at`
+ledger column (migration 0117) powers the settle window; new Track-to-fill
+config knobs: minimum fill %, walk-up step, settle seconds. Net effect: the
+lowest bid that still fills.
+
+### `[Fix]` Label and scale hashrate in the market's real unit (EH for SHA256)
+
+The dashboard hardcoded `PH/s` for all hashrate, but SHA256ASICBOOST is quoted
+in `EH/s` on NiceHash (its `marketFactor` is 1e18) — so the supply tile read
+"14.5 PH/s" when the market is 14.5 EH/s, and the Target speed / Minimum floor
+config fields (which are in that same unit) were mislabelled, making a target
+of "2" look like 2 PH/s when it is really 2 EH/s. The daemon now derives the
+speed unit from the algorithm's `marketFactor` and exposes it via the status
+API; the dashboard labels and scales every speed (tiles, charts, orders table,
+config fields) from it, and the TH/PH/EH toggle defaults to the market's own
+unit. Price units were already correct (`BTC/EH/day`).
+
+### `[Fix]` Anchor off the miner count, not the under-reported accepted-speed
+
+v0.5.3 found the marginal order via each order's `acceptedSpeed`, but the
+orderbook reports that field sparsely — the sum across all orders came in well
+under the market's real delivery — so the cheapest order that happened to
+report a nonzero `acceptedSpeed` was still well above the true floor (anchor
+~0.477 when NiceHash's purple was ~0.4475). The anchor now uses each order's
+`rigsCount` (NiceHash's "Miners" column), which matches the purple marginal
+exactly: the anchor is the cheapest order that currently has miners on it.
+`acceptedSpeed` remains a fallback only when no rig counts are reported.
+
 ### `[Fix]` Anchor at the marginal price, not the top of the filled book
 
 The v0.5.1 anchor fix over-corrected: it walked the filled orders from cheapest

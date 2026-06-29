@@ -25,6 +25,8 @@ export interface NiceHashObserveDeps {
   readonly knownOrderIds: ReadonlySet<string>;
   /** Per-order last price-decrease timestamps (from the ledger). */
   readonly lastPriceDecreaseById?: ReadonlyMap<string, number>;
+  /** Per-order last price-change timestamps (from the ledger); settle window. */
+  readonly lastPriceChangeById?: ReadonlyMap<string, number>;
   readonly runMode: RunMode;
   /** Break-even hashprice in BTC/price-unit/day, or null when unavailable. */
   readonly hashprice?: number | null;
@@ -50,6 +52,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       res.list ?? [],
       deps.knownOrderIds,
       deps.lastPriceDecreaseById ?? new Map(),
+      deps.lastPriceChangeById ?? new Map(),
     );
     owned = split.owned;
     unknown = split.unknown;

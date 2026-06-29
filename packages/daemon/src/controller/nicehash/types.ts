@@ -23,6 +23,14 @@ export interface CompetingOrder {
    * not actually consuming anything (e.g. an idle BUSINESS ceiling order).
    */
   readonly accepted_speed_units?: number;
+  /**
+   * Number of mining rigs currently delivering to this order (NiceHash's
+   * "Miners" column). This is the reliable signal for whether an order is being
+   * filled - the orderbook's per-order `accepted_speed_units` is sparsely
+   * reported, but `rigs_count` matches the marginal (purple) price NiceHash
+   * shows. 0 / undefined means the order is currently winning no hashrate.
+   */
+  readonly rigs_count?: number;
 }
 
 /**
@@ -58,6 +66,8 @@ export interface OwnedOrderSnapshot {
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   readonly last_price_decrease_at: number | null;
+  /** When the price last changed (up or down); null when never. Settle window. */
+  readonly last_price_change_at: number | null;
 }
 
 /** An order in the account that is NOT in our ledger - forces PAUSE. */
@@ -89,10 +99,33 @@ export interface NiceHashControllerConfig {
   readonly min_order_amount_btc: number;
   /** Re-price only when the move exceeds this % of the overpay cushion. */
   readonly price_edit_deadband_pct: number;
+  /**
+   * Track-to-fill: treat the order as "filled" once delivered speed reaches this
+   * percent of the (effective) target. Below it, the bidder walks the price up.
+   * Default 80.
+   */
+  readonly min_fill_pct?: number;
+  /**
+   * Track-to-fill: how much to raise the bid (BTC/unit/day) each escalation step
+   * while under-filled. 0 disables the walk-up (pure anchor-tracking). Default 0.
+   */
+  readonly walk_up_step_btc?: number;
+  /**
+   * Track-to-fill: minimum time (ms) to wait after a price change before the
+   * next walk-up step, so a raise has time to attract miners. Default 0.
+   */
+  readonly walk_up_settle_ms?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */
   readonly price_down_step_btc: number;
+  /**
+   * Speed display-unit label for this market (e.g. "EH" for SHA256ASICBOOST),
+   * derived from the algorithm's marketFactor. All speed values in this config
+   * and the observed state are in this unit; the dashboard labels/scales from
+   * it. Optional; the dashboard falls back to PH when absent.
+   */
+  readonly speed_display_unit?: string;
   /** Cheap-mode scale-up: engage when our bid < this % of hashprice. 0 disables. */
   readonly cheap_threshold_pct: number;
   /** Target speed while cheap mode is engaged (display units). */

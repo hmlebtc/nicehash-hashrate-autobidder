@@ -106,6 +106,7 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     algorithm: cfg.algorithm,
     market: cfg.market,
     pool_id: cfg.pool_id,
+    speed_unit: cfg.speed_display_unit ?? 'PH',
     target_speed_units: cfg.target_speed_units,
     overpay_btc_per_unit_day: cfg.overpay_btc_per_unit_day,
     max_price_btc_per_unit_day: cfg.max_price_btc_per_unit_day,
@@ -316,10 +317,16 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
           balanceStr = `balance read failed: ${err instanceof Error ? err.message : String(err)}`;
         }
         const off = `${clockOffsetMs >= 0 ? '+' : ''}${clockOffsetMs}ms`;
+        // Surface the live algorithm limits the bidder is bound by: the price
+        // down-step (max a price decrease may move, per 10-min window) and the
+        // minimum order amount / speed limit.
+        const limits =
+          `down-step ${algo.priceDownStep} · min-order ${algo.minimalOrderAmount} BTC` +
+          ` · min-speed ${algo.minSpeedLimit}`;
         checks.push({
           name: 'NiceHash API',
           ok: true,
-          detail: `${s.algorithm} ok · clock offset ${off} · marketFactor ${algo.marketFactor} · ${balanceStr}`,
+          detail: `${s.algorithm} ok · clock offset ${off} · marketFactor ${algo.marketFactor} · ${limits} · ${balanceStr}`,
         });
       } catch (err) {
         const detail =

@@ -8,6 +8,7 @@ import {
   mergeSettings,
   resolveBootRunMode,
   settingsFromEnv,
+  speedUnitLabel,
   toControllerConfig,
   type NiceHashSettings,
 } from './settings.js';
@@ -145,6 +146,16 @@ describe('resolveBootRunMode', () => {
   });
 });
 
+describe('speedUnitLabel', () => {
+  it('maps the algorithm marketFactor to its speed unit', () => {
+    expect(speedUnitLabel(1e18)).toBe('EH'); // SHA256ASICBOOST
+    expect(speedUnitLabel(1e15)).toBe('PH');
+    expect(speedUnitLabel(1e12)).toBe('TH');
+    expect(speedUnitLabel(0)).toBe('PH'); // safe fallback
+    expect(speedUnitLabel(Number.NaN)).toBe('PH');
+  });
+});
+
 describe('toControllerConfig', () => {
   const algo: MiningAlgorithmSetting = {
     minimalOrderAmount: '0.001',
@@ -166,6 +177,7 @@ describe('toControllerConfig', () => {
     };
     const cfg = toControllerConfig(settings, algo, 'pool-9');
     expect(cfg.market).toBe('BTC');
+    expect(cfg.speed_display_unit).toBe('PH'); // marketFactor 1e15
     expect(cfg.algorithm).toBe('SHA256ASICBOOST');
     expect(cfg.pool_id).toBe('pool-9');
     expect(cfg.target_speed_units).toBe(3);

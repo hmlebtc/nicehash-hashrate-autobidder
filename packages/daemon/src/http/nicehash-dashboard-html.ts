@@ -54,7 +54,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .mode-DRY_RUN { background: #3b82f633; color: #60a5fa; }
   .mode-LIVE { background: #34d39933; color: var(--green); }
   .mode-PAUSED { background: #facc1533; color: var(--gold); }
-  .badge.switching { background: #facc1533; color: var(--gold); animation: nhpulse 1s ease-in-out infinite; }
+  .badge.switching { animation: nhpulse 1s ease-in-out infinite; }
   .badge.switching::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nhspin .7s linear infinite; }
   @keyframes nhspin { to { transform: rotate(360deg); } }
   @keyframes nhpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
@@ -273,9 +273,22 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
 
   // ---- units (client-side display only) ------------------------------------
-  var UI = { speed: localStorage.getItem('nh.speed') || 'PH', price: localStorage.getItem('nh.price') || 'BTC', range: localStorage.getItem('nh.range') || '24h' };
-  function spFactor() { return UI.speed === 'TH' ? 1000 : UI.speed === 'EH' ? 0.001 : 1; }
-  function cvSpeed(ph) { return (ph == null) ? null : ph * spFactor(); }
+  // Speed values from the API are in the market's display unit (e.g. EH/s for
+  // SHA256ASICBOOST). baseSpeedUnit is learned from /status; the TH/PH/EH toggle
+  // converts from it. We default the toggle to the market's own unit until the
+  // operator explicitly picks one.
+  var UNIT_HS = { TH: 1e12, PH: 1e15, EH: 1e18 };
+  var userPickedSpeed = localStorage.getItem('nh.speed');
+  var baseSpeedUnit = 'PH';
+  var baseApplied = false;
+  var UI = { speed: userPickedSpeed || 'PH', price: localStorage.getItem('nh.price') || 'BTC', range: localStorage.getItem('nh.range') || '24h' };
+  function applyBaseUnit(u) {
+    if (!u || !UNIT_HS[u]) return;
+    baseSpeedUnit = u;
+    if (!userPickedSpeed && !baseApplied) { UI.speed = u; baseApplied = true; syncToggles(); }
+  }
+  function spFactor() { return (UNIT_HS[baseSpeedUnit] || UNIT_HS.PH) / (UNIT_HS[UI.speed] || UNIT_HS.PH); }
+  function cvSpeed(v) { return (v == null) ? null : v * spFactor(); }
   function cvPrice(btc) { return (btc == null) ? null : (UI.price === 'sat' ? btc * 1e8 : btc); }
   function speedUnit() { return UI.speed + '/s'; }
   function priceUnit() { return (UI.price === 'sat' ? 'sat' : 'BTC') + '/EH/day'; }
@@ -292,7 +305,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('active', b.getAttribute('data-page') === p); });
     if (p === 'history') loadHistory();
     if (p === 'logs') loadLogs();
-    if (p === 'config' && !configLoaded) loadConfig();
+    if (p === 'config') { buildConfigForm(); loadConfig(); } // rebuild so unit labels reflect the live market
     if (p === 'status') { loadMetrics(); loadSummary(); }
   }
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) {
@@ -305,28 +318,38 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) { b.classList.toggle('active', b.getAttribute('data-price') === UI.price); });
   }
   Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (b) {
-    b.addEventListener('click', function () { UI.speed = b.getAttribute('data-speed'); localStorage.setItem('nh.speed', UI.speed); syncToggles(); renderAll(); });
+    b.addEventListener('click', function () { UI.speed = b.getAttribute('data-speed'); userPickedSpeed = UI.speed; localStorage.setItem('nh.speed', UI.speed); syncToggles(); renderAll(); });
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) {
     b.addEventListener('click', function () { UI.price = b.getAttribute('data-price'); localStorage.setItem('nh.price', UI.price); syncToggles(); renderAll(); });
   });
 
   // ---- run mode ------------------------------------------------------------
+  // The server applies the mode in memory the instant the request lands, so we
+  // update the UI optimistically (badge flips to the target mode immediately,
+  // with a small spinner while we confirm) rather than waiting on the round
+  // trip - switching feels instant and never looks frozen.
   var modeBusy = false;
-  function modeSwitching(on) {
-    modeBusy = on;
-    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.disabled = on; });
-    if (on) { var badge = $('modeBadge'); badge.textContent = 'switching…'; badge.className = 'badge switching'; }
+  function setModeOptimistic(mode) {
+    modeBusy = true;
+    var badge = $('modeBadge');
+    badge.textContent = mode;                         // show the target mode now
+    badge.className = 'badge mode-' + mode + ' switching'; // mode colour + spinner = confirming
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-mode') === mode);
+      b.disabled = true;
+    });
   }
   async function setMode(mode) {
     if (modeBusy) return;
     if (mode === 'LIVE' && !confirm('Switch to LIVE? The bidder will place and manage REAL orders.')) return;
-    modeSwitching(true); // instant feedback: the round trip can take a moment
+    setModeOptimistic(mode); // instant feedback
     try {
       await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
-    } catch (e) { /* surfaced by the refresh below */ }
-    modeSwitching(false);
-    await refreshStatus(); // re-paints the badge + buttons from the applied mode
+    } catch (e) { /* the refresh below repaints the true state on failure */ }
+    modeBusy = false;
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.disabled = false; });
+    refreshStatus(); // confirm: repaints the solid badge from the server (clears the spinner)
   }
   Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
@@ -525,7 +548,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   // ---- fetchers ------------------------------------------------------------
   async function refreshStatus() {
-    try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json(); renderStatus(); renderPnl(); }
+    try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json();
+      if (lastStatus && lastStatus.config) applyBaseUnit(lastStatus.config.speed_unit);
+      renderStatus(); renderPnl(); }
     catch (e) { $('sub').textContent = 'connection error'; }
   }
   async function loadMetrics() {
@@ -614,6 +639,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
+    { group: 'Track-to-fill', items: [
+      ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
+      ['walkUpStepBtc', 'Walk-up step (BTC/EH/day, 0=off)', 'number', 'How much to raise the bid each step while under-filled. Raises are unrestricted on NiceHash, so this escalates quickly. 0 = never walk up (pure floor-tracking).'],
+      ['walkUpSettleSeconds', 'Walk-up settle (seconds)', 'number', 'Wait this long after a bid change before the next walk-up step, giving miners time to re-point so the bot does not overshoot. e.g. 180.'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
@@ -642,15 +671,17 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       html += '<fieldset><legend>' + esc(g.group) + '</legend><div class="formgrid">';
       g.items.forEach(function (it) {
         var id = 'cfg_' + it[0], type = it[2];
+        // Speed fields are entered in the market's display unit; reflect it.
+        var label = it[1].replace('PH/s', baseSpeedUnit + '/s');
         var help = it[3] ? '<span class="help">' + esc(it[3]) + '</span>' : '';
         if (type === 'checkbox') {
-          html += '<label><span class="chkrow"><input id="' + id + '" type="checkbox" />' + esc(it[1]) + '</span>' + help + '</label>';
+          html += '<label><span class="chkrow"><input id="' + id + '" type="checkbox" />' + esc(label) + '</span>' + help + '</label>';
         } else if (type.indexOf('select:') === 0) {
           var opts = type.slice(7).split(',').map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
-          html += '<label>' + esc(it[1]) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
+          html += '<label>' + esc(label) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
         } else {
           var extra = type === 'number' ? ' step="any"' : type === 'password' ? ' autocomplete="off"' : '';
-          html += '<label>' + esc(it[1]) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
+          html += '<label>' + esc(label) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
         }
       });
       html += '</div></fieldset>';
@@ -672,9 +703,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     }); });
     return out;
   }
-  var configLoaded = false;
   async function loadConfig() {
-    try { var r = await fetch('/api/nicehash/config'); fillConfig((await r.json()).config || {}); configLoaded = true; }
+    try { var r = await fetch('/api/nicehash/config'); fillConfig((await r.json()).config || {}); }
     catch (e) { $('cfgMsg').textContent = 'failed to load config'; }
   }
   async function saveConfig() {

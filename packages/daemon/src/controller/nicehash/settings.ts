@@ -51,6 +51,13 @@ export interface NiceHashSettings {
   readonly maxPremiumOverHashpriceBtc: number;
   /** Re-price only when the move exceeds this % of the overpay cushion. */
   readonly editPriceDeadbandPct: number;
+  // --- Track-to-fill ---
+  /** Treat the order as filled once delivered ≥ this % of target. Default 80. */
+  readonly minFillPct: number;
+  /** Bid raise per walk-up step (BTC/unit/day) while under-filled. 0 disables. */
+  readonly walkUpStepBtc: number;
+  /** Wait this many seconds after a price change before the next walk-up step. */
+  readonly walkUpSettleSeconds: number;
   // --- Fees / break-even ---
   /** NiceHash marketplace fee on the order, percent (e.g. 3). */
   readonly niceHashFeePct: number;
@@ -148,6 +155,9 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
+    minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
+    walkUpStepBtc: n(env, 'NICEHASH_WALK_UP_STEP', 0.0001),
+    walkUpSettleSeconds: n(env, 'NICEHASH_WALK_UP_SETTLE_SEC', 180),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
     useBreakEven: b(env, 'NICEHASH_USE_BREAKEVEN', true),
@@ -158,6 +168,26 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     retentionDays: n(env, 'NICEHASH_RETENTION_DAYS', 30),
     logRetentionDays: n(env, 'NICEHASH_LOG_RETENTION_DAYS', 30),
   };
+}
+
+/**
+ * Map an algorithm's `marketFactor` (hashes per speed-display unit) to its unit
+ * label - the unit NiceHash shows speeds in for that market. SHA256ASICBOOST
+ * uses 1e18 = EH/s; other algos may use PH/TH. Defaults to PH if unrecognised.
+ */
+export function speedUnitLabel(marketFactor: number): string {
+  if (!(marketFactor > 0)) return 'PH';
+  const scale: readonly [number, string][] = [
+    [1e18, 'EH'],
+    [1e15, 'PH'],
+    [1e12, 'TH'],
+    [1e9, 'GH'],
+    [1e6, 'MH'],
+    [1e3, 'kH'],
+    [1, 'H'],
+  ];
+  for (const [factor, label] of scale) if (marketFactor >= factor) return label;
+  return 'H';
 }
 
 /** Build the controller config from settings + live algorithm metadata. */
@@ -182,6 +212,9 @@ export function toControllerConfig(
     price_edit_deadband_pct: settings.editPriceDeadbandPct,
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
+    min_fill_pct: settings.minFillPct,
+    walk_up_step_btc: settings.walkUpStepBtc,
+    walk_up_settle_ms: Math.max(0, settings.walkUpSettleSeconds) * 1000,
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
@@ -189,6 +222,7 @@ export function toControllerConfig(
     pool_fee_pct: settings.poolFeePct,
     use_break_even: settings.useBreakEven,
     cap_at_break_even: settings.capAtBreakEven,
+    speed_display_unit: speedUnitLabel(Number(algo.marketFactor)),
   };
 }
 
@@ -255,6 +289,9 @@ export function mergeSettings(
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
+    minFillPct: num('minFillPct'),
+    walkUpStepBtc: num('walkUpStepBtc'),
+    walkUpSettleSeconds: num('walkUpSettleSeconds'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
     useBreakEven: bool('useBreakEven'),

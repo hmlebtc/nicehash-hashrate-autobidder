@@ -54,6 +54,21 @@ describe('NiceHashOrdersRepo', () => {
     expect(row?.price_btc).toBe(0.0101);
   });
 
+  it('tracks last_price_change_at on insert, raises, and decreases', async () => {
+    await repo.insert(insertArgs);
+    // insert seeds the settle window at created_at
+    expect((await repo.lastPriceChangeMap()).get('order-1')).toBe(insertArgs.created_at);
+    // an upward change bumps the change timestamp but not the decrease one
+    await repo.setLastPriceChange('order-1', 1_700_000_200_000, 0.0105);
+    expect((await repo.lastPriceChangeMap()).get('order-1')).toBe(1_700_000_200_000);
+    expect((await repo.lastPriceDecreaseMap()).size).toBe(0);
+    expect((await repo.list())[0]?.price_btc).toBe(0.0105);
+    // a decrease bumps both
+    await repo.setLastPriceDecrease('order-1', 1_700_000_300_000, 0.01);
+    expect((await repo.lastPriceChangeMap()).get('order-1')).toBe(1_700_000_300_000);
+    expect((await repo.lastPriceDecreaseMap()).get('order-1')).toBe(1_700_000_300_000);
+  });
+
   it('reconciles status/price/limit and keeps payed monotonic', async () => {
     await repo.insert(insertArgs);
     await repo.reconcileFromApi([

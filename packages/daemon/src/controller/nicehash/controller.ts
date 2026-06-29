@@ -70,9 +70,10 @@ export class NiceHashController {
   async tick(): Promise<NiceHashTickResult> {
     const now = this.deps.now ?? Date.now;
     const hashprice = this.deps.hashprice?.() ?? null;
-    const [knownOrderIds, lastPriceDecreaseById] = await Promise.all([
+    const [knownOrderIds, lastPriceDecreaseById, lastPriceChangeById] = await Promise.all([
       this.deps.ledger.getIds(),
       this.deps.ledger.lastPriceDecreaseMap(),
+      this.deps.ledger.lastPriceChangeMap(),
     ]);
 
     const result = await runTick({
@@ -83,6 +84,7 @@ export class NiceHashController {
       balanceCurrency: this.deps.balanceCurrency,
       knownOrderIds,
       lastPriceDecreaseById,
+      lastPriceChangeById,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
@@ -164,6 +166,9 @@ export class NiceHashController {
       case 'EDIT_PRICE':
         if (p.new_price_btc < p.old_price_btc) {
           await this.deps.ledger.setLastPriceDecrease(p.order_id, now(), p.new_price_btc);
+        } else if (p.new_price_btc > p.old_price_btc) {
+          // Upward move: no decrease cooldown, but reset the walk-up settle window.
+          await this.deps.ledger.setLastPriceChange(p.order_id, now(), p.new_price_btc);
         }
         return;
       case 'CANCEL_ORDER':
