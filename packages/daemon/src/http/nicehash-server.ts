@@ -106,6 +106,7 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     algorithm: cfg.algorithm,
     market: cfg.market,
     pool_id: cfg.pool_id,
+    speed_unit: cfg.speed_display_unit ?? 'PH',
     target_speed_units: cfg.target_speed_units,
     overpay_btc_per_unit_day: cfg.overpay_btc_per_unit_day,
     max_price_btc_per_unit_day: cfg.max_price_btc_per_unit_day,

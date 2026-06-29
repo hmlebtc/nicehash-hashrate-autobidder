@@ -160,6 +160,26 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
   };
 }
 
+/**
+ * Map an algorithm's `marketFactor` (hashes per speed-display unit) to its unit
+ * label - the unit NiceHash shows speeds in for that market. SHA256ASICBOOST
+ * uses 1e18 = EH/s; other algos may use PH/TH. Defaults to PH if unrecognised.
+ */
+export function speedUnitLabel(marketFactor: number): string {
+  if (!(marketFactor > 0)) return 'PH';
+  const scale: readonly [number, string][] = [
+    [1e18, 'EH'],
+    [1e15, 'PH'],
+    [1e12, 'TH'],
+    [1e9, 'GH'],
+    [1e6, 'MH'],
+    [1e3, 'kH'],
+    [1, 'H'],
+  ];
+  for (const [factor, label] of scale) if (marketFactor >= factor) return label;
+  return 'H';
+}
+
 /** Build the controller config from settings + live algorithm metadata. */
 export function toControllerConfig(
   settings: NiceHashSettings,
@@ -189,6 +209,7 @@ export function toControllerConfig(
     pool_fee_pct: settings.poolFeePct,
     use_break_even: settings.useBreakEven,
     cap_at_break_even: settings.capAtBreakEven,
+    speed_display_unit: speedUnitLabel(Number(algo.marketFactor)),
   };
 }
 

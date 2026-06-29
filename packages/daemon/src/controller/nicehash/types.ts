@@ -101,6 +101,13 @@ export interface NiceHashControllerConfig {
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */
   readonly price_down_step_btc: number;
+  /**
+   * Speed display-unit label for this market (e.g. "EH" for SHA256ASICBOOST),
+   * derived from the algorithm's marketFactor. All speed values in this config
+   * and the observed state are in this unit; the dashboard labels/scales from
+   * it. Optional; the dashboard falls back to PH when absent.
+   */
+  readonly speed_display_unit?: string;
   /** Cheap-mode scale-up: engage when our bid < this % of hashprice. 0 disables. */
   readonly cheap_threshold_pct: number;
   /** Target speed while cheap mode is engaged (display units). */

@@ -273,9 +273,22 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>]/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]; }); }
 
   // ---- units (client-side display only) ------------------------------------
-  var UI = { speed: localStorage.getItem('nh.speed') || 'PH', price: localStorage.getItem('nh.price') || 'BTC', range: localStorage.getItem('nh.range') || '24h' };
-  function spFactor() { return UI.speed === 'TH' ? 1000 : UI.speed === 'EH' ? 0.001 : 1; }
-  function cvSpeed(ph) { return (ph == null) ? null : ph * spFactor(); }
+  // Speed values from the API are in the market's display unit (e.g. EH/s for
+  // SHA256ASICBOOST). baseSpeedUnit is learned from /status; the TH/PH/EH toggle
+  // converts from it. We default the toggle to the market's own unit until the
+  // operator explicitly picks one.
+  var UNIT_HS = { TH: 1e12, PH: 1e15, EH: 1e18 };
+  var userPickedSpeed = localStorage.getItem('nh.speed');
+  var baseSpeedUnit = 'PH';
+  var baseApplied = false;
+  var UI = { speed: userPickedSpeed || 'PH', price: localStorage.getItem('nh.price') || 'BTC', range: localStorage.getItem('nh.range') || '24h' };
+  function applyBaseUnit(u) {
+    if (!u || !UNIT_HS[u]) return;
+    baseSpeedUnit = u;
+    if (!userPickedSpeed && !baseApplied) { UI.speed = u; baseApplied = true; syncToggles(); }
+  }
+  function spFactor() { return (UNIT_HS[baseSpeedUnit] || UNIT_HS.PH) / (UNIT_HS[UI.speed] || UNIT_HS.PH); }
+  function cvSpeed(v) { return (v == null) ? null : v * spFactor(); }
   function cvPrice(btc) { return (btc == null) ? null : (UI.price === 'sat' ? btc * 1e8 : btc); }
   function speedUnit() { return UI.speed + '/s'; }
   function priceUnit() { return (UI.price === 'sat' ? 'sat' : 'BTC') + '/EH/day'; }
@@ -292,7 +305,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('active', b.getAttribute('data-page') === p); });
     if (p === 'history') loadHistory();
     if (p === 'logs') loadLogs();
-    if (p === 'config' && !configLoaded) loadConfig();
+    if (p === 'config') { buildConfigForm(); loadConfig(); } // rebuild so unit labels reflect the live market
     if (p === 'status') { loadMetrics(); loadSummary(); }
   }
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) {
@@ -305,7 +318,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) { b.classList.toggle('active', b.getAttribute('data-price') === UI.price); });
   }
   Array.prototype.forEach.call(document.querySelectorAll('[data-speed]'), function (b) {
-    b.addEventListener('click', function () { UI.speed = b.getAttribute('data-speed'); localStorage.setItem('nh.speed', UI.speed); syncToggles(); renderAll(); });
+    b.addEventListener('click', function () { UI.speed = b.getAttribute('data-speed'); userPickedSpeed = UI.speed; localStorage.setItem('nh.speed', UI.speed); syncToggles(); renderAll(); });
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-price]'), function (b) {
     b.addEventListener('click', function () { UI.price = b.getAttribute('data-price'); localStorage.setItem('nh.price', UI.price); syncToggles(); renderAll(); });
@@ -525,7 +538,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   // ---- fetchers ------------------------------------------------------------
   async function refreshStatus() {
-    try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json(); renderStatus(); renderPnl(); }
+    try { var r = await fetch('/api/nicehash/status'); lastStatus = await r.json();
+      if (lastStatus && lastStatus.config) applyBaseUnit(lastStatus.config.speed_unit);
+      renderStatus(); renderPnl(); }
     catch (e) { $('sub').textContent = 'connection error'; }
   }
   async function loadMetrics() {
@@ -642,15 +657,17 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       html += '<fieldset><legend>' + esc(g.group) + '</legend><div class="formgrid">';
       g.items.forEach(function (it) {
         var id = 'cfg_' + it[0], type = it[2];
+        // Speed fields are entered in the market's display unit; reflect it.
+        var label = it[1].replace('PH/s', baseSpeedUnit + '/s');
         var help = it[3] ? '<span class="help">' + esc(it[3]) + '</span>' : '';
         if (type === 'checkbox') {
-          html += '<label><span class="chkrow"><input id="' + id + '" type="checkbox" />' + esc(it[1]) + '</span>' + help + '</label>';
+          html += '<label><span class="chkrow"><input id="' + id + '" type="checkbox" />' + esc(label) + '</span>' + help + '</label>';
         } else if (type.indexOf('select:') === 0) {
           var opts = type.slice(7).split(',').map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
-          html += '<label>' + esc(it[1]) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
+          html += '<label>' + esc(label) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
         } else {
           var extra = type === 'number' ? ' step="any"' : type === 'password' ? ' autocomplete="off"' : '';
-          html += '<label>' + esc(it[1]) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
+          html += '<label>' + esc(label) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
         }
       });
       html += '</div></fieldset>';
@@ -672,9 +689,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     }); });
     return out;
   }
-  var configLoaded = false;
   async function loadConfig() {
-    try { var r = await fetch('/api/nicehash/config'); fillConfig((await r.json()).config || {}); configLoaded = true; }
+    try { var r = await fetch('/api/nicehash/config'); fillConfig((await r.json()).config || {}); }
     catch (e) { $('cfgMsg').textContent = 'failed to load config'; }
   }
   async function saveConfig() {

@@ -2,6 +2,18 @@
 
 ## 2026-06-29
 
+### `[Fix]` Label and scale hashrate in the market's real unit (EH for SHA256)
+
+The dashboard hardcoded `PH/s` for all hashrate, but SHA256ASICBOOST is quoted
+in `EH/s` on NiceHash (its `marketFactor` is 1e18) — so the supply tile read
+"14.5 PH/s" when the market is 14.5 EH/s, and the Target speed / Minimum floor
+config fields (which are in that same unit) were mislabelled, making a target
+of "2" look like 2 PH/s when it is really 2 EH/s. The daemon now derives the
+speed unit from the algorithm's `marketFactor` and exposes it via the status
+API; the dashboard labels and scales every speed (tiles, charts, orders table,
+config fields) from it, and the TH/PH/EH toggle defaults to the market's own
+unit. Price units were already correct (`BTC/EH/day`).
+
 ### `[Fix]` Anchor off the miner count, not the under-reported accepted-speed
 
 v0.5.3 found the marginal order via each order's `acceptedSpeed`, but the
