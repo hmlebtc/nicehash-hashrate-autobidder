@@ -2,6 +2,24 @@
 
 ## 2026-06-29
 
+### `[Infra]` Default to mainnet; remove baked testnet credentials
+
+The Umbrel compose now points at `https://api2.nicehash.com` with
+`NICEHASH_BALANCE_CURRENCY=BTC` and ships the API key/secret/org + pool
+**blank** — you enter your own on the Config tab. These env values only seed
+settings on first install; the daemon then boots from the values saved in
+the app database, so updates never clobber them and existing installs keep
+their saved config.
+
+### `[UI]` Autobidder theme + config field help
+
+Re-themed the dashboard to the Hashrate Autopilot palette (orange brand,
+amber/gold primary + active states) and added an inline description under
+every Config field. Clarified that "minimum floor" is a hashrate reference
+line, not a price: the price floor you outbid (NiceHash's purple marginal
+order) is the live market anchor the bidder already tracks. Gallery
+screenshots refreshed.
+
 ### `[UI]` Full dashboard: Status / History / Config, charts, tiles, P&L
 
 Rebuilt the dashboard into a tabbed, Hashrate-Autopilot-style operator UI

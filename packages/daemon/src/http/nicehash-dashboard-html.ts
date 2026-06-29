@@ -29,12 +29,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0e1116; color: #e6edf3; }
   header { display: flex; align-items: center; gap: 14px; padding: 12px 22px; border-bottom: 1px solid #222; flex-wrap: wrap; }
-  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; color: #f0883e; }
   .sub { color: #8b949e; font-size: 12px; }
   .grow { flex: 1; }
   nav { display: flex; gap: 4px; }
   nav button { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: #8b949e; cursor: pointer; }
-  nav button.active { color: #e6edf3; background: #21262d; border-color: #30363d; }
+  nav button.active { color: #f0b429; background: #21262d; border-color: #30363d; }
   .badge { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
   .mode-DRY_RUN { background: #1f6feb33; color: #58a6ff; }
   .mode-LIVE { background: #2ea04333; color: #3fb950; }
@@ -53,10 +53,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; font-size: 13px; }
   th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
   .controls button, .toggle button { font: inherit; font-weight: 600; padding: 6px 12px; margin-left: 6px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  .controls button.active, .toggle button.active { outline: 2px solid #58a6ff; }
+  .controls button.active, .toggle button.active { outline: 2px solid #e3b341; }
   .toggle button { margin-left: 0; padding: 4px 8px; font-size: 11px; }
   .toggle { display: inline-flex; gap: 4px; align-items: center; }
-  .primary { background: #1f6feb !important; border-color: #1f6feb !important; }
+  .primary { background: #f0b429 !important; border-color: #f0b429 !important; color: #0e1116 !important; }
   .warn { background: #f8514922; border: 1px solid #f85149; color: #ff7b72; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
   .pill { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
   .ok { background: #2ea04333; color: #3fb950; } .blocked { background: #6e768133; color: #8b949e; }
@@ -71,20 +71,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
   .rangebar { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
   .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid #30363d; background: #161b22; color: #8b949e; cursor: pointer; }
-  .rangebar button.active { background: #21262d; color: #e6edf3; outline: 1px solid #58a6ff; }
+  .rangebar button.active { background: #21262d; color: #f0b429; outline: 1px solid #e3b341; }
   fieldset { border: 1px solid #21262d; border-radius: 10px; margin: 0 0 14px; padding: 10px 14px; }
   legend { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
   .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 16px; }
   .formgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b949e; }
-  .formgrid label.chk { flex-direction: row; align-items: center; gap: 8px; }
+  .formgrid .chkrow { display: flex; align-items: center; gap: 8px; }
+  .formgrid .help { color: #586069; font-size: 11px; font-weight: 400; line-height: 1.35; }
   .formgrid input, .formgrid select { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid #30363d; background: #0e1116; color: #e6edf3; }
-  .formgrid input:focus, .formgrid select:focus { outline: 2px solid #1f6feb; border-color: #1f6feb; }
+  .formgrid input:focus, .formgrid select:focus { outline: 2px solid #e3b341; border-color: #e3b341; }
   .btnrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; }
   .btnrow button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
   .msg { font-size: 12px; color: #8b949e; }
-  code { color: #79c0ff; }
+  code { color: #e3b341; }
   footer { padding: 14px 22px; color: #586069; font-size: 11px; border-top: 1px solid #222; }
-  a { color: #58a6ff; }
+  a { color: #f0883e; }
 </style>
 </head>
 <body>
@@ -502,29 +503,40 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   // ---- config page ---------------------------------------------------------
   var CFG = [
-    { group: 'Connection', items: [['apiKey', 'API key', 'text'], ['apiSecret', 'API secret', 'password'], ['orgId', 'Organization ID', 'text'], ['baseUrl', 'Base URL', 'text']] },
+    { group: 'Connection', items: [
+      ['apiKey', 'API key', 'text', 'Your NiceHash organization API key. Create one at nicehash.com → Settings → API keys with hash-power order permissions.'],
+      ['apiSecret', 'API secret', 'password', 'The API secret paired with the key. Write-only: shown as dots once saved — leave the dots to keep it, type a new value to replace it.'],
+      ['orgId', 'Organization ID', 'text', 'Your NiceHash organization id (Settings → API keys → your organization).'],
+      ['baseUrl', 'Base URL', 'text', 'https://api2.nicehash.com for mainnet (live funds), https://api-test.nicehash.com for the testnet sandbox.'] ] },
     { group: 'Strategy', items: [
-      ['algorithm', 'Algorithm', 'text'], ['market', 'Market', 'text'],
-      ['priceCurrency', 'Order-book currency', 'text'], ['balanceCurrency', 'Balance currency', 'text'],
-      ['tickSeconds', 'Tick seconds', 'number'], ['targetSpeedUnits', 'Target speed (PH/s)', 'number'],
-      ['minimumFloorUnits', 'Minimum floor (PH/s)', 'number'],
-      ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number'],
-      ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number'],
-      ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number'],
-      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number'],
-      ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number'],
-      ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number'],
-      ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number'] ] },
+      ['algorithm', 'Algorithm', 'text', 'Marketplace algorithm. SHA256ASICBOOST for Bitcoin ASIC hashrate.'],
+      ['market', 'Market', 'text', 'Order-book market — BTC for the Bitcoin marketplace.'],
+      ['priceCurrency', 'Order-book currency', 'text', 'Currency bucket the order book / market anchor is read from (BTC).'],
+      ['balanceCurrency', 'Balance currency', 'text', 'Wallet currency to read your available balance from. BTC on mainnet, TBTC on testnet.'],
+      ['tickSeconds', 'Tick seconds', 'number', 'Seconds between control-loop decisions (observe → price → act).'],
+      ['targetSpeedUnits', 'Target speed (PH/s)', 'number', 'How much hashrate you want delivered. The bidder prices to win this much from the market.'],
+      ['minimumFloorUnits', 'Minimum floor (PH/s)', 'number', 'A speed reference line drawn on the hashrate chart — NOT a price. The price "floor" you must outbid (the marginal/last-filled order, shown purple in NiceHash\'s order book) is the live market anchor and is tracked automatically.'],
+      ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number', 'Cushion added above the market anchor. Higher = more reliably filled but costs more; lower = cheaper but drops out sooner when rivals raise.'],
+      ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Hard ceiling on the order price. The bidder never pays more than this, even if it means not winning the full target.'],
+      ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number', 'Dynamic ceiling = network hashprice + this (BTC/EH/day). Stops overpaying when hashprice falls. 0 disables it; needs a hashprice source.'],
+      ['editPriceDeadbandPct', 'Edit-price deadband (%)', 'number', 'Only re-price when the anchor moves more than this % of the overpay cushion. Higher = fewer edits (less churn), lower = tracks the market more tightly.'],
+      ['orderBudgetBtc', 'Order budget (BTC, 0=full)', 'number', 'Escrow used to fund a new order. 0 = use the full available wallet balance.'],
+      ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
+      ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Cheap mode', items: [
-      ['cheapModeEnabled', 'Enable cheap mode', 'checkbox'],
-      ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number'],
-      ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number'] ] },
-    { group: 'Pool', items: [['poolHost', 'Pool host', 'text'], ['poolPort', 'Pool port', 'number'], ['poolUser', 'Pool user', 'text'], ['poolPassword', 'Pool password', 'text']] },
+      ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
+      ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
+      ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number', 'Engage cheap mode when our bid is below this percentage of the network hashprice (e.g. 95).'] ] },
+    { group: 'Pool', items: [
+      ['poolHost', 'Pool host', 'text', 'Your stratum pool hostname. The app registers it with NiceHash automatically (no fee).'],
+      ['poolPort', 'Pool port', 'number', 'Stratum port of your pool.'],
+      ['poolUser', 'Pool user', 'text', 'Pool username / worker — often your BTC payout address (with an optional .worker suffix).'],
+      ['poolPassword', 'Pool password', 'text', 'Pool password. Many pools accept "x".'] ] },
     { group: 'Daemon & data', items: [
-      ['bootMode', 'Boot mode', 'select:DRY_RUN,RESUME,LIVE'],
-      ['hashpriceSource', 'Hashprice source', 'select:none,mempool'],
-      ['priceSource', 'BTC price source', 'text'],
-      ['retentionDays', 'History retention (days)', 'number'] ] }
+      ['bootMode', 'Boot mode', 'select:DRY_RUN,RESUME,LIVE', 'Run mode on restart: DRY_RUN always starts safe; RESUME keeps the last mode (PAUSED is demoted to DRY_RUN); LIVE boots straight into trading.'],
+      ['hashpriceSource', 'Hashprice source', 'select:none,mempool', 'Network-hashprice source for the cost-vs-hashprice tile and the estimated P&L. "mempool" uses mempool.space (mainnet); "none" disables those estimates.'],
+      ['priceSource', 'BTC price source', 'text', 'BTC/USD source for display purposes (reserved for a future USD toggle).'],
+      ['retentionDays', 'History retention (days)', 'number', 'How many days of per-tick metrics and order history to keep before pruning.'] ] }
   ];
   function buildConfigForm() {
     var html = '';
@@ -532,14 +544,15 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       html += '<fieldset><legend>' + esc(g.group) + '</legend><div class="formgrid">';
       g.items.forEach(function (it) {
         var id = 'cfg_' + it[0], type = it[2];
+        var help = it[3] ? '<span class="help">' + esc(it[3]) + '</span>' : '';
         if (type === 'checkbox') {
-          html += '<label class="chk"><input id="' + id + '" type="checkbox" />' + esc(it[1]) + '</label>';
+          html += '<label><span class="chkrow"><input id="' + id + '" type="checkbox" />' + esc(it[1]) + '</span>' + help + '</label>';
         } else if (type.indexOf('select:') === 0) {
           var opts = type.slice(7).split(',').map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
-          html += '<label>' + esc(it[1]) + '<select id="' + id + '">' + opts + '</select></label>';
+          html += '<label>' + esc(it[1]) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
         } else {
           var extra = type === 'number' ? ' step="any"' : type === 'password' ? ' autocomplete="off"' : '';
-          html += '<label>' + esc(it[1]) + '<input id="' + id + '" type="' + type + '"' + extra + ' /></label>';
+          html += '<label>' + esc(it[1]) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
         }
       });
       html += '</div></fieldset>';
