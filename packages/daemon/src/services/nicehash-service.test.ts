@@ -86,24 +86,30 @@ describe('NiceHashService', () => {
     expect(client.getMyOrders).toHaveBeenCalledWith({ algorithm: 'SHA256ASICBOOST', market: 'EU' });
   });
 
-  it('paginates the order book until it crosses the marginal (unfilled page)', async () => {
+  it('walks every page to the last (totalPageCount) and does NOT stop at zero-miner gaps', async () => {
+    // Both pages contain zero-miner (gap) orders interleaved above filled ones.
+    // The walk must keep going past the gaps and only stop at the last page, so
+    // the merged book reaches the global cheapest filled order (the marginal).
+    const withPaging = (b: number, total: number): OrderBookResponse => {
+      const stats = mixedPage(b).stats.BTC!;
+      return { stats: { BTC: { ...stats, pagination: { size: 100, page: 0, totalPageCount: total } } } };
+    };
     const getOrderBook = vi.fn(async (_algo: string, opts?: { size?: number; page?: number }) =>
-      opts?.page === 0 ? filledPage(0.5) : mixedPage(0.49),
+      opts?.page === 0 ? withPaging(0.5, 2) : withPaging(0.49, 2),
     );
     const svc = new NiceHashService({ client: mockClient({ getOrderBook } as Partial<NiceHashClient>) });
 
     const book = await svc.getOrderBook('SHA256ASICBOOST', 'BTC');
 
-    // Page 0 is fully filled -> fetch page 1; page 1 has zero-rig orders -> stop.
+    // Page 0 has a gap but we keep going; stop only at totalPageCount (2).
     expect(getOrderBook).toHaveBeenCalledTimes(2);
     expect(getOrderBook).toHaveBeenNthCalledWith(1, 'SHA256ASICBOOST', { size: 100, page: 0 });
     expect(getOrderBook).toHaveBeenNthCalledWith(2, 'SHA256ASICBOOST', { size: 100, page: 1 });
-    // Both pages merged into one book.
+    // Both pages merged (gap orders included), reaching the floor on page 1.
     expect(book.stats.BTC?.orders.length).toBe(200);
-    // The merged book reaches the floor: cheapest filled order is on page 1.
     const filled = (book.stats.BTC?.orders ?? []).filter((o) => (o.rigsCount ?? 0) > 0);
     const cheapestFilled = Math.min(...filled.map((o) => Number(o.price)));
-    expect(cheapestFilled).toBeCloseTo(0.49 - 39 * 0.0001, 8);
+    expect(cheapestFilled).toBeCloseTo(0.49 - 39 * 0.0001, 8); // cheapest filled on page 1
   });
 
   it('stops paginating when a page yields no new orders (page param ignored)', async () => {

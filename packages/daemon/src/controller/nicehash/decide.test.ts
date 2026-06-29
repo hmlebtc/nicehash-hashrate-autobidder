@@ -8,6 +8,7 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     market: 'EU',
     algorithm: 'SHA256',
     pool_id: 'pool-1',
+    pool_user: '',
     target_speed_units: 10,
     overpay_btc_per_unit_day: 0.00001,
     max_price_btc_per_unit_day: 0.001,
@@ -50,6 +51,7 @@ function ownedOrder(over: Partial<OwnedOrderSnapshot> = {}): OwnedOrderSnapshot 
     payed_amount_btc: 0,
     accepted_speed_units: 10,
     status: 'ACTIVE',
+    pool_username: null,
     last_price_decrease_at: null,
     last_price_change_at: null,
     ...over,
@@ -307,7 +309,8 @@ describe('decide - track to fill', () => {
     expect(e.new_price_btc).toBeCloseTo(0.00091, 9);
   });
 
-  it('holds during the settle window instead of escalating again', () => {
+  it('escalates every tick while under-filled (raises are unconstrained - no settle window)', () => {
+    // Even immediately after a price change, an under-filled order walks up again.
     const out = decide(
       state({
         tick_at: T,
@@ -315,15 +318,43 @@ describe('decide - track to fill', () => {
         owned_orders: [
           ownedOrder({ price_btc: 0.0006, accepted_speed_units: 5, last_price_change_at: T - 1_000 }),
         ],
-        config: config({
-          walk_up_enabled: true,
-          walk_up_settle_ms: 60_000,
-          min_fill_pct: 80,
-          max_price_btc_per_unit_day: 1,
-        }),
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00071, 9);
+  });
+
+  it('does NOT walk up while filled, even when the floor rises above our bid', () => {
+    // Filled (delivered 10 >= 80% of target 10 = 8) and the floor climbed above
+    // our bid: we keep the cheaper bid and only climb once we lose fill.
+    const out = decide(
+      state({
+        market: market({ anchor_price_btc: 0.0008, filled_prices: [0.0008, 0.0009] }),
+        owned_orders: [ownedOrder({ price_btc: 0.0006, accepted_speed_units: 10 })],
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 1 }),
       }),
     );
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('walks down toward the floor when filled and overpaying (track-to-fill)', () => {
+    const out = decide(
+      state({
+        market: market({ filled_prices: [0.0005] }),
+        owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 10 })],
+        config: config({
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+          price_down_step_btc: 0.0000001,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.0009 - 0.0000001, 10);
   });
 
   it('holds (never lowers) when under-filled with no filled tier above us', () => {

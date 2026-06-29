@@ -88,6 +88,7 @@ export function buildControllerConfig(
     market: str(env, 'NICEHASH_MARKET', 'BTC'),
     algorithm: str(env, 'NICEHASH_ALGORITHM', 'SHA256ASICBOOST'),
     pool_id: str(env, 'NICEHASH_POOL_ID', ''),
+    pool_user: str(env, 'NICEHASH_POOL_USER', ''),
     target_speed_units: num(env, 'NICEHASH_TARGET_SPEED', 1),
     overpay_btc_per_unit_day: num(env, 'NICEHASH_OVERPAY', 0.0001),
     max_price_btc_per_unit_day: num(env, 'NICEHASH_MAX_PRICE', 0.02),

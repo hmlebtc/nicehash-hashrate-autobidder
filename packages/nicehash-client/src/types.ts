@@ -93,6 +93,18 @@ export interface HashpowerOrder {
   /** Currently delivered speed in the display unit, decimal string. */
   readonly acceptedCurrentSpeed?: string;
   readonly poolId?: string;
+  /**
+   * The order's target pool, embedded by `myOrders`/`order`. Its `username` is
+   * the stratum worker the order points at - used to recognise the autobidder's
+   * own orders (it tags its pool worker, e.g. `<address>.autobidder`).
+   */
+  readonly pool?: {
+    readonly id?: string;
+    readonly name?: string;
+    readonly username?: string;
+    readonly stratumHostname?: string;
+    readonly stratumPort?: number;
+  };
   readonly marketFactor?: string;
   readonly displayMarketFactor?: string;
   readonly startTs?: number;

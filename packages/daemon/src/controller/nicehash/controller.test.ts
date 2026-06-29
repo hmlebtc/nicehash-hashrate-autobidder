@@ -15,6 +15,7 @@ function config(): NiceHashControllerConfig {
     market: 'EU',
     algorithm: 'SHA256ASICBOOST',
     pool_id: 'pool-1',
+    pool_user: '',
     target_speed_units: 4,
     overpay_btc_per_unit_day: 0.00001,
     max_price_btc_per_unit_day: 1,

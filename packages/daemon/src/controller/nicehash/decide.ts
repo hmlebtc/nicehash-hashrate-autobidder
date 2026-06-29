@@ -182,18 +182,15 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // Baseline is the floor (anchor + overpay, capped) = `targetPrice`. When the
   // order is under-filled we walk the bid UP to just above the next filled order
   // on the book (the next tier with miners) + overpay - climbing the fill ladder
-  // a tier at a time (raises are unrestricted on NiceHash), after a settle window
-  // so a bump has time to attract miners. When filled and sitting above the floor
-  // we step the bid DOWN toward it - by at most one `price_down_step_btc` per move
-  // (the gate additionally throttles decreases to the 10-minute cooldown), so a
-  // large drop is never sent in one illegal jump.
+  // a tier at a time. Raises are unconstrained on NiceHash, so we escalate every
+  // tick we're under-filled (no settle window). When filled and sitting above the
+  // floor we step the bid DOWN toward it - by at most one `price_down_step_btc`
+  // per move (the gate additionally throttles decreases to the 10-minute
+  // cooldown), so a large drop is never sent in one illegal jump.
   const minFillPct = config.min_fill_pct ?? 100;
   const walkUpEnabled = config.walk_up_enabled ?? false;
-  const settleMs = config.walk_up_settle_ms ?? 0;
   const fillThreshold = (effectiveTarget * minFillPct) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
-  const settled =
-    primary.last_price_change_at === null || state.tick_at - primary.last_price_change_at >= settleMs;
   const cur = primary.price_btc;
 
   // Escalation target: jump to just above the cheapest filled order priced above
@@ -204,28 +201,41 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     nextFilledAbove !== undefined
       ? Math.min(effectiveCap, nextFilledAbove + config.overpay_btc_per_unit_day)
       : cur;
-  const escalating = walkUpEnabled && underFilled && settled && escalateTo > cur;
+  const escalating = walkUpEnabled && underFilled && escalateTo > cur;
 
   let editTo = cur;
   let mode = '';
   if (escalating) {
     editTo = escalateTo; // intentional walk-up; bypasses the deadband
     mode = 'walk up to fill';
-  } else if (walkUpEnabled && underFilled) {
-    // Under-filled but settling (or already at the cap): never lower the bid
-    // while we still want more hashrate; only raise to the floor if it climbed.
-    if (targetPrice - cur >= editDeadband) {
-      editTo = Math.min(effectiveCap, targetPrice);
-      mode = 'track anchor up';
+  } else if (walkUpEnabled) {
+    // Track-to-fill mode. We only ever walk UP while under-filled. Crucially,
+    // when we ARE filled we do NOT chase the floor up: a risen floor (the
+    // marginal moving above our bid) is fine as long as we keep getting our
+    // hashrate - we hold the cheaper bid and only start climbing again once we
+    // fall under-filled. So:
+    if (underFilled) {
+      // No higher filled tier to climb to (escalation didn't fire): only raise
+      // to the floor if it climbed above us; never lower while we still want
+      // more hashrate.
+      if (targetPrice - cur >= editDeadband) {
+        editTo = Math.min(effectiveCap, targetPrice);
+        mode = 'track anchor up';
+      }
+    } else if (cur - targetPrice >= editDeadband) {
+      // Filled and overpaying (the floor dropped below us): walk DOWN toward the
+      // floor by at most one down-step (the gate also throttles decreases to the
+      // 10-minute cooldown), so a big drop is never sent in one illegal jump.
+      editTo = Math.max(targetPrice, cur - config.price_down_step_btc);
+      mode = 'walk down to floor';
     }
+    // Filled and at/below the floor within the deadband: hold.
   } else if (Math.abs(cur - targetPrice) >= editDeadband) {
-    // Filled (or walk-up disabled): track the floor both ways, deadband-gated.
+    // Walk-up disabled: pure floor-tracking, both ways, deadband-gated.
     if (targetPrice > cur) {
       editTo = Math.min(effectiveCap, targetPrice);
       mode = 'track anchor up';
     } else {
-      // Lower toward the floor by at most one down-step (the gate also throttles
-      // decreases to the cooldown), so a big drop is never sent in one go.
       editTo = Math.max(targetPrice, cur - config.price_down_step_btc);
       mode = 'walk down to floor';
     }

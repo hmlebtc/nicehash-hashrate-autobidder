@@ -79,28 +79,61 @@ describe('ownedOrderFromWire / reconcileOrders', () => {
       payed_amount_btc: 0.002,
       accepted_speed_units: 3.5,
       status: 'ACTIVE',
+      pool_username: null,
       last_price_decrease_at: 1700000000000,
     });
   });
 
-  it('splits orders into owned (in ledger) vs unknown', () => {
-    const { owned, unknown } = reconcileOrders([orderA, orderB], new Set(['mine']));
-    expect(owned.map((o) => o.order_id)).toEqual(['mine']);
-    expect(unknown.map((o) => o.order_id)).toEqual(['stranger']);
+  it('carries the pool worker (stratum username) into the snapshot', () => {
+    const withPool: HashpowerOrder = { ...orderA, pool: { username: 'bc1qabc.autobidder' } };
+    expect(ownedOrderFromWire(withPool).pool_username).toBe('bc1qabc.autobidder');
   });
 
-  it('ignores stopped / completed foreign orders (only live ones are unknown)', () => {
-    const stopped: HashpowerOrder = { id: 's1', status: { code: 'STOPPED' }, price: '0.02', limit: '1', amount: '0.01' };
-    const completed: HashpowerOrder = { id: 'c1', status: 'COMPLETED', price: '0.02', limit: '1', amount: '0.01' };
-    const dead: HashpowerOrder = { id: 'd1', status: { code: 'DEAD' }, price: '0.02', limit: '1', amount: '0.01' };
-    const liveStranger: HashpowerOrder = { id: 'live1', status: 'ACTIVE', price: '0.02', limit: '1', amount: '0.01' };
-    const { owned, unknown } = reconcileOrders(
-      [orderA, stopped, completed, dead, liveStranger],
-      new Set(['mine']),
-    );
+  it('owns ledger orders and ignores foreign orders (no PAUSE)', () => {
+    const { owned, unknown } = reconcileOrders([orderA, orderB], new Set(['mine']));
     expect(owned.map((o) => o.order_id)).toEqual(['mine']);
-    // Only the live foreign order trips the safeguard; stopped/completed/dead are ignored.
-    expect(unknown.map((o) => o.order_id)).toEqual(['live1']);
+    // Foreign orders are ignored entirely now - never classified as unknown.
+    expect(unknown).toEqual([]);
+  });
+
+  it('adopts a live order by matching pool worker, even when not in the ledger', () => {
+    const minePool: HashpowerOrder = {
+      id: 'readopt',
+      status: 'ACTIVE',
+      price: '0.0102',
+      limit: '4',
+      amount: '0.01',
+      pool: { username: 'bc1qme.autobidder' },
+    };
+    // A foreign live order on a different worker must stay ignored.
+    const foreign: HashpowerOrder = {
+      id: 'other',
+      status: 'ACTIVE',
+      price: '0.02',
+      limit: '1',
+      amount: '0.01',
+      pool: { username: 'bc1qsomeoneelse' },
+    };
+    const { owned, unknown } = reconcileOrders(
+      [minePool, foreign],
+      new Set(), // empty ledger - relies purely on the pool-worker match
+      'bc1qme.autobidder',
+    );
+    expect(owned.map((o) => o.order_id)).toEqual(['readopt']);
+    expect(unknown).toEqual([]);
+  });
+
+  it('does not adopt stopped/completed orders on our worker (only live ones)', () => {
+    const cancelledMine: HashpowerOrder = {
+      id: 'old',
+      status: { code: 'CANCELLED' },
+      price: '0.0102',
+      limit: '4',
+      amount: '0.01',
+      pool: { username: 'bc1qme.autobidder' },
+    };
+    const { owned } = reconcileOrders([cancelledMine], new Set(), 'bc1qme.autobidder');
+    expect(owned).toEqual([]); // historical orders on our worker are not re-adopted
   });
 });
 

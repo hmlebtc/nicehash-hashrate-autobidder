@@ -666,8 +666,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
-      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier until filled or a price/break-even cap binds. Off = stay at the floor (no escalation). The step size is automatic (the next tier), not fixed.'],
-      ['walkUpSettleSeconds', 'Walk-up settle (seconds)', 'number', 'Wait this long after a bid change before the next walk-up step, giving miners time to re-point so the bot does not overshoot. e.g. 180.'] ] },
+      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier, every tick (raises are unconstrained on NiceHash), until filled or a price/break-even cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
