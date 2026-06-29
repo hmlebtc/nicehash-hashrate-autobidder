@@ -270,33 +270,53 @@ describe('decide - maintain', () => {
 
 describe('decide - track to fill', () => {
   const T = 1_700_000_000_000;
+  // A fill ladder with a gap: filled tiers at 0.0005 / 0.0007 / 0.0009.
+  const market = (over = {}) => ({
+    anchor_price_btc: 0.0005,
+    total_speed_units: 100,
+    thin: false,
+    filled_prices: [0.0005, 0.0007, 0.0009],
+    ...over,
+  });
 
-  it('walks the bid up by the step when under-filled and settled', () => {
-    // target 10, delivered 5 (< 80% of 10) -> under-filled; bump 0.0006 -> 0.0008.
+  it('walks up to just above the next filled tier + overpay when under-filled', () => {
+    // cur 0.0006; next filled tier above = 0.0007; overpay 0.00001 -> 0.00071.
     const out = decide(
       state({
+        market: market(),
         owned_orders: [ownedOrder({ price_btc: 0.0006, accepted_speed_units: 5 })],
-        config: config({
-          walk_up_step_btc: 0.0002,
-          min_fill_pct: 80,
-          max_price_btc_per_unit_day: 1,
-        }),
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 1 }),
       }),
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.0008, 9);
+    expect(e.new_price_btc).toBeCloseTo(0.00071, 9);
+  });
+
+  it('climbs to the next filled tier, skipping the gap of unfilled orders', () => {
+    // cur 0.00071 (just above the 0.0007 tier); next filled tier = 0.0009 -> 0.00091.
+    const out = decide(
+      state({
+        market: market(),
+        owned_orders: [ownedOrder({ price_btc: 0.00071, accepted_speed_units: 5 })],
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00091, 9);
   });
 
   it('holds during the settle window instead of escalating again', () => {
     const out = decide(
       state({
         tick_at: T,
+        market: market(),
         owned_orders: [
           ownedOrder({ price_btc: 0.0006, accepted_speed_units: 5, last_price_change_at: T - 1_000 }),
         ],
         config: config({
-          walk_up_step_btc: 0.0002,
+          walk_up_enabled: true,
           walk_up_settle_ms: 60_000,
           min_fill_pct: 80,
           max_price_btc_per_unit_day: 1,
@@ -306,21 +326,14 @@ describe('decide - track to fill', () => {
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
   });
 
-  it('never lowers the bid while still under-filled', () => {
-    // Sitting well above the floor but under-filled and settling: must hold, not
-    // walk down (that would undo the escalation we are waiting on).
+  it('holds (never lowers) when under-filled with no filled tier above us', () => {
+    // cur above every filled tier -> nothing to climb to (market is thin for us);
+    // must not walk down while still under-filled.
     const out = decide(
       state({
-        tick_at: T,
-        owned_orders: [
-          ownedOrder({ price_btc: 0.0009, accepted_speed_units: 5, last_price_change_at: T - 1_000 }),
-        ],
-        config: config({
-          walk_up_step_btc: 0.0002,
-          walk_up_settle_ms: 60_000,
-          min_fill_pct: 80,
-          max_price_btc_per_unit_day: 1,
-        }),
+        market: market({ filled_prices: [0.0005, 0.0007] }),
+        owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 5 })],
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 1 }),
       }),
     );
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
@@ -329,8 +342,9 @@ describe('decide - track to fill', () => {
   it('caps the walk-up at the price ceiling', () => {
     const out = decide(
       state({
+        market: market({ filled_prices: [0.0005, 0.0011] }),
         owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 5 })],
-        config: config({ walk_up_step_btc: 0.0002, max_price_btc_per_unit_day: 0.00095 }),
+        config: config({ walk_up_enabled: true, min_fill_pct: 80, max_price_btc_per_unit_day: 0.00095 }),
       }),
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
@@ -343,6 +357,7 @@ describe('decide - track to fill', () => {
     // algorithm down-step (0.0000001), not all the way to the floor.
     const out = decide(
       state({
+        market: market({ filled_prices: [0.0005] }),
         owned_orders: [ownedOrder({ price_btc: 0.0009, accepted_speed_units: 10 })],
         config: config({ max_price_btc_per_unit_day: 1, price_down_step_btc: 0.0000001 }),
       }),

@@ -31,7 +31,6 @@ describe('settingsFromEnv', () => {
     expect(s.runMode).toBe('DRY_RUN');
     expect(s.tickSeconds).toBe(60);
     // parity-expansion defaults
-    expect(s.minimumFloorUnits).toBe(0);
     expect(s.cheapModeEnabled).toBe(false);
     expect(s.maxPremiumOverHashpriceBtc).toBe(0);
     expect(s.editPriceDeadbandPct).toBe(20);

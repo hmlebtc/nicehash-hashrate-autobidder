@@ -40,8 +40,6 @@ export interface NiceHashSettings {
   readonly poolUser: string;
   readonly poolPassword: string;
   // --- Strategy (parity expansion) ---
-  /** Minimum-floor speed (display units); a chart reference, default 0. */
-  readonly minimumFloorUnits: number;
   readonly cheapModeEnabled: boolean;
   /** Target speed while cheap mode is engaged (display units). */
   readonly cheapModeTargetUnits: number;
@@ -54,8 +52,12 @@ export interface NiceHashSettings {
   // --- Track-to-fill ---
   /** Treat the order as filled once delivered ≥ this % of target. Default 80. */
   readonly minFillPct: number;
-  /** Bid raise per walk-up step (BTC/unit/day) while under-filled. 0 disables. */
-  readonly walkUpStepBtc: number;
+  /**
+   * When true, while under-filled the bidder walks the price up to just above
+   * the next filled order on the book + overpay (climbing tier by tier) until
+   * filled or a cap binds. When false, pure floor-tracking. Default true.
+   */
+  readonly walkUpEnabled: boolean;
   /** Wait this many seconds after a price change before the next walk-up step. */
   readonly walkUpSettleSeconds: number;
   // --- Fees / break-even ---
@@ -149,14 +151,13 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     poolPort: n(env, 'NICEHASH_POOL_PORT', 3333),
     poolUser: s(env, 'NICEHASH_POOL_USER', ''),
     poolPassword: s(env, 'NICEHASH_POOL_PASS', 'x'),
-    minimumFloorUnits: n(env, 'NICEHASH_MIN_FLOOR', 0),
     cheapModeEnabled: b(env, 'NICEHASH_CHEAP_ENABLED', false),
     cheapModeTargetUnits: n(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
-    walkUpStepBtc: n(env, 'NICEHASH_WALK_UP_STEP', 0.0001),
+    walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     walkUpSettleSeconds: n(env, 'NICEHASH_WALK_UP_SETTLE_SEC', 180),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
@@ -213,7 +214,7 @@ export function toControllerConfig(
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
-    walk_up_step_btc: settings.walkUpStepBtc,
+    walk_up_enabled: settings.walkUpEnabled,
     walk_up_settle_ms: Math.max(0, settings.walkUpSettleSeconds) * 1000,
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
@@ -283,14 +284,13 @@ export function mergeSettings(
     poolPort: num('poolPort'),
     poolUser: str('poolUser'),
     poolPassword: str('poolPassword'),
-    minimumFloorUnits: num('minimumFloorUnits'),
     cheapModeEnabled: bool('cheapModeEnabled'),
     cheapModeTargetUnits: num('cheapModeTargetUnits'),
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
     minFillPct: num('minFillPct'),
-    walkUpStepBtc: num('walkUpStepBtc'),
+    walkUpEnabled: bool('walkUpEnabled'),
     walkUpSettleSeconds: num('walkUpSettleSeconds'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),

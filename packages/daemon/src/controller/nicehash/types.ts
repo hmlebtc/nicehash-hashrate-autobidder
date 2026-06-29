@@ -48,6 +48,13 @@ export interface MarketAnchor {
    * target) - the anchor is then the highest competing price (best effort).
    */
   readonly thin: boolean;
+  /**
+   * Ascending prices of competitor orders currently being filled (have miners),
+   * i.e. the "fill ladder". `anchor_price_btc` is its first (cheapest) entry.
+   * The walk-up uses it to jump to just above the next filled tier above us
+   * rather than a fixed step. Empty when nothing is being filled.
+   */
+  readonly filled_prices?: readonly number[];
 }
 
 /** An order we consider our own, reconciled from `myOrders` against the ledger. */
@@ -106,10 +113,12 @@ export interface NiceHashControllerConfig {
    */
   readonly min_fill_pct?: number;
   /**
-   * Track-to-fill: how much to raise the bid (BTC/unit/day) each escalation step
-   * while under-filled. 0 disables the walk-up (pure anchor-tracking). Default 0.
+   * Track-to-fill: when true, while under-filled the bidder walks the price up
+   * to just above the next filled order on the book (the next tier with miners)
+   * + overpay, climbing tier by tier until filled or a cap binds. When false,
+   * pure floor-tracking (no escalation). Default false.
    */
-  readonly walk_up_step_btc?: number;
+  readonly walk_up_enabled?: boolean;
   /**
    * Track-to-fill: minimum time (ms) to wait after a price change before the
    * next walk-up step, so a raise has time to attract miners. Default 0.

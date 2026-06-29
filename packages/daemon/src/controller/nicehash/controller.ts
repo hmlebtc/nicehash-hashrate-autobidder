@@ -54,8 +54,6 @@ export interface NiceHashControllerDeps {
   readonly events?: NiceHashEventsRepo;
   /** Optional debug sink: one decision summary row per tick (Logs page). */
   readonly decisionLog?: NiceHashDecisionLogRepo;
-  /** Configured minimum floor (display units) - recorded into metrics. */
-  readonly floorUnits?: number;
   /**
    * Conversion from a speed-display unit (e.g. PH) to a price-display unit
    * (e.g. EH): marketFactor / priceFactor. Used to express the burn rate
@@ -112,12 +110,7 @@ export class NiceHashController {
     if (this.deps.metrics) {
       try {
         await this.deps.metrics.record(
-          buildMetricsRow(
-            result.state,
-            hashprice,
-            this.deps.floorUnits ?? null,
-            this.deps.speedToPriceUnit ?? 1,
-          ),
+          buildMetricsRow(result.state, hashprice, this.deps.speedToPriceUnit ?? 1),
         );
       } catch {
         /* ignore - metrics are non-critical */
@@ -192,23 +185,28 @@ function sum<T>(xs: readonly T[], f: (x: T) => number): number {
 function buildMetricsRow(
   state: NiceHashState,
   hashprice: number | null,
-  floorUnits: number | null,
   speedToPriceUnit: number,
 ): NiceHashMetricRow {
   const owned = state.owned_orders;
   const primary = owned.find((o) => isActionableOrder(o)) ?? owned[0];
+  // The hashrate-chart reference line is the fill threshold the bot acts on:
+  // target × min-fill %. (Replaces the old cosmetic "minimum floor".)
+  const fillThresholdUnits =
+    state.config.target_speed_units * ((state.config.min_fill_pct ?? 100) / 100);
   return {
     ts: state.tick_at,
     run_mode: state.run_mode,
     api_ok: state.market ? 1 : 0,
     balance_btc: state.balance_btc,
     anchor_price_btc: state.market?.anchor_price_btc ?? null,
+    // The next filled tier above the marginal (2nd-cheapest order with miners).
+    next_filled_price_btc: state.market?.filled_prices?.[1] ?? null,
     our_price_btc: primary?.price_btc ?? null,
     total_speed_units: state.market?.total_speed_units ?? null,
     accepted_speed_units: sum(owned, (o) => o.accepted_speed_units),
     limit_units: sum(owned, (o) => o.limit_units),
     target_units: state.config.target_speed_units,
-    floor_units: floorUnits,
+    floor_units: fillThresholdUnits,
     available_amount_btc: sum(owned, (o) => o.available_amount_btc),
     // Burn rate in BTC/day = price (BTC per price-unit/day) x delivered speed
     // converted from the speed unit (PH) to the price unit (EH).

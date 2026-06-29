@@ -250,6 +250,8 @@ export interface NiceHashTickMetricsTable {
   api_ok: 0 | 1;
   balance_btc: number | null;
   anchor_price_btc: number | null;
+  /** Next filled tier above the marginal (2nd-cheapest order with miners). */
+  next_filled_price_btc: number | null;
   our_price_btc: number | null;
   total_speed_units: number | null;
   accepted_speed_units: number | null;

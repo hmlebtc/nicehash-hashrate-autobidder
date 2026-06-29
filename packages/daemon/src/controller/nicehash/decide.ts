@@ -180,25 +180,30 @@ export function decide(state: NiceHashState): readonly Proposal[] {
 
   // --- Track-to-fill price management ---------------------------------------
   // Baseline is the floor (anchor + overpay, capped) = `targetPrice`. When the
-  // order is under-filled we walk the bid UP above the current price to win the
-  // fill (raises are unrestricted on NiceHash), after a settle window so a bump
-  // has time to attract miners. When filled and sitting above the floor we step
-  // the bid DOWN toward it - by at most one `price_down_step_btc` per move (the
-  // gate additionally throttles decreases to the 10-minute cooldown), so a large
-  // drop is never sent in one illegal jump.
+  // order is under-filled we walk the bid UP to just above the next filled order
+  // on the book (the next tier with miners) + overpay - climbing the fill ladder
+  // a tier at a time (raises are unrestricted on NiceHash), after a settle window
+  // so a bump has time to attract miners. When filled and sitting above the floor
+  // we step the bid DOWN toward it - by at most one `price_down_step_btc` per move
+  // (the gate additionally throttles decreases to the 10-minute cooldown), so a
+  // large drop is never sent in one illegal jump.
   const minFillPct = config.min_fill_pct ?? 100;
-  const walkUpStep = config.walk_up_step_btc ?? 0;
+  const walkUpEnabled = config.walk_up_enabled ?? false;
   const settleMs = config.walk_up_settle_ms ?? 0;
-  const walkUpEnabled = walkUpStep > 0;
   const fillThreshold = (effectiveTarget * minFillPct) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
   const settled =
     primary.last_price_change_at === null || state.tick_at - primary.last_price_change_at >= settleMs;
   const cur = primary.price_btc;
 
-  // Escalation target when under-filled and past the settle window: bump above
-  // the current price (never below the floor), capped.
-  const escalateTo = Math.min(effectiveCap, Math.max(targetPrice, cur + walkUpStep));
+  // Escalation target: jump to just above the cheapest filled order priced above
+  // us (the next tier to outbid) + overpay, capped. Gaps of unfilled orders are
+  // skipped - only orders with miners define a tier worth climbing to.
+  const nextFilledAbove = (state.market.filled_prices ?? []).find((p) => p > cur);
+  const escalateTo =
+    nextFilledAbove !== undefined
+      ? Math.min(effectiveCap, nextFilledAbove + config.overpay_btc_per_unit_day)
+      : cur;
   const escalating = walkUpEnabled && underFilled && settled && escalateTo > cur;
 
   let editTo = cur;

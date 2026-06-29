@@ -2,6 +2,23 @@
 
 ## 2026-06-29
 
+### `[Feature]` Walk-up climbs the fill ladder; price chart overhaul
+
+The walk-up no longer raises by a fixed configurable step. While under-filled it
+now jumps to **just above the next filled order on the book** (the next tier with
+miners) + overpay, recomputed from the live fill ladder each tick — climbing
+tier by tier and skipping gaps of zero-miner orders — until filled or a cap
+binds. Replaces the `walk-up step` knob with a simple on/off toggle.
+
+The price chart is reworked to track what matters: **your bid, the marginal
+floor, the next filled tier, hashprice, break-even, and your hard cap**, with
+each line's current value labelled on the **right edge**. A new
+`next_filled_price_btc` metric (migration 0118) backs the next-tier line.
+
+Removed the cosmetic **Minimum floor** config field (it never affected bidding);
+the hashrate chart's reference line now shows the real **fill threshold**
+(`target × min-fill %`) the bot acts on.
+
 ### `[UI]` Instant (optimistic) run-mode switching
 
 Switching DRY-RUN / PAUSE / LIVE now flips the mode badge to the target mode

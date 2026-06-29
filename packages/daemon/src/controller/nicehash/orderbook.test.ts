@@ -14,6 +14,8 @@ describe('computeMarketAnchor', () => {
     const a = computeMarketAnchor(competitors, 100, 4);
     expect(a.anchor_price_btc).toBe(0.0004);
     expect(a.thin).toBe(false);
+    // exposes the ascending fill ladder (orders with miners) for the walk-up
+    expect(a.filled_prices).toEqual([0.0004, 0.0005, 0.0006]);
   });
 
   it('does not walk up the book for a larger target (still anchors at the floor)', () => {

@@ -140,7 +140,14 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     tick_seconds: deps.tickSeconds,
     build: deps.buildNumber,
     config: configView,
-    market: s.market,
+    // Only the fields the dashboard needs - omit the full filled-price ladder.
+    market: s.market
+      ? {
+          anchor_price_btc: s.market.anchor_price_btc,
+          total_speed_units: s.market.total_speed_units,
+          thin: s.market.thin,
+        }
+      : null,
     balance_btc: s.balance_btc,
     hashprice_btc_per_unit_day: s.hashprice_btc_per_unit_day,
     owned_orders: s.owned_orders,
