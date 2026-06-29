@@ -241,6 +241,44 @@ export interface NiceHashSettingsTable {
   updated_at: number;
 }
 
+/** Per-tick NiceHash metrics time series (charts, tiles, P&L). */
+export interface NiceHashTickMetricsTable {
+  ts: number;
+  run_mode: string;
+  api_ok: 0 | 1;
+  balance_btc: number | null;
+  anchor_price_btc: number | null;
+  our_price_btc: number | null;
+  total_speed_units: number | null;
+  accepted_speed_units: number | null;
+  limit_units: number | null;
+  target_units: number | null;
+  floor_units: number | null;
+  available_amount_btc: number | null;
+  spend_rate_btc_day: number | null;
+  hashprice_btc_per_unit_day: number | null;
+  owned_count: number;
+  unknown_count: number;
+}
+
+/** NiceHash order-mutation audit trail (History page). */
+export interface NiceHashOrderEventsTable {
+  id: Generated<number>;
+  ts: number;
+  order_id: string | null;
+  action: string;
+  run_mode: string;
+  outcome: string;
+  price_before: number | null;
+  price_after: number | null;
+  limit_before: number | null;
+  limit_after: number | null;
+  amount_btc: number | null;
+  anchor_price_btc: number | null;
+  reason: string | null;
+  detail: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // deferred_actions
 // ---------------------------------------------------------------------------
@@ -683,6 +721,8 @@ export interface Database {
   owned_bids: OwnedBidsTable;
   nicehash_orders: NiceHashOrdersTable;
   nicehash_settings: NiceHashSettingsTable;
+  nicehash_tick_metrics: NiceHashTickMetricsTable;
+  nicehash_order_events: NiceHashOrderEventsTable;
   deferred_actions: DeferredActionsTable;
   decisions: DecisionsTable;
   spend_events: SpendEventsTable;

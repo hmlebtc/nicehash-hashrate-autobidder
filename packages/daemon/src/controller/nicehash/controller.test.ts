@@ -4,6 +4,8 @@ import type { NiceHashClient } from '@hashrate-autopilot/nicehash-client';
 
 import { closeDatabase, openDatabase, type DatabaseHandle } from '../../state/db.js';
 import { NiceHashOrdersRepo } from '../../state/repos/nicehash_orders.js';
+import { NiceHashMetricsRepo } from '../../state/repos/nicehash_tick_metrics.js';
+import { NiceHashEventsRepo } from '../../state/repos/nicehash_order_events.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
 import { NiceHashController } from './controller.js';
 import type { NiceHashControllerConfig, RunMode } from './types.js';
@@ -92,6 +94,56 @@ describe('NiceHashController', () => {
     expect([...ids]).toEqual(['created-1']);
     const row = (await ledger.list())[0];
     expect(row).toMatchObject({ order_id: 'created-1', pool_id: 'pool-1', last_known_status: 'CREATED' });
+  });
+
+  it('records a metrics row each tick (and no History events in DRY_RUN)', async () => {
+    const metrics = new NiceHashMetricsRepo(handle.db);
+    const events = new NiceHashEventsRepo(handle.db);
+    const controller = new NiceHashController({
+      service: service(),
+      client: client(),
+      ledger,
+      config: config(),
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'DRY_RUN',
+      now: () => 1_700_000_000_000,
+      hashprice: () => 0.0098,
+      floorUnits: 0.5,
+      metrics,
+      events,
+    });
+
+    await controller.tick();
+
+    const m = await metrics.latest();
+    expect(m?.ts).toBe(1_700_000_000_000);
+    expect(m?.run_mode).toBe('DRY_RUN');
+    expect(m?.api_ok).toBe(1);
+    expect(m?.hashprice_btc_per_unit_day).toBe(0.0098);
+    expect(m?.floor_units).toBe(0.5);
+    expect(m?.target_units).toBe(4);
+
+    // DRY_RUN proposals are BLOCKED by the gate, so History stays empty.
+    expect(await events.list()).toHaveLength(0);
+  });
+
+  it('records an EXECUTED CREATE event with the new order id in LIVE', async () => {
+    const events = new NiceHashEventsRepo(handle.db);
+    const controller = new NiceHashController({
+      service: service(),
+      client: client(),
+      ledger,
+      config: config(),
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'LIVE',
+      now: () => 1_700_000_000_000,
+      events,
+    });
+    await controller.tick();
+    const evs = await events.list();
+    expect(evs[0]).toMatchObject({ action: 'CREATE', outcome: 'EXECUTED', order_id: 'created-1' });
   });
 
   it('reconciles ledger rows from observed owned orders', async () => {

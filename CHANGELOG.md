@@ -2,6 +2,15 @@
 
 ## 2026-06-29
 
+### `[Infra]` Persist per-tick metrics + order-event history
+
+Toward dashboard feature parity with Hashrate Autopilot: the daemon now
+records a per-tick metrics time series (`nicehash_tick_metrics`) and an
+order-mutation audit trail (`nicehash_order_events`) on every controller
+tick. These back the upcoming charts, summary tiles, profit & loss panel,
+and History page. Both are pruned to a 30-day window on boot. No
+user-visible UI yet.
+
 ### `[Fix]` Move host port off 3010 to avoid Hashrate Autopilot conflict
 
 The Umbrel manifest published the app on port 3010, the same host port as

@@ -35,6 +35,8 @@ import { NiceHashService } from './services/nicehash-service.js';
 import { closeDatabase, openDatabase } from './state/db.js';
 import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
 import { NiceHashSettingsRepo } from './state/repos/nicehash_settings.js';
+import { NiceHashMetricsRepo } from './state/repos/nicehash_tick_metrics.js';
+import { NiceHashEventsRepo } from './state/repos/nicehash_order_events.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -70,6 +72,8 @@ async function main(): Promise<void> {
   }
   const ledger = new NiceHashOrdersRepo(handle.db);
   const settingsRepo = new NiceHashSettingsRepo(handle.db);
+  const metricsRepo = new NiceHashMetricsRepo(handle.db);
+  const eventsRepo = new NiceHashEventsRepo(handle.db);
 
   // 2. Load persisted settings, or seed from env on first boot.
   let settings = await settingsRepo.get();
@@ -128,7 +132,20 @@ async function main(): Promise<void> {
     currency: settings.priceCurrency,
     balanceCurrency: settings.balanceCurrency,
     runMode: () => store.getRunMode(),
+    metrics: metricsRepo,
+    events: eventsRepo,
   });
+
+  // Prune the time-series + audit log to a fixed window on boot (the retention
+  // window becomes operator-configurable in a later pass).
+  const RETENTION_MS = 30 * 24 * 60 * 60_000;
+  try {
+    const cutoff = Date.now() - RETENTION_MS;
+    await metricsRepo.pruneOlderThan(cutoff);
+    await eventsRepo.pruneOlderThan(cutoff);
+  } catch {
+    /* non-fatal */
+  }
 
   const httpPort = Number(process.env.NICEHASH_HTTP_PORT ?? 3010);
   const app = await createNiceHashHttpServer({
