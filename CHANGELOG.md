@@ -2,6 +2,15 @@
 
 ## 2026-06-29
 
+### `[Fix]` Add Umbrel gallery so the app installs
+
+The Umbrel community-store install view crashed with `can't access
+property "map", n is undefined` because `umbrel-app.yml` had no `gallery`
+field (a required screenshot list). Added a three-image gallery
+(dashboard, config panel, connectivity test) under `assets/`, matching
+the upstream manifest shape. No image/version change — same `0.2.0`
+release, corrected manifest.
+
 ### `[Feature]` In-dashboard config screen + connectivity test
 
 The dashboard now has a **⚙ Config** panel (credentials, connection, strategy,
