@@ -2,6 +2,15 @@
 
 ## 2026-06-29
 
+### `[Infra]` Raw-orderbook / raw-order debug endpoint
+
+Adds a read-only `GET /api/nicehash/debug/raw` that returns the raw NiceHash
+order-book entries (top + cheapest, every field) plus your raw order objects,
+so the exact fields carrying the per-order miner count (order book) and the
+delivered speed (your orders) can be identified and our parsing fixed. Backs
+investigation of two reports: the marginal/anchor reading above the live book,
+and delivered hashrate showing 0 while the order is actually receiving some.
+
 ### `[Feature]` Walk-up climbs the fill ladder; price chart overhaul
 
 The walk-up no longer raises by a fixed configurable step. While under-filled it
