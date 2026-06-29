@@ -41,7 +41,8 @@ export interface NiceHashHttpDeps {
   readonly store: NiceHashStateStore;
   readonly ledger: NiceHashOrdersRepo;
   readonly settingsRepo: NiceHashSettingsRepo;
-  readonly config: NiceHashControllerConfig;
+  /** Controller config, or a getter resolved per request (live config edits). */
+  readonly config: NiceHashControllerConfig | (() => NiceHashControllerConfig);
   readonly buildNumber: number;
   /** Seconds between ticks - surfaced so the UI can show the next-tick countdown. */
   readonly tickSeconds: number;
@@ -102,7 +103,7 @@ function outcomeView(o: TickOutcome): { kind: string; outcome: string; detail: s
 }
 
 function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): unknown {
-  const cfg = deps.config;
+  const cfg = typeof deps.config === 'function' ? deps.config() : deps.config;
   const configView = {
     algorithm: cfg.algorithm,
     market: cfg.market,
@@ -283,8 +284,11 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     const patch = (req.body ?? {}) as Partial<Record<keyof NiceHashSettings, unknown>>;
     const merged = mergeSettings(await currentSettings(), patch);
     await deps.settingsRepo.put(merged);
-    deps.store.setRunMode(merged.runMode); // run mode is the one live-applied field
-    return { config: maskSettings(merged), note: 'Saved. Restart the app to apply connection/strategy changes; run mode applies immediately.' };
+    deps.store.setRunMode(merged.runMode); // run mode is applied immediately
+    return {
+      config: maskSettings(merged),
+      note: 'Saved — applies live within one tick. (API key/secret/org and base URL still need a restart.)',
+    };
   });
 
   // Connectivity test: probe every external dependency the bidder relies on

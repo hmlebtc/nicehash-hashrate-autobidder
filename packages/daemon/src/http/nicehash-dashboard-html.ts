@@ -23,6 +23,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%230b1220%27/%3E%3Cg%20fill%3D%27%23fb923c%27%3E%3Crect%20x%3D%276.5%27%20y%3D%2717%27%20width%3D%274%27%20height%3D%278.5%27%20rx%3D%271%27/%3E%3Crect%20x%3D%2714%27%20y%3D%2711.5%27%20width%3D%274%27%20height%3D%2714%27%20rx%3D%271%27/%3E%3Crect%20x%3D%2721.5%27%20y%3D%276.5%27%20width%3D%274%27%20height%3D%2719%27%20rx%3D%271%27/%3E%3C/g%3E%3C/svg%3E" />
 <title>NiceHash Hashrate Autobidder</title>
 <style>
   /* Palette mirrors Hashrate Autopilot: Tailwind slate background + orange/gold
@@ -283,13 +284,14 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   <!-- ===================== CONFIG ===================== -->
   <section id="page-config" class="page">
     <h2 class="section">Configuration</h2>
-    <p class="muted">The secret is write-only — leave it as the dots to keep the saved value, or type a new one to replace it.
-      <b>Test connection</b> uses the values currently in the form (read-only). <b>Save</b> persists them; connection/strategy
-      changes take effect after an app restart, the run mode applies immediately.</p>
+    <p class="muted">Changes <b>auto-save</b> as you edit each field and apply <b>live within one tick</b> — no restart needed.
+      The secret is write-only — leave it as the dots to keep the saved value, or type a new one to replace it.
+      <b>Test connection</b> uses the values currently in the form (read-only). Heads-up: changing the NiceHash
+      <b>API key / secret / org</b> or the <b>base URL</b> still needs an app restart.</p>
     <div id="configForm"></div>
     <div class="btnrow">
       <button id="cfgTest">Test connection</button>
-      <button id="cfgSave" class="primary">Save</button>
+      <button id="cfgSave" class="primary">Save now</button>
       <span class="msg" id="cfgMsg"></span>
     </div>
     <div class="msg" id="testMsg"></div>
@@ -856,6 +858,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       html += '</div></fieldset>';
     });
     $('configForm').innerHTML = html;
+    // Auto-save: persist on field change (debounced). The change event fires on
+    // blur / Enter / toggle, so we do not save half-typed numbers; the daemon
+    // then picks the new values up live on the next tick (no restart).
+    Array.prototype.forEach.call(document.querySelectorAll('#configForm input, #configForm select'), function (el) {
+      el.addEventListener('change', autosave);
+    });
+  }
+  var saveTimer = null;
+  function autosave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    $('cfgMsg').textContent = 'saving…';
+    saveTimer = setTimeout(saveConfig, 500);
   }
   function fillConfig(cfg) {
     CFG.forEach(function (g) { g.items.forEach(function (it) {

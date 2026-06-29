@@ -133,12 +133,15 @@ async function main(): Promise<void> {
   }
 
   // 5. Build the controller config from settings + live algorithm metadata.
-  const config = toControllerConfig(settings, algo, poolId);
+  // `config`, `settings`, `poolId` and the oracle are mutable: a live-reload
+  // step (see applyLiveSettings, below) rebuilds them from the saved settings
+  // each tick so config edits apply without a restart.
+  let config = toControllerConfig(settings, algo, poolId);
 
   // Network-hashprice oracle (estimate) - powers the cost-vs-hashprice tile,
   // the P&L income estimate, and (optionally) the dynamic price cap. Disabled
   // unless the operator picks a source. Best-effort refresh on boot.
-  const hashpriceOracle = new HashpriceOracle({ source: settings.hashpriceSource });
+  let hashpriceOracle = new HashpriceOracle({ source: settings.hashpriceSource });
   await hashpriceOracle.refresh();
 
   // Speed-unit (PH) -> price-unit (EH) conversion = marketFactor / priceFactor.
@@ -157,7 +160,7 @@ async function main(): Promise<void> {
     service,
     client,
     ledger,
-    config,
+    config: () => config,
     currency: settings.priceCurrency,
     balanceCurrency: settings.balanceCurrency,
     runMode: () => store.getRunMode(),
@@ -221,7 +224,7 @@ async function main(): Promise<void> {
     store,
     ledger,
     settingsRepo,
-    config,
+    config: () => config,
     buildNumber: readBuildNumber(),
     tickSeconds: settings.tickSeconds,
     metrics: metricsRepo,
@@ -259,9 +262,58 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+  // --- Live config reload (no restart needed for routine tuning) -------------
+  // Each tick we re-read the saved settings and rebuild the controller config,
+  // so edits on the dashboard (overpay, caps, fees, dynamic cap, target,
+  // min-fill, walk-up, cheap mode, refill, pool worker, …) take effect on the
+  // next decision. Pool stratum changes re-register the pool; a hashprice-source
+  // change rebuilds the oracle. Connection-level fields (API key/secret/org,
+  // base URL, algorithm/market) keep the boot client and still need a restart.
+  const poolKeyOf = (s: typeof settings): string =>
+    [s.poolHost, s.poolPort, s.poolUser, s.poolPassword, s.algorithm].join('|');
+  let poolKey = poolKeyOf(settings);
+  let oracleSource: string = settings.hashpriceSource;
+  const applyLiveSettings = async (): Promise<void> => {
+    try {
+      const latestStored = await settingsRepo.get();
+      if (!latestStored) return;
+      const latest = mergeSettings(settingsFromEnv(process.env), latestStored);
+      const nPoolKey = poolKeyOf(latest);
+      if (nPoolKey !== poolKey) {
+        if (latest.poolHost && latest.poolUser) {
+          try {
+            poolId = await ensurePool(client, {
+              name: 'nicehash-autobidder',
+              algorithm: latest.algorithm,
+              stratumHostname: latest.poolHost,
+              stratumPort: latest.poolPort,
+              username: latest.poolUser,
+              password: latest.poolPassword || 'x',
+            });
+            console.log(`  pool re-registered (live config change) → ${poolId}`);
+          } catch (err) {
+            console.error(`  live pool re-register failed: ${(err as Error)?.message ?? String(err)}`);
+          }
+        }
+        poolKey = nPoolKey;
+      }
+      if (latest.hashpriceSource !== oracleSource) {
+        hashpriceOracle = new HashpriceOracle({ source: latest.hashpriceSource });
+        oracleSource = latest.hashpriceSource;
+        await hashpriceOracle.refresh();
+      }
+      settings = latest;
+      config = toControllerConfig(latest, algo, poolId);
+    } catch (err) {
+      console.error(`live settings reload failed: ${(err as Error)?.message ?? String(err)}`);
+    }
+  };
+
   let lastPruneAt = Date.now();
   const PRUNE_INTERVAL_MS = 24 * 60 * 60_000;
   while (!stopping) {
+    // Pick up any live config edits before deciding.
+    await applyLiveSettings();
     // Refresh the hashprice estimate when stale (cheap no-op when source=none).
     if (hashpriceOracle.isStale()) await hashpriceOracle.refresh();
     await doTick();

@@ -39,7 +39,12 @@ export interface NiceHashControllerDeps {
   readonly service: NiceHashService;
   readonly client: NiceHashClient;
   readonly ledger: NiceHashOrdersRepo;
-  readonly config: NiceHashControllerConfig;
+  /**
+   * The controller config, or a getter resolved fresh each tick. A getter lets
+   * the daemon apply config edits live (no restart) - it rebuilds the config
+   * from the saved settings each tick and the controller picks it up here.
+   */
+  readonly config: NiceHashControllerConfig | (() => NiceHashControllerConfig);
   readonly currency: string;
   readonly balanceCurrency: string;
   /** Resolved per tick so the run mode can change at runtime. */
@@ -68,6 +73,10 @@ export class NiceHashController {
   async tick(): Promise<NiceHashTickResult> {
     const now = this.deps.now ?? Date.now;
     const hashprice = this.deps.hashprice?.() ?? null;
+    // Resolve the config fresh each tick so live config edits apply without a
+    // restart (the daemon rebuilds it from the saved settings).
+    const config =
+      typeof this.deps.config === 'function' ? this.deps.config() : this.deps.config;
     const [knownOrderIds, lastPriceDecreaseById, lastPriceChangeById] = await Promise.all([
       this.deps.ledger.getIds(),
       this.deps.ledger.lastPriceDecreaseMap(),
@@ -77,7 +86,7 @@ export class NiceHashController {
     const result = await runTick({
       service: this.deps.service,
       client: this.deps.client,
-      config: this.deps.config,
+      config,
       currency: this.deps.currency,
       balanceCurrency: this.deps.balanceCurrency,
       knownOrderIds,

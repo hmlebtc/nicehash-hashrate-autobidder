@@ -183,67 +183,40 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     }
   }
 
-  // --- Track-to-fill price management ---------------------------------------
-  // Baseline is the floor (anchor + overpay, capped) = `targetPrice`. When the
-  // order is under-filled we walk the bid UP to just above the next filled order
-  // on the book (the next tier with miners) + overpay - climbing the fill ladder
-  // a tier at a time. Raises are unconstrained on NiceHash, so we escalate every
-  // tick we're under-filled (no settle window). When filled and sitting above the
-  // floor we step the bid DOWN toward it - by at most one `price_down_step_btc`
-  // per move (the gate additionally throttles decreases to the 10-minute
-  // cooldown), so a large drop is never sent in one illegal jump.
+  // --- Floor-tracking price management --------------------------------------
+  // The floor (anchor + overpay, capped) = `targetPrice` sits just above the
+  // marginal (the cheapest order with miners), so it is the lowest bid that
+  // still wins hashrate. We keep the bid hugging that floor:
+  //
+  //   - Above the floor (overpaying) -> walk DOWN toward it, one down-step at a
+  //     time (the gate also throttles decreases to NiceHash's 10-min cooldown).
+  //     This runs WHETHER OR NOT we're filled: the floor is above the marginal,
+  //     so dropping to it never costs us our fill, and it stops us overpaying
+  //     when the marginal falls. (This is the fix - previously walk-down only
+  //     ran while "filled", so an under-filled order sat high and never followed
+  //     the marginal down.)
+  //   - Below the floor and under-filled -> walk UP to it (raises are free on
+  //     NiceHash). When the order IS filled we do NOT chase a rising floor up:
+  //     we hold the cheaper bid as long as the hashrate keeps coming.
+  //   - With walk-up disabled, just track the floor both ways.
   const minFillPct = config.min_fill_pct ?? 100;
   const walkUpEnabled = config.walk_up_enabled ?? false;
   const fillThreshold = (effectiveTarget * minFillPct) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
   const cur = primary.price_btc;
-
-  // Escalation target: jump to just above the cheapest filled order priced above
-  // us (the next tier to outbid) + overpay, capped. Gaps of unfilled orders are
-  // skipped - only orders with miners define a tier worth climbing to.
-  const nextFilledAbove = (state.market.filled_prices ?? []).find((p) => p > cur);
-  const escalateTo =
-    nextFilledAbove !== undefined
-      ? Math.min(effectiveCap, nextFilledAbove + config.overpay_btc_per_unit_day)
-      : cur;
-  const escalating = walkUpEnabled && underFilled && escalateTo > cur;
+  const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);
 
   let editTo = cur;
   let mode = '';
-  if (escalating) {
-    editTo = escalateTo; // intentional walk-up; bypasses the deadband
-    mode = 'walk up to fill';
-  } else if (walkUpEnabled) {
-    // Track-to-fill mode. We only ever walk UP while under-filled. Crucially,
-    // when we ARE filled we do NOT chase the floor up: a risen floor (the
-    // marginal moving above our bid) is fine as long as we keep getting our
-    // hashrate - we hold the cheaper bid and only start climbing again once we
-    // fall under-filled. So:
-    if (underFilled) {
-      // No higher filled tier to climb to (escalation didn't fire): only raise
-      // to the floor if it climbed above us; never lower while we still want
-      // more hashrate.
-      if (targetPrice - cur >= editDeadband) {
-        editTo = Math.min(effectiveCap, targetPrice);
-        mode = 'track anchor up';
-      }
-    } else if (cur - targetPrice >= editDeadband) {
-      // Filled and overpaying (the floor dropped below us): walk DOWN toward the
-      // floor by at most one down-step (the gate also throttles decreases to the
-      // 10-minute cooldown), so a big drop is never sent in one illegal jump.
-      editTo = Math.max(targetPrice, cur - config.price_down_step_btc);
-      mode = 'walk down to floor';
-    }
-    // Filled and at/below the floor within the deadband: hold.
-  } else if (Math.abs(cur - targetPrice) >= editDeadband) {
-    // Walk-up disabled: pure floor-tracking, both ways, deadband-gated.
-    if (targetPrice > cur) {
-      editTo = Math.min(effectiveCap, targetPrice);
-      mode = 'track anchor up';
-    } else {
-      editTo = Math.max(targetPrice, cur - config.price_down_step_btc);
-      mode = 'walk down to floor';
-    }
+  if (cur - targetPrice >= editDeadband) {
+    // Overpaying above the floor: walk down toward it (filled or not).
+    editTo = walkDownTo;
+    mode = 'walk down to floor';
+  } else if (targetPrice - cur >= editDeadband && (underFilled || !walkUpEnabled)) {
+    // Below the floor: climb to it when under-filled (or always, if walk-up is
+    // off). When filled we skip this - hold the cheaper bid, don't chase up.
+    editTo = Math.min(effectiveCap, targetPrice);
+    mode = 'walk up to floor';
   }
 
   if (Math.abs(editTo - cur) > 1e-12) {
