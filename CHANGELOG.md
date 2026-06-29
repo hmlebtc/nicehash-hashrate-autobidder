@@ -13,12 +13,15 @@ their saved config.
 
 ### `[UI]` Autobidder theme + config field help
 
-Re-themed the dashboard to the Hashrate Autopilot palette (orange brand,
-amber/gold primary + active states) and added an inline description under
-every Config field. Clarified that "minimum floor" is a hashrate reference
-line, not a price: the price floor you outbid (NiceHash's purple marginal
-order) is the live market anchor the bidder already tracks. Gallery
-screenshots refreshed.
+Re-themed the dashboard to match Hashrate Autopilot exactly: the Tailwind
+slate-900 navy background, orange brand/section headers, gold accent
+(active tabs, toggles, primary buttons, focus), and the Autopilot chart
+hues — delivered orange, limit blue, target/floor slate, anchor cyan,
+hashprice violet, and the create/edit/cancel marker colours. Added an
+inline description under every Config field. Clarified that "minimum
+floor" is a hashrate reference line, not a price: the price floor you
+outbid (NiceHash's purple marginal order) is the live market anchor the
+bidder already tracks. Gallery screenshots refreshed.
 
 ### `[UI]` Full dashboard: Status / History / Config, charts, tiles, P&L
 

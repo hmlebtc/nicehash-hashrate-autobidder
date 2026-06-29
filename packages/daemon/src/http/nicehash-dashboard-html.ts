@@ -25,67 +25,82 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>NiceHash Hashrate Autobidder</title>
 <style>
-  :root { color-scheme: dark; }
+  /* Palette mirrors Hashrate Autopilot: Tailwind slate background + orange/gold
+     accent and the Tailwind chart hues. */
+  :root {
+    color-scheme: dark;
+    --bg: #0f172a;        /* slate-900 */
+    --panel: #18223a;     /* card / chart / fieldset */
+    --input: #0b1224;     /* input / select */
+    --border: #1e293b;    /* slate-800 */
+    --border2: #334155;   /* slate-700 */
+    --text: #e2e8f0;      /* slate-200 */
+    --muted: #94a3b8;     /* slate-400 */
+    --faint: #64748b;     /* slate-500 */
+    --orange: #fb923c;    /* orange-400 - brand / links / section heads */
+    --gold: #facc15;      /* yellow-400 - accent / primary / active */
+    --green: #34d399; --red: #f87171; --blue: #3b82f6; --cyan: #22d3ee;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0e1116; color: #e6edf3; }
-  header { display: flex; align-items: center; gap: 14px; padding: 12px 22px; border-bottom: 1px solid #222; flex-wrap: wrap; }
-  h1 { font-size: 17px; margin: 0; font-weight: 600; color: #f0883e; }
-  .sub { color: #8b949e; font-size: 12px; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; font-weight: 700; color: var(--orange); }
+  .sub { color: var(--muted); font-size: 12px; }
   .grow { flex: 1; }
   nav { display: flex; gap: 4px; }
-  nav button { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: #8b949e; cursor: pointer; }
-  nav button.active { color: #f0b429; background: #21262d; border-color: #30363d; }
+  nav button { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
+  nav button.active { color: var(--gold); background: var(--panel); border-color: var(--border2); }
   .badge { padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
-  .mode-DRY_RUN { background: #1f6feb33; color: #58a6ff; }
-  .mode-LIVE { background: #2ea04333; color: #3fb950; }
-  .mode-PAUSED { background: #d2992233; color: #e3b341; }
+  .mode-DRY_RUN { background: #3b82f633; color: #60a5fa; }
+  .mode-LIVE { background: #34d39933; color: var(--green); }
+  .mode-PAUSED { background: #facc1533; color: var(--gold); }
   main { padding: 20px; max-width: 1180px; margin: 0 auto; }
   .page { display: none; }
   .page.active { display: block; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-  .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 14px; }
-  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; margin: 0 0 6px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
   .big { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .muted { color: #8b949e; font-size: 12px; }
-  .pos { color: #3fb950; } .neg { color: #ff7b72; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .pos { color: var(--green); } .neg { color: var(--red); }
   .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; font-variant-numeric: tabular-nums; font-size: 13px; }
-  th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
-  .controls button, .toggle button { font: inherit; font-weight: 600; padding: 6px 12px; margin-left: 6px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  .controls button.active, .toggle button.active { outline: 2px solid #e3b341; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  .controls button, .toggle button { font: inherit; font-weight: 600; padding: 6px 12px; margin-left: 6px; border-radius: 8px; border: 1px solid var(--border2); background: var(--panel); color: var(--text); cursor: pointer; }
+  .controls button.active, .toggle button.active { outline: 2px solid var(--gold); }
   .toggle button { margin-left: 0; padding: 4px 8px; font-size: 11px; }
   .toggle { display: inline-flex; gap: 4px; align-items: center; }
-  .primary { background: #f0b429 !important; border-color: #f0b429 !important; color: #0e1116 !important; }
-  .warn { background: #f8514922; border: 1px solid #f85149; color: #ff7b72; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+  .primary { background: var(--gold) !important; border-color: var(--gold) !important; color: var(--bg) !important; }
+  .warn { background: #f8717122; border: 1px solid var(--red); color: var(--red); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
   .pill { padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-  .ok { background: #2ea04333; color: #3fb950; } .blocked { background: #6e768133; color: #8b949e; }
-  .failed { background: #f8514933; color: #ff7b72; } .dry { background: #1f6feb33; color: #58a6ff; }
-  h2.section { font-size: 13px; color: #8b949e; margin: 24px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
-  .chartcard { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+  .ok { background: #34d39933; color: var(--green); } .blocked { background: #64748b33; color: var(--muted); }
+  .failed { background: #f8717133; color: var(--red); } .dry { background: #3b82f633; color: #60a5fa; }
+  h2.section { font-size: 13px; color: var(--orange); margin: 24px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .chartcard { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
   .chartcard .head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .chartcard h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8b949e; margin: 0; }
-  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #8b949e; }
+  .chartcard h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--orange); margin: 0; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
   canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
   .rangebar { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
-  .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid #30363d; background: #161b22; color: #8b949e; cursor: pointer; }
-  .rangebar button.active { background: #21262d; color: #f0b429; outline: 1px solid #e3b341; }
-  fieldset { border: 1px solid #21262d; border-radius: 10px; margin: 0 0 14px; padding: 10px 14px; }
-  legend { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
+  .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--border2); background: var(--panel); color: var(--muted); cursor: pointer; }
+  .rangebar button.active { background: var(--panel); color: var(--gold); outline: 1px solid var(--gold); }
+  fieldset { border: 1px solid var(--border); border-radius: 10px; margin: 0 0 14px; padding: 10px 14px; }
+  legend { color: var(--orange); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
   .formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 16px; }
-  .formgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8b949e; }
+  .formgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
   .formgrid .chkrow { display: flex; align-items: center; gap: 8px; }
-  .formgrid .help { color: #586069; font-size: 11px; font-weight: 400; line-height: 1.35; }
-  .formgrid input, .formgrid select { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid #30363d; background: #0e1116; color: #e6edf3; }
-  .formgrid input:focus, .formgrid select:focus { outline: 2px solid #e3b341; border-color: #e3b341; }
+  .formgrid .help { color: var(--faint); font-size: 11px; font-weight: 400; line-height: 1.35; }
+  .formgrid input, .formgrid select { font: inherit; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--border2); background: var(--input); color: var(--text); }
+  .formgrid input:focus, .formgrid select:focus { outline: 2px solid var(--gold); border-color: var(--gold); }
   .btnrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 8px; flex-wrap: wrap; }
-  .btnrow button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
-  .msg { font-size: 12px; color: #8b949e; }
-  code { color: #e3b341; }
-  footer { padding: 14px 22px; color: #586069; font-size: 11px; border-top: 1px solid #222; }
-  a { color: #f0883e; }
+  .btnrow button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border2); background: var(--panel); color: var(--text); cursor: pointer; }
+  .msg { font-size: 12px; color: var(--muted); }
+  code { color: var(--gold); }
+  footer { padding: 14px 22px; color: var(--faint); font-size: 11px; border-top: 1px solid var(--border); }
+  a { color: var(--orange); }
 </style>
 </head>
 <body>
@@ -144,10 +159,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="chartcard">
       <div class="head"><h3>Hashrate</h3>
         <div class="legend">
-          <span><i class="swatch" style="background:#f0883e"></i>delivered</span>
-          <span><i class="swatch" style="background:#58a6ff"></i>limit</span>
-          <span><i class="swatch" style="background:#3fb950"></i>target</span>
-          <span><i class="swatch" style="background:#8b949e"></i>floor</span>
+          <span><i class="swatch" style="background:#fb923c"></i>delivered</span>
+          <span><i class="swatch" style="background:#3b82f6"></i>limit</span>
+          <span><i class="swatch" style="background:#64748b"></i>target</span>
+          <span><i class="swatch" style="background:#64748b"></i>floor</span>
         </div>
       </div>
       <canvas id="hashChart"></canvas>
@@ -156,12 +171,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="chartcard">
       <div class="head"><h3>Price</h3>
         <div class="legend">
-          <span><i class="swatch" style="background:#f0883e"></i>our price</span>
-          <span><i class="swatch" style="background:#a371f7"></i>anchor</span>
-          <span><i class="swatch" style="background:#e3b341"></i>hashprice</span>
-          <span><i class="swatch" style="background:#3fb950;border-radius:50%;width:6px;height:6px"></i>create</span>
-          <span><i class="swatch" style="background:#e3b341;border-radius:50%;width:6px;height:6px"></i>edit</span>
-          <span><i class="swatch" style="background:#ff7b72;border-radius:50%;width:6px;height:6px"></i>cancel</span>
+          <span><i class="swatch" style="background:#fb923c"></i>our price</span>
+          <span><i class="swatch" style="background:#22d3ee"></i>anchor</span>
+          <span><i class="swatch" style="background:#a78bfa"></i>hashprice</span>
+          <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
+          <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
+          <span><i class="swatch" style="background:#f87171;border-radius:50%;width:6px;height:6px"></i>cancel</span>
         </div>
       </div>
       <canvas id="priceChart"></canvas>
@@ -346,19 +361,19 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function renderCharts() {
     var m = lastMetrics;
     var hash = [
-      { color: '#f0883e', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.accepted_speed_units) }; }) },
-      { color: '#58a6ff', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
-      { color: '#3fb950', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
-      { color: '#8b949e', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
+      { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.accepted_speed_units) }; }) },
+      { color: '#3b82f6', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
+      { color: '#64748b', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
+      { color: '#64748b', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
     ];
     drawChart($('hashChart'), hash, { yMinZero: true, fmtY: function (v) { return v.toFixed(v < 10 ? 2 : 0); } });
 
-    var markerColor = { CREATE: '#3fb950', EDIT_PRICE: '#e3b341', EDIT_LIMIT: '#58a6ff', REFILL: '#a371f7', CANCEL: '#ff7b72' };
-    var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#8b949e' }; });
+    var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
+    var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });
     var price = [
-      { color: '#f0883e', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
-      { color: '#a371f7', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
-      { color: '#e3b341', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) }
+      { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
+      { color: '#22d3ee', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
+      { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
