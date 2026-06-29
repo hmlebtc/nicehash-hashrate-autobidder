@@ -64,6 +64,7 @@ RUN corepack enable
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/braiins-client/package.json packages/braiins-client/
 COPY packages/bitcoind-client/package.json packages/bitcoind-client/
+COPY packages/nicehash-client/package.json packages/nicehash-client/
 COPY packages/daemon/package.json packages/daemon/
 COPY packages/dashboard/package.json packages/dashboard/
 COPY packages/shared/package.json packages/shared/
@@ -133,9 +134,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:3010/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 ENV NODE_ENV=production \
-    HTTP_HOST=0.0.0.0 \
-    HTTP_PORT=3010 \
-    DB_PATH=/app/data/state.db \
-    DASHBOARD_STATIC=packages/dashboard/dist
+    NICEHASH_HTTP_PORT=3010 \
+    NICEHASH_DB_PATH=/app/data/nicehash-state.db
 
-CMD ["node", "packages/daemon/dist/main.js"]
+# Runs the NiceHash daemon (DRY-RUN unless NICEHASH_RUN_MODE=LIVE). The daemon
+# serves its dashboard + API on NICEHASH_HTTP_PORT (3010) bound to 0.0.0.0.
+CMD ["node", "packages/daemon/dist/main-nicehash.js"]

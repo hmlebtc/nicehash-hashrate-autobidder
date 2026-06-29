@@ -21,12 +21,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'rdouma-hashrate-autopilot/**'
+      - 'hmlebtc-nicehash-autobidder/**'
       - '.github/workflows/umbrel-image-pin-check.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'rdouma-hashrate-autopilot/**'
+      - 'hmlebtc-nicehash-autobidder/**'
 
 jobs:
   check:
@@ -38,7 +38,7 @@ jobs:
         id: manifest
         run: |
           set -euo pipefail
-          VER=$(grep -E '^version:' rdouma-hashrate-autopilot/umbrel-app.yml \
+          VER=$(grep -E '^version:' hmlebtc-nicehash-autobidder/umbrel-app.yml \
                 | head -1 \
                 | sed -E 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/')
           if [[ -z "$VER" ]]; then
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           IMG=$(grep -E '^[[:space:]]*image:[[:space:]]*ghcr\.io/' \
-                  rdouma-hashrate-autopilot/docker-compose.yml \
+                  hmlebtc-nicehash-autobidder/docker-compose.yml \
                 | head -1 \
                 | sed -E 's/.*image:[[:space:]]*//')
           if [[ -z "$IMG" ]]; then

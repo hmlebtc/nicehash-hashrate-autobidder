@@ -1,0 +1,41 @@
+# Umbrel app manifest. Loaded when this repo is added as a Community App
+# Store. The directory name and the `id` below must be prefixed with the
+# store id from umbrel-app-store.yml (`hmlebtc-`).
+
+manifestVersion: 1
+id: hmlebtc-nicehash-autobidder
+category: bitcoin
+name: NiceHash Hashrate Autobidder
+version: "0.1.0"
+tagline: Automatically rent NiceHash hash-power and point it at your pool
+icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
+# Umbrel renders the description literally - each paragraph is one physical
+# line, blank line between paragraphs. Do not soft-wrap.
+description: |
+  Rent hashrate on the NiceHash Hash-power marketplace and route it to your own mining pool, automatically. Each tick the autobidder reads the live order book, works out the marginal price needed to win your target hashrate, adds a small operator-chosen cushion, and keeps a single STANDARD order tracking that price - topping the order up (refill) before its escrow runs dry. You set a maximum price you are willing to pay and the controller never goes above it.
+
+  It boots in DRY-RUN: it shows you exactly what it would do (create / re-price / refill / cancel) without spending anything. Flip to LIVE from the dashboard when you are ready, and back to DRY-RUN or PAUSED any time.
+
+  The dashboard (port 3010) shows your balance, the live market anchor and supply, your order with its price / speed / delivered hashrate / escrow runway, and the controller's next action with the reason behind it. An unknown-order safeguard pauses the bidder if it sees an order on the account it did not create.
+
+  Pricing is in BTC per EH per day and speed in PH/s, matching NiceHash. Point it at any stratum pool; the app registers the pool with NiceHash for you. Defaults target SHA256AsicBoost.
+
+  This is a community fork of Hashrate Autopilot (MIT, Remco Douma), adapted for NiceHash. Not affiliated with NiceHash Ltd. It automates real trades with real funds - you are responsible for your API keys, spend, and local compliance.
+developer: hmlebtc
+website: https://github.com/hmlebtc/nicehash-hashrate-autobidder
+repo: https://github.com/hmlebtc/nicehash-hashrate-autobidder
+support: https://github.com/hmlebtc/nicehash-hashrate-autobidder/issues
+port: 3010
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: hmlebtc
+submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
+releaseNotes: |
+  v0.1.0 - first release of the NiceHash fork.
+
+  Adapts Hashrate Autopilot to the NiceHash Hash-power marketplace: HMAC-signed
+  NiceHash client, buyer-competition pricing anchor, escrow refill, owned-order
+  ledger, DRY-RUN / LIVE / PAUSED control, and a purpose-built dashboard. The
+  signed-client chain and the order create/read/cancel round-trip are validated
+  end-to-end against the NiceHash testnet.

@@ -1,0 +1,60 @@
+# Umbrel docker-compose for the NiceHash Hashrate Autobidder.
+#
+# - `app_proxy` is Umbrel's auth + reverse-proxy sidecar (it adds Umbrel's
+#   login in front of the dashboard, which has no auth of its own).
+# - `web` is the NiceHash daemon + dashboard, pulled from GHCR. It listens on
+#   3010 and keeps its SQLite state under /app/data (bind-mounted to Umbrel's
+#   per-app persistent storage).
+#
+# No bitcoin/electrs/datum dependencies: NiceHash delivers the rented hashrate
+# straight to your configured stratum pool, so the bidder only needs the
+# NiceHash API and your pool details.
+#
+# ⚠️  The NiceHash credentials + pool below are TESTNET throwaways so the app
+#     runs out of the box for testing (DRY-RUN). For mainnet, change
+#     NICEHASH_BASE_URL to https://api2.nicehash.com, NICEHASH_BALANCE_CURRENCY
+#     to BTC, and replace the API key/secret/org + pool with your own.
+
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # Must match this compose project's web service. Umbrel uses the app dir
+      # name as the project prefix -> `<dir>_web_1`.
+      APP_HOST: hmlebtc-nicehash-autobidder_web_1
+      APP_PORT: 3010
+
+  web:
+    # Pin the exact released version - never `:latest`, never `v`-prefixed.
+    # Bump in lockstep with umbrel-app.yml `version:` on every release.
+    image: ghcr.io/hmlebtc/nicehash-hashrate-autobidder:0.1.0
+    restart: on-failure
+    stop_grace_period: 1m
+    volumes:
+      - ${APP_DATA_DIR}/data:/app/data
+    environment:
+      NICEHASH_HTTP_PORT: 3010
+      NICEHASH_DB_PATH: /app/data/nicehash-state.db
+      NICEHASH_TICK_SECONDS: "60"
+      # Boots in DRY-RUN: nothing is bought until you flip to LIVE in the UI.
+      NICEHASH_RUN_MODE: DRY_RUN
+
+      # --- Marketplace target (testnet defaults) ---
+      NICEHASH_BASE_URL: https://api-test.nicehash.com
+      NICEHASH_BALANCE_CURRENCY: TBTC
+      NICEHASH_ALGORITHM: SHA256ASICBOOST
+      NICEHASH_MARKET: BTC
+
+      # --- Strategy (BTC/EH/day prices, PH/s speeds) ---
+      NICEHASH_TARGET_SPEED: "1"
+      NICEHASH_OVERPAY: "0.0001"
+      NICEHASH_MAX_PRICE: "0.02"
+
+      # --- Credentials + pool (TESTNET throwaways - replace for mainnet) ---
+      NICEHASH_API_KEY: e7055dfd-e56b-4aea-96fe-f21c906333be
+      NICEHASH_API_SECRET: 05c77743-bbd0-4e9d-96fe-34a6ca8344a585832b58-c688-4a81-980d-2cbaf95435c0
+      NICEHASH_ORG_ID: 954d273a-47df-4c81-aab7-019f77e3811e
+      NICEHASH_POOL_HOST: pool.xaxamining.com
+      NICEHASH_POOL_PORT: "3333"
+      NICEHASH_POOL_USER: tb1q3a89fh49xwzrjy4k8ee05etlp5zlnxq5hzks84

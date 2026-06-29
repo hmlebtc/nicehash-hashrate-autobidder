@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-06-29
+
+### `[Infra]` Package the NiceHash autobidder as an Umbrel community app
+
+The daemon image now runs the NiceHash control loop (`main-nicehash.js`),
+and the repo ships as an Umbrel community app store: `umbrel-app-store.yml`
+(`hmlebtc`) plus `hmlebtc-nicehash-autobidder/` (manifest + compose pinned to
+`ghcr.io/hmlebtc/nicehash-hashrate-autobidder`). The daemon auto-registers its
+stratum pool, so no pool id is needed. The Docker publish + image-pin-check
+workflows are retargeted to the fork. Boots in DRY-RUN; flip to LIVE from the
+dashboard.
+
+### `[Feature]` NiceHash fork: control loop, ledger, dashboard, and HTTP API
+
+Adapts Hashrate Autopilot (MIT) to the NiceHash Hash-power marketplace: a
+HMAC-signed NiceHash client, a buyer-competition pricing anchor, escrow refill,
+an owned-order SQLite ledger, DRY-RUN / LIVE / PAUSED control, and a
+purpose-built operator dashboard served on :3010. The signed-client chain and
+the order create/read/cancel round-trip are validated end-to-end against the
+NiceHash testnet (price scale confirmed 1:1, BTC/EH/day).
+
 ## 2026-06-17
 
 ### `[Fix]` Two CodeQL findings: support-bundle escaping + a no-op string replace

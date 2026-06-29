@@ -66,7 +66,7 @@ jobs:
         id: app_version
         run: |
           set -euo pipefail
-          VER=$(grep -E '^version:' rdouma-hashrate-autopilot/umbrel-app.yml \
+          VER=$(grep -E '^version:' hmlebtc-nicehash-autobidder/umbrel-app.yml \
                 | head -1 \
                 | sed -E 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/')
           if [[ -z "$VER" ]]; then
@@ -80,7 +80,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/hashrate-autopilot
+          images: ghcr.io/${{ github.repository_owner }}/nicehash-hashrate-autobidder
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

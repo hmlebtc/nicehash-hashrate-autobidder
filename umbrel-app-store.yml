@@ -3,16 +3,12 @@
 #
 # Operators add this store to their Umbrel via:
 #   Settings → App Stores → Add App Store
-#   → https://github.com/rdouma/hashrate-autopilot
+#   → https://github.com/hmlebtc/nicehash-hashrate-autobidder
 # Umbrel then walks each top-level directory of this repo looking for
-# umbrel-app.yml manifests. Today there's exactly one: hashrate-autopilot/.
-#
-# When the official Umbrel store accepts a submission of the same
-# manifest, this Community Store entry can be deprecated in favour
-# of the official one.
+# umbrel-app.yml manifests. The app dir name must be prefixed with the
+# `id` below - here that's `hmlebtc-nicehash-autobidder/`.
 
-id: rdouma
-# Umbrel renders this as "<name> App Store" - so this becomes
-# "Hashrate Autopilot App Store".
-name: Hashrate Autopilot
-tagline: Decentralizing Bitcoin mining, one pleb at a time
+id: hmlebtc
+# Umbrel renders this as "<name> App Store".
+name: NiceHash Hashrate Autobidder
+tagline: Automated NiceHash hash-power bidding for your own pool

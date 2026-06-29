@@ -21,6 +21,7 @@ import {
   readConnection,
 } from './controller/nicehash/config-from-env.js';
 import { NiceHashController } from './controller/nicehash/controller.js';
+import { ensurePool } from './controller/nicehash/pool-manager.js';
 import { NiceHashStateStore } from './controller/nicehash/state-store.js';
 import type { NiceHashTickResult } from './controller/nicehash/tick.js';
 import { createNiceHashHttpServer } from './http/nicehash-server.js';
@@ -60,6 +61,24 @@ async function main(): Promise<void> {
   const algo = await service.getAlgorithmSetting(conn.algorithm);
   const rc = buildControllerConfig(algo, process.env);
 
+  // Resolve the destination pool. Prefer an explicit NICEHASH_POOL_ID; else
+  // auto-register the configured stratum pool (idempotent) and use its id, so
+  // the operator never has to look one up. Pool registration carries no fee and
+  // is safe in any run mode.
+  let poolId = rc.config.pool_id;
+  if (!poolId && process.env.NICEHASH_POOL_HOST && process.env.NICEHASH_POOL_USER) {
+    poolId = await ensurePool(client, {
+      name: process.env.NICEHASH_POOL_NAME ?? 'nicehash-autobidder',
+      algorithm: conn.algorithm,
+      stratumHostname: process.env.NICEHASH_POOL_HOST,
+      stratumPort: Number(process.env.NICEHASH_POOL_PORT ?? 3333),
+      username: process.env.NICEHASH_POOL_USER,
+      password: process.env.NICEHASH_POOL_PASS ?? 'x',
+    });
+    console.log(`  pool auto-registered → ${poolId}`);
+  }
+  const config = { ...rc.config, pool_id: poolId };
+
   const dbPath = process.env.NICEHASH_DB_PATH ?? 'data/nicehash-state.db';
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const handle = await openDatabase({ path: dbPath });
@@ -76,7 +95,7 @@ async function main(): Promise<void> {
     service,
     client,
     ledger,
-    config: rc.config,
+    config,
     currency: rc.currency,
     balanceCurrency: rc.balanceCurrency,
     runMode: () => store.getRunMode(),
@@ -86,23 +105,25 @@ async function main(): Promise<void> {
   const app = await createNiceHashHttpServer({
     store,
     ledger,
-    config: rc.config,
+    config,
     buildNumber: readBuildNumber(),
     tickSeconds: rc.tickSeconds,
   });
   await app.listen({ port: httpPort, host: '0.0.0.0' });
 
   console.log('NiceHash daemon starting');
-  console.log(`  base=${conn.baseUrl} algorithm=${conn.algorithm} market=${rc.config.market}`);
-  console.log(`  run_mode=${rc.runMode} tick=${rc.tickSeconds}s db=${dbPath} pool_id=${rc.config.pool_id || '(none)'}`);
+  console.log(`  base=${conn.baseUrl} algorithm=${conn.algorithm} market=${config.market}`);
+  console.log(`  run_mode=${rc.runMode} tick=${rc.tickSeconds}s db=${dbPath} pool_id=${config.pool_id || '(none)'}`);
   console.log(`  HTTP API on :${httpPort} (GET /api/nicehash/status, POST /api/nicehash/run-mode)`);
   if (rc.runMode === 'LIVE') {
     console.log(
       '  ⚠️  LIVE: marketplace mutations enabled. Confirm the submit-price scale on a funded testnet order first (docs/NICEHASH_ADAPTATION.md §6).',
     );
   }
-  if (!rc.config.pool_id) {
-    console.log('  ℹ️  No NICEHASH_POOL_ID set → decide() will not propose CREATE_ORDER.');
+  if (!config.pool_id) {
+    console.log(
+      '  ℹ️  No pool resolved (set NICEHASH_POOL_ID, or NICEHASH_POOL_HOST + NICEHASH_POOL_USER) → decide() will not propose CREATE_ORDER.',
+    );
   }
 
   let stopping = false;
