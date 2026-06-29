@@ -165,7 +165,6 @@ async function main(): Promise<void> {
     metrics: metricsRepo,
     events: eventsRepo,
     decisionLog: decisionLogRepo,
-    floorUnits: settings.minimumFloorUnits,
     speedToPriceUnit,
   });
 

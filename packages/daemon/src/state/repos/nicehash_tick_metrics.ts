@@ -41,6 +41,7 @@ export class NiceHashMetricsRepo {
           api_ok: row.api_ok,
           balance_btc: row.balance_btc,
           anchor_price_btc: row.anchor_price_btc,
+          next_filled_price_btc: row.next_filled_price_btc,
           our_price_btc: row.our_price_btc,
           total_speed_units: row.total_speed_units,
           accepted_speed_units: row.accepted_speed_units,

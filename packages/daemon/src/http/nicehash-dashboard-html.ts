@@ -170,7 +170,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#fb923c"></i>delivered</span>
           <span><i class="swatch" style="background:#3b82f6"></i>limit</span>
           <span><i class="swatch" style="background:#64748b"></i>target</span>
-          <span><i class="swatch" style="background:#64748b"></i>floor</span>
+          <span><i class="swatch" style="background:#64748b"></i>min fill</span>
         </div>
       </div>
       <canvas id="hashChart"></canvas>
@@ -179,10 +179,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="chartcard">
       <div class="head"><h3>Price</h3>
         <div class="legend">
-          <span><i class="swatch" style="background:#fb923c"></i>our price</span>
-          <span><i class="swatch" style="background:#22d3ee"></i>anchor</span>
+          <span><i class="swatch" style="background:#fb923c"></i>our bid</span>
+          <span><i class="swatch" style="background:#22d3ee"></i>marginal (purple)</span>
+          <span><i class="swatch" style="background:#38bdf8"></i>next filled tier</span>
           <span><i class="swatch" style="background:#a78bfa"></i>hashprice</span>
           <span><i class="swatch" style="background:#34d399"></i>break-even</span>
+          <span><i class="swatch" style="background:#f87171"></i>hard cap</span>
           <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
           <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
           <span><i class="swatch" style="background:#f87171;border-radius:50%;width:6px;height:6px"></i>cancel</span>
@@ -370,7 +372,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     canvas.width = cssW * dpr; canvas.height = cssH * dpr;
     var ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    var padL = 60, padR = 12, padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
+    var padL = 60, padR = opts.rightLabels ? 66 : 12, padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
     var xs = [], ys = [];
     series.forEach(function (s) { s.points.forEach(function (p) { if (p.y != null && isFinite(p.y)) { xs.push(p.x); ys.push(p.y); } }); });
     ctx.font = '10px system-ui';
@@ -411,6 +413,24 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       if (m.x < xmin || m.x > xmax) return;
       ctx.fillStyle = m.color; ctx.beginPath(); ctx.arc(X(m.x), padT + h - 3, 3, 0, 6.283); ctx.fill();
     });
+    // Right-edge value labels: the latest value of each series in its colour, so
+    // you can read the actual numbers off the right of the chart.
+    if (opts.rightLabels) {
+      ctx.textAlign = 'left';
+      var placed = [];
+      series.forEach(function (s) {
+        var lp = null;
+        for (var k = s.points.length - 1; k >= 0; k--) { var q = s.points[k]; if (q && q.y != null && isFinite(q.y)) { lp = q; break; } }
+        if (!lp) return;
+        var ly = Y(lp.y);
+        // nudge apart from any label already placed at nearly the same height
+        while (placed.some(function (py) { return Math.abs(py - ly) < 10; })) ly += 10;
+        placed.push(ly);
+        ctx.fillStyle = s.color;
+        ctx.fillText(opts.fmtY ? opts.fmtY(lp.y) : lp.y.toFixed(2), padL + w + 4, Math.min(padT + h, Math.max(padT + 6, ly)) + 3);
+      });
+      ctx.textAlign = 'left';
+    }
   }
 
   // ---- state caches --------------------------------------------------------
@@ -437,13 +457,19 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
     var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
     var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });
+    // Hard cap = the configured max price (flat reference line). Break-even (if
+    // fees are on) sits below it.
+    var cfg = lastStatus && lastStatus.config;
+    var hardcap = cfg && cfg.max_price_btc_per_unit_day ? cfg.max_price_btc_per_unit_day : null;
     var price = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
       { color: '#22d3ee', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
+      { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
       { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
-      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(breakEvenBtc(r.hashprice_btc_per_unit_day)) }; }) }
+      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(breakEvenBtc(r.hashprice_btc_per_unit_day)) }; }) },
+      { color: '#f87171', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
     ];
-    drawChart($('priceChart'), price, { markers: markers, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
+    drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
 
   function tile(label, value, sub, cls) {
@@ -632,7 +658,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['balanceCurrency', 'Balance currency', 'text', 'Wallet currency to read your available balance from. BTC on mainnet, TBTC on testnet.'],
       ['tickSeconds', 'Tick seconds', 'number', 'Seconds between control-loop decisions (observe → price → act).'],
       ['targetSpeedUnits', 'Target speed (PH/s)', 'number', 'How much hashrate you want delivered. The bidder prices to win this much from the market.'],
-      ['minimumFloorUnits', 'Minimum floor (PH/s)', 'number', 'A speed reference line drawn on the hashrate chart — NOT a price. The price "floor" you must outbid (the marginal/last-filled order, shown purple in NiceHash\'s order book) is the live market anchor and is tracked automatically.'],
       ['overpayBtcPerUnitDay', 'Overpay (BTC/EH/day)', 'number', 'Cushion added above the market anchor. Higher = more reliably filled but costs more; lower = cheaper but drops out sooner when rivals raise.'],
       ['maxPriceBtcPerUnitDay', 'Max price (BTC/EH/day)', 'number', 'Hard ceiling on the order price. The bidder never pays more than this, even if it means not winning the full target.'],
       ['maxPremiumOverHashpriceBtc', 'Max premium over hashprice (0=off)', 'number', 'Dynamic ceiling = network hashprice + this (BTC/EH/day). Stops overpaying when hashprice falls. 0 disables it; needs a hashprice source.'],
@@ -641,7 +666,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
-      ['walkUpStepBtc', 'Walk-up step (BTC/EH/day, 0=off)', 'number', 'How much to raise the bid each step while under-filled. Raises are unrestricted on NiceHash, so this escalates quickly. 0 = never walk up (pure floor-tracking).'],
+      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier until filled or a price/break-even cap binds. Off = stay at the floor (no escalation). The step size is automatic (the next tier), not fixed.'],
       ['walkUpSettleSeconds', 'Walk-up settle (seconds)', 'number', 'Wait this long after a bid change before the next walk-up step, giving miners time to re-point so the bot does not overshoot. e.g. 180.'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],

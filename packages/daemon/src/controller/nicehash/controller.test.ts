@@ -26,6 +26,7 @@ function config(): NiceHashControllerConfig {
     price_edit_deadband_pct: 20,
     min_speed_limit_units: 0.1,
     price_down_step_btc: 0.0001,
+    min_fill_pct: 80,
     cheap_threshold_pct: 0,
     cheap_target_speed_units: 0,
   };
@@ -109,7 +110,6 @@ describe('NiceHashController', () => {
       runMode: () => 'DRY_RUN',
       now: () => 1_700_000_000_000,
       hashprice: () => 0.0098,
-      floorUnits: 0.5,
       metrics,
       events,
     });
@@ -121,7 +121,7 @@ describe('NiceHashController', () => {
     expect(m?.run_mode).toBe('DRY_RUN');
     expect(m?.api_ok).toBe(1);
     expect(m?.hashprice_btc_per_unit_day).toBe(0.0098);
-    expect(m?.floor_units).toBe(0.5);
+    expect(m?.floor_units).toBe(3.2); // fill threshold = target 4 × min-fill 80%
     expect(m?.target_units).toBe(4);
 
     // DRY_RUN proposals are BLOCKED by the gate, so History stays empty.

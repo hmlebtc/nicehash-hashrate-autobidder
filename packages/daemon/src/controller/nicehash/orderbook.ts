@@ -56,15 +56,17 @@ export function computeMarketAnchor(
   const byRigs = valid.filter((o) => (o.rigs_count ?? 0) > 0);
   const bySpeed = valid.filter((o) => (o.accepted_speed_units ?? 0) > 0);
   const filled = byRigs.length > 0 ? byRigs : bySpeed;
-  const filledPrices = filled.map((o) => o.price_btc);
+  // The fill ladder: ascending prices of every order currently winning hashrate.
+  const filledPrices = filled.map((o) => o.price_btc).sort((a, b) => a - b);
 
   if (filledPrices.length > 0) {
     return {
-      anchor_price_btc: Math.min(...filledPrices),
+      anchor_price_btc: filledPrices[0]!, // cheapest filled = marginal (purple)
       total_speed_units: totalSpeedUnits,
       // "Thin" only when the target plainly exceeds the whole market's supply -
       // a best-effort flag; we still anchor at the floor and grab what we can.
       thin: totalSpeedUnits > 0 && targetUnits >= totalSpeedUnits,
+      filled_prices: filledPrices,
     };
   }
 
@@ -75,5 +77,6 @@ export function computeMarketAnchor(
     anchor_price_btc: lowest,
     total_speed_units: totalSpeedUnits,
     thin: !(totalSpeedUnits > 0),
+    filled_prices: [],
   };
 }
