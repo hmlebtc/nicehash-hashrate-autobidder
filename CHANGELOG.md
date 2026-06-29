@@ -2,6 +2,14 @@
 
 ## 2026-06-29
 
+### `[Fix]` Move host port off 3010 to avoid Hashrate Autopilot conflict
+
+The Umbrel manifest published the app on port 3010, the same host port as
+upstream Hashrate Autopilot (rdouma) - installing both collides. Moved the
+manifest `port` to 7910 (well clear of the Bitcoin/Electrs/mempool/Autopilot
+3005-3010 cluster). The daemon still listens on 3010 inside the container;
+only the host-facing port changed, so no image rebuild.
+
 ### `[Fix]` Add Umbrel gallery so the app installs
 
 The Umbrel community-store install view crashed with `can't access

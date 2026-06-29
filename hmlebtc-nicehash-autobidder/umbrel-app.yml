@@ -25,7 +25,12 @@ developer: hmlebtc
 website: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 repo: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 support: https://github.com/hmlebtc/nicehash-hashrate-autobidder/issues
-port: 3010
+# Host port Umbrel publishes the app on - must be unique across all
+# installed apps. NOT 3010: upstream Hashrate Autopilot (rdouma) already
+# uses 3010, so installing both would collide. The daemon still listens on
+# 3010 inside the container (docker-compose APP_PORT / NICEHASH_HTTP_PORT);
+# only this host-facing port is moved.
+port: 7910
 gallery:
   - https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/screenshot-1.png
   - https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/screenshot-2.png
