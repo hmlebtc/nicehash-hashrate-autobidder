@@ -18,6 +18,25 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.0004, 0.0005, 0.0006]);
   });
 
+  it('anchors at the GLOBAL cheapest order with miners even when zero-miner orders sit above it', () => {
+    // Real-book shape: a band of higher-priced orders with NO miners interleaved
+    // above the true marginal. The anchor must be the global lowest-priced order
+    // with miners (0.4482), not the cheapest within the contiguous top block.
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.466, limit_units: 5, rigs_count: 21792 },
+      { price_btc: 0.4526, limit_units: 5, rigs_count: 2141 },
+      { price_btc: 0.4525, limit_units: 5, rigs_count: 0 }, // gap begins
+      { price_btc: 0.45, limit_units: 5, rigs_count: 0 },
+      { price_btc: 0.449, limit_units: 5, rigs_count: 0 },
+      { price_btc: 0.4488, limit_units: 5, rigs_count: 7279 }, // filled below the gap
+      { price_btc: 0.4482, limit_units: 5, rigs_count: 2463 }, // the marginal (purple)
+      { price_btc: 0.448, limit_units: 5, rigs_count: 0 },
+    ];
+    const a = computeMarketAnchor(competitors, 16, 2);
+    expect(a.anchor_price_btc).toBe(0.4482);
+    expect(a.filled_prices).toEqual([0.4482, 0.4488, 0.4526, 0.466]);
+  });
+
   it('does not walk up the book for a larger target (still anchors at the floor)', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0.0006, limit_units: 50, rigs_count: 4000 },

@@ -58,8 +58,6 @@ export interface NiceHashSettings {
    * filled or a cap binds. When false, pure floor-tracking. Default true.
    */
   readonly walkUpEnabled: boolean;
-  /** Wait this many seconds after a price change before the next walk-up step. */
-  readonly walkUpSettleSeconds: number;
   // --- Fees / break-even ---
   /** NiceHash marketplace fee on the order, percent (e.g. 3). */
   readonly niceHashFeePct: number;
@@ -158,7 +156,6 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
-    walkUpSettleSeconds: n(env, 'NICEHASH_WALK_UP_SETTLE_SEC', 180),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
     useBreakEven: b(env, 'NICEHASH_USE_BREAKEVEN', true),
@@ -201,6 +198,7 @@ export function toControllerConfig(
     market: settings.market,
     algorithm: settings.algorithm,
     pool_id: poolId,
+    pool_user: settings.poolUser,
     target_speed_units: settings.targetSpeedUnits,
     overpay_btc_per_unit_day: settings.overpayBtcPerUnitDay,
     max_price_btc_per_unit_day: settings.maxPriceBtcPerUnitDay,
@@ -215,7 +213,6 @@ export function toControllerConfig(
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
     walk_up_enabled: settings.walkUpEnabled,
-    walk_up_settle_ms: Math.max(0, settings.walkUpSettleSeconds) * 1000,
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
@@ -291,7 +288,6 @@ export function mergeSettings(
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
-    walkUpSettleSeconds: num('walkUpSettleSeconds'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
     useBreakEven: bool('useBreakEven'),

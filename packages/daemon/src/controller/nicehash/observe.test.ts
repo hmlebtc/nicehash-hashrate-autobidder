@@ -4,11 +4,12 @@ import type { NiceHashService } from '../../services/nicehash-service.js';
 import { observe } from './observe.js';
 import type { NiceHashControllerConfig } from './types.js';
 
-function config(): NiceHashControllerConfig {
+function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControllerConfig {
   return {
     market: 'EU',
     algorithm: 'SHA256ASICBOOST',
     pool_id: 'pool-1',
+    pool_user: '',
     target_speed_units: 4,
     overpay_btc_per_unit_day: 0.00001,
     max_price_btc_per_unit_day: 1,
@@ -22,6 +23,7 @@ function config(): NiceHashControllerConfig {
     price_down_step_btc: 0.0001,
     cheap_threshold_pct: 0,
     cheap_target_speed_units: 0,
+    ...over,
   };
 }
 
@@ -72,13 +74,40 @@ const base = {
 };
 
 describe('observe', () => {
-  it('builds state: owned vs unknown split, anchor excludes our order, balance parsed', async () => {
+  it('owns ledger orders, ignores foreign orders, anchor excludes our order, balance parsed', async () => {
     const state = await observe({ service: service(), ...base });
     expect(state.owned_orders.map((o) => o.order_id)).toEqual(['mine']);
-    expect(state.unknown_orders.map((o) => o.order_id)).toEqual(['stranger']);
+    // 'stranger' is a foreign order - now ignored entirely (no PAUSE).
+    expect(state.unknown_orders).toEqual([]);
     expect(state.balance_btc).toBe(0.5);
     expect(state.market?.anchor_price_btc).toBe(0.0102);
     expect(state.tick_at).toBe(1_700_000_000_000);
+  });
+
+  it('adopts a foreign live order whose pool worker matches our configured pool user', async () => {
+    const svc = service({
+      getMyOrders: vi.fn(async () => ({
+        list: [
+          {
+            id: 'readopt',
+            status: 'ACTIVE',
+            price: '0.0102',
+            limit: '4',
+            amount: '0.01',
+            availableAmount: '0.01',
+            pool: { username: 'bc1qme.autobidder' },
+          },
+        ],
+      })) as unknown as NiceHashService['getMyOrders'],
+    });
+    const state = await observe({
+      service: svc,
+      ...base,
+      knownOrderIds: new Set(), // not in the ledger; adopted purely by pool worker
+      config: config({ pool_user: 'bc1qme.autobidder' }),
+    });
+    expect(state.owned_orders.map((o) => o.order_id)).toEqual(['readopt']);
+    expect(state.unknown_orders).toEqual([]);
   });
 
   it('refreshes owned-order delivered speed from the order-detail endpoint', async () => {

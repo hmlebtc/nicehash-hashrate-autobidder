@@ -72,6 +72,8 @@ export interface OwnedOrderSnapshot {
   readonly accepted_speed_units: number;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
+  /** The order's pool worker (stratum username); null when the API omits it. */
+  readonly pool_username: string | null;
   readonly last_price_decrease_at: number | null;
   /** When the price last changed (up or down); null when never. Settle window. */
   readonly last_price_change_at: number | null;
@@ -88,6 +90,14 @@ export interface NiceHashControllerConfig {
   readonly algorithm: string;
   /** Resolved registered pool id; empty string when not yet registered. */
   readonly pool_id: string;
+  /**
+   * The configured pool worker (stratum username, e.g. `<address>.autobidder`).
+   * An order on the account is treated as the autobidder's own iff its
+   * `pool.username` matches this - so the bot manages exactly one order (its
+   * `.autobidder` worker) and leaves any other order on the account alone.
+   * Empty string disables pool-worker matching (ledger-only ownership).
+   */
+  readonly pool_user: string;
   /** Desired delivered speed (display units). */
   readonly target_speed_units: number;
   /** Cushion added above the anchor (BTC/unit/day). */
@@ -115,15 +125,12 @@ export interface NiceHashControllerConfig {
   /**
    * Track-to-fill: when true, while under-filled the bidder walks the price up
    * to just above the next filled order on the book (the next tier with miners)
-   * + overpay, climbing tier by tier until filled or a cap binds. When false,
-   * pure floor-tracking (no escalation). Default false.
+   * + overpay, climbing tier by tier until filled or a cap binds - every tick,
+   * since raises are unconstrained on NiceHash. While filled it never chases the
+   * floor up; it only walks down. When false, pure floor-tracking (both ways, no
+   * escalation). Default false.
    */
   readonly walk_up_enabled?: boolean;
-  /**
-   * Track-to-fill: minimum time (ms) to wait after a price change before the
-   * next walk-up step, so a raise has time to attract miners. Default 0.
-   */
-  readonly walk_up_settle_ms?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */

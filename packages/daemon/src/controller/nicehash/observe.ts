@@ -53,6 +53,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     const split = reconcileOrders(
       res.list ?? [],
       deps.knownOrderIds,
+      config.pool_user,
       deps.lastPriceDecreaseById ?? new Map(),
       deps.lastPriceChangeById ?? new Map(),
     );

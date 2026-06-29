@@ -66,27 +66,26 @@ export class NiceHashService {
   }
 
   /**
-   * Fetch the order book deep enough to reach the **marginal** order - the
-   * cheapest order still receiving hashrate (NiceHash's purple price).
+   * Fetch the **whole** order book so the marginal - the cheapest order still
+   * receiving hashrate (NiceHash's purple price) - can be found reliably.
    *
    * The endpoint returns orders sorted by price descending, capped at
-   * `PAGE_SIZE` per page (NiceHash defaults to 100). In a liquid market the
-   * filled region (every order with miners) spans far more than the top 100,
-   * so the cheapest filled order - the price we actually need to beat - sits
-   * several pages down. Reading only page 0 made the anchor read ~the top of
-   * the book instead of the floor.
+   * `PAGE_SIZE` per page (NiceHash defaults to 100), so reading only page 0
+   * makes the anchor read ~the top of the book instead of the floor.
    *
-   * We walk pages downward, accumulating orders, and stop as soon as a page
-   * contains an unfilled order (zero miners): the filled region has ended, so
-   * the marginal is already in hand. Guards keep this bounded: we stop on the
-   * last page reported by `pagination.totalPageCount`, when a page yields no
-   * new orders (pagination not honoured / end of book), and at a hard page cap.
-   * Orders are de-duplicated by id so a server that ignores `page` degrades to
-   * the old top-100 behaviour rather than looping.
+   * We can NOT stop at the first zero-miner order: the fill pattern is not a
+   * single contiguous block at the top. Orders with no miners are routinely
+   * interleaved *above* the true marginal (an order can be priced higher yet
+   * draw no rigs - incompatible pool, exhausted cap, etc.), so an early stop on
+   * the first gap lands the anchor far above NiceHash's purple. Instead we walk
+   * every page and let `computeMarketAnchor` take the global cheapest order with
+   * miners. Bounded by `pagination.totalPageCount`, a short final page, a
+   * no-new-orders guard (so a server that ignores `page` degrades to the old
+   * top-100 rather than looping), and a hard page cap. De-duped by id.
    */
   async getOrderBook(algorithm: string, currency = 'BTC'): Promise<OrderBookResponse> {
     const PAGE_SIZE = 100;
-    const MAX_PAGES = 25;
+    const MAX_PAGES = 30;
 
     let firstBook: OrderBookResponse | null = null;
     const merged: OrderBookEntry[] = [];
@@ -99,21 +98,17 @@ export class NiceHashService {
       const orders = stats?.orders ?? [];
 
       let added = 0;
-      let sawUnfilled = false;
       for (const o of orders) {
         const key = o.id ?? `${o.price}|${o.limit}|${o.type ?? ''}`;
         if (seen.has(key)) continue;
         seen.add(key);
         merged.push(o);
         added++;
-        // A live order with no miners marks the bottom of the filled region.
-        if (o.alive !== false && (o.rigsCount ?? 0) === 0) sawUnfilled = true;
       }
 
       this.lastApiOkAt = this.now();
 
       if (added === 0) break; // no progress (page ignored or book exhausted)
-      if (sawUnfilled) break; // crossed the marginal - floor is captured
       const totalPages = stats?.pagination?.totalPageCount;
       if (totalPages !== undefined && page + 1 >= totalPages) break;
       if (orders.length < PAGE_SIZE) break; // last (short) page

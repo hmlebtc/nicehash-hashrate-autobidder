@@ -87,20 +87,17 @@ export function ownedOrderFromWire(
     payed_amount_btc: parseDecimal(order.payedAmount),
     accepted_speed_units: parseDecimal(order.acceptedCurrentSpeed),
     status: codeOf(order.status),
+    pool_username: order.pool?.username ?? null,
     last_price_decrease_at: lastPriceDecreaseAt,
     last_price_change_at: lastPriceChangeAt,
   };
 }
 
-function unknownOrderFromWire(order: HashpowerOrder): UnknownOrderSnapshot {
-  return { order_id: order.id, price_btc: parseDecimal(order.price) };
-}
-
 /**
- * Order statuses that are NOT a live concern for the unknown-order safeguard: a
- * stopped/finished/dead order on the account neither delivers hashrate nor
- * spends, so a foreign order in one of these states must not force a PAUSE.
- * Only genuinely live/open foreign orders (e.g. ACTIVE) should.
+ * Order statuses that mean an order is no longer live (it neither delivers
+ * hashrate nor spends). Used to scope pool-worker matching to live orders so a
+ * pile of historical CANCELLED/COMPLETED orders on the same worker isn't all
+ * adopted as "ours".
  */
 const NON_LIVE_STATUSES = new Set([
   'DEAD',
@@ -113,27 +110,39 @@ const NON_LIVE_STATUSES = new Set([
   'STOPPED',
 ]);
 
-/** True when a foreign (non-owned) order is live enough to warrant a PAUSE. */
-export function isLiveForeignOrder(order: HashpowerOrder): boolean {
+/** True when an order is live/open (e.g. ACTIVE), not stopped/finished. */
+export function isLiveOrder(order: HashpowerOrder): boolean {
   return !NON_LIVE_STATUSES.has(codeOf(order.status).toUpperCase());
 }
 
 /**
- * Split the account's hash-power orders into ours (present in the ledger) and
- * unknown (not in the ledger). Only *live* foreign orders count as unknown -
- * stopped/completed orders are ignored so prior manual orders don't pin the
- * controller to PAUSE. Unknown (live, foreign) orders force a PAUSE.
+ * Pick out the autobidder's own orders from the account's hash-power orders.
+ *
+ * An order is ours when it is in our ledger (an order we created and recorded)
+ * OR it is a *live* order whose pool worker matches our configured `poolUser`
+ * (e.g. `<address>.autobidder`). The pool-worker match makes ownership robust
+ * across a ledger reset - after a restart the bot re-adopts its existing
+ * `.autobidder` order instead of orphaning it - and is what lets it keep to a
+ * single managed order (`decide()` cancels any extra owned order).
+ *
+ * Everything else (a manual or legacy order on a different worker) is simply
+ * **ignored**: the bot neither manages nor pauses on it. `unknown` is therefore
+ * always empty now; it is retained for shape/back-compat (the PAUSE-on-unknown
+ * guard in `decide()` is harmless dead weight unless something repopulates it).
  */
 export function reconcileOrders(
   wireOrders: readonly HashpowerOrder[],
   knownOrderIds: ReadonlySet<string>,
+  poolUser = '',
   lastPriceDecreaseById: ReadonlyMap<string, number> = new Map(),
   lastPriceChangeById: ReadonlyMap<string, number> = new Map(),
 ): { owned: OwnedOrderSnapshot[]; unknown: UnknownOrderSnapshot[] } {
   const owned: OwnedOrderSnapshot[] = [];
   const unknown: UnknownOrderSnapshot[] = [];
   for (const order of wireOrders) {
-    if (knownOrderIds.has(order.id)) {
+    const inLedger = knownOrderIds.has(order.id);
+    const poolMatch = poolUser !== '' && (order.pool?.username ?? '') === poolUser && isLiveOrder(order);
+    if (inLedger || poolMatch) {
       owned.push(
         ownedOrderFromWire(
           order,
@@ -141,9 +150,8 @@ export function reconcileOrders(
           lastPriceChangeById.get(order.id) ?? null,
         ),
       );
-    } else if (isLiveForeignOrder(order)) {
-      unknown.push(unknownOrderFromWire(order));
     }
+    // Foreign orders (not ours) are intentionally ignored - no PAUSE.
   }
   return { owned, unknown };
 }

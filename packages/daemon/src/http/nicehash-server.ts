@@ -434,11 +434,12 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
       /* best effort */
     }
     try {
-      // Walk pages downward (price-descending) until we cross the marginal -
-      // the orderBook caps each page at ~100 orders, so the floor (cheapest
-      // order still receiving hashrate) lives several pages below the top.
+      // Walk the WHOLE book (price-descending). The orderBook caps each page at
+      // ~100 orders, and zero-miner orders are interleaved above the marginal,
+      // so we cannot stop at the first gap - the floor (cheapest order still
+      // receiving hashrate) is the global lowest-priced order with miners.
       const PAGE_SIZE = 100;
-      const MAX_PAGES = 25;
+      const MAX_PAGES = 30;
       const merged: OrderBookEntry[] = [];
       const seen = new Set<string>();
       let firstStats: OrderBookResponse['stats'][string] | null = null;
@@ -452,17 +453,14 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
         const pageOrders = stats?.orders ?? [];
         pagesFetched = page + 1;
         let added = 0;
-        let sawUnfilled = false;
         for (const o of pageOrders) {
           const key = o.id ?? `${o.price}|${o.limit}|${o.type ?? ''}`;
           if (seen.has(key)) continue;
           seen.add(key);
           merged.push(o);
           added++;
-          if (o.alive !== false && (o.rigsCount ?? 0) === 0) sawUnfilled = true;
         }
         if (added === 0) break;
-        if (sawUnfilled) break;
         if (totalPageCount !== undefined && page + 1 >= totalPageCount) break;
         if (pageOrders.length < PAGE_SIZE) break;
       }
