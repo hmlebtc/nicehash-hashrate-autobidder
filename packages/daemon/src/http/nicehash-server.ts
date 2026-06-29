@@ -16,6 +16,7 @@
 import fastifyCors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { NICEHASH_DASHBOARD_HTML } from './nicehash-dashboard-html.js';
 import type { NiceHashStateStore } from '../controller/nicehash/state-store.js';
 import type { NiceHashControllerConfig, Proposal, RunMode } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult, TickOutcome } from '../controller/nicehash/tick.js';
@@ -95,6 +96,10 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
 export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(fastifyCors, { origin: true });
+
+  app.get('/', async (_req, reply) => {
+    reply.type('text/html').send(NICEHASH_DASHBOARD_HTML);
+  });
 
   app.get('/api/health', async () => ({ ok: true, build: deps.buildNumber }));
 

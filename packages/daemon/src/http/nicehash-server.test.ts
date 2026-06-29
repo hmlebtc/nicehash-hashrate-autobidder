@@ -114,4 +114,12 @@ describe('NiceHash HTTP server', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ orders: [] });
   });
+
+  it('GET / serves the NiceHash dashboard HTML', async () => {
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.body).toContain('NiceHash Hashrate Autobidder');
+    expect(res.body).toContain('/api/nicehash/status');
+  });
 });
