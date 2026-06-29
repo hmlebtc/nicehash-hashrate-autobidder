@@ -132,6 +132,18 @@ async function main(): Promise<void> {
     );
   }
 
+  // Diagnostics: dump the raw algorithm metadata and one already-valid order so
+  // the create body's factor fields can be matched exactly (2997 said
+  // displayMarketFactor was missing/unrecognised). Read-only.
+  if (env.NICEHASH_DUMP === '1') {
+    console.log('\nalgorithm setting (raw):');
+    console.log(JSON.stringify(algo, null, 2));
+    if (existing[0]) {
+      console.log(`\ngetOrder(${existing[0].id}) (raw):`);
+      console.log(JSON.stringify(await client.getOrder(existing[0].id), null, 2));
+    }
+  }
+
   let createdId: string | undefined;
   try {
     console.log('\n→ createOrder …');
