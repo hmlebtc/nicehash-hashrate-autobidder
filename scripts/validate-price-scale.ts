@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   await service.syncTime();
 
   const algorithm = conn.algorithm;
-  const market = env.NICEHASH_MARKET ?? 'EU';
+  const market = env.NICEHASH_MARKET ?? 'BTC';
   const priceCurrency = env.NICEHASH_PRICE_CURRENCY ?? 'BTC';
   const balanceCurrency = env.NICEHASH_BALANCE_CURRENCY ?? 'TBTC';
 
@@ -120,6 +120,17 @@ async function main(): Promise<void> {
 
   const poolId = await resolvePoolId(client, algorithm);
   console.log(`  poolId=${poolId}`);
+
+  // Read back any existing orders first. This confirms the API READ scale
+  // (what myOrders/getOrder report) against the UI - useful even if the
+  // create call below is gated (e.g. NiceHash 5096).
+  const existing = (await client.getMyOrders({ algorithm, market })).list ?? [];
+  console.log(`\nexisting orders (market ${market}): ${existing.length}`);
+  for (const o of existing) {
+    console.log(
+      `  - id=${o.id} price=${o.price} limit=${o.limit} amount=${o.amount} status=${typeof o.status === 'string' ? o.status : (o.status?.code ?? '?')}`,
+    );
+  }
 
   let createdId: string | undefined;
   try {

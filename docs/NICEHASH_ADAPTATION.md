@@ -260,12 +260,37 @@ longer treats an uncapped order as swallowing all supply; an uncapped order is
 counted by its actual `acceptedSpeed`, so an idle ceiling order does not drag
 the anchor up. Capped orders still count their full `limit`.
 
-### OPEN — must validate before any LIVE order
+### Market value is `BTC` (not EU/USA)
 
-The order-book `price` scale and the **create-order `price` scale** are assumed
-identical (anchor off the book, submit in the same scale). This is internally
-consistent but **not yet empirically confirmed** because the testnet account
-has zero balance. Before enabling LIVE trading: fund the testnet account with a
-small amount of TBTC, place one tiny STANDARD order at a known price, read it
-back via `myOrders`, and confirm the stored price matches what was submitted
-(and matches the book scale). Until then the controller stays in DRY-RUN.
+Confirmed from a live order: the order's `Market` is **`BTC`** and the order
+book is keyed by `BTC`. On this environment the market is the paying currency,
+not a geographic region. The `market` config now defaults to `BTC` for
+createOrder / myOrders (still overridable via `NICEHASH_MARKET`; a geographic
+production deployment can set `EU` / `USA`).
+
+### Price scale — confirmed (1:1, BTC/EH/day)
+
+Corroborated by a live order placed via the NiceHash UI: the buy form labels
+price **"Price (TBTC/EH/day)"**, the order book showed the cheapest STANDARD at
+`0.0102` in that unit, and an order entered at `0.0010` was stored as `0.0010`
+TBTC at `1.0` PH/s / `0.001` TBTC amount. So **submit-price scale ==
+order-book-price scale == BTC/EH/day, with no hidden transform** — exactly the
+controller's assumption. Speed stays in PH/s, amount in BTC.
+
+Also validated live: pool registration via the API (`ensurePool` created
+`pool.xaxamining.com` and NiceHash returned a `poolId` used by the order).
+
+### OPEN — NiceHash API order creation gated (`5096`)
+
+The auto-cancelling API probe could not exercise the create path: NiceHash
+returned `403 - 5096: Order creations are currently disabled`, even though
+(a) the same account created an order fine via the **UI**, and (b) our API key
+successfully created a **pool** and performed all signed reads. Order placement
+is a separate granular permission on NiceHash, so the most likely cause is the
+testnet API key **missing the "Place hash-power orders" scope** (pool management
+is a different scope), or a testnet-side gate on API order-create.
+
+Before enabling LIVE: confirm the key has the order-placement permission and
+re-run `pnpm validate:nicehash` (it now also reads back existing orders to
+re-confirm the read scale). Until an API create + read-back round-trip passes,
+the controller stays in DRY-RUN.

@@ -85,7 +85,7 @@ export function buildControllerConfig(
 ): NiceHashRuntimeConfig {
   const minOrder = parseDecimal(algo.minimalOrderAmount, 0.001);
   const config: NiceHashControllerConfig = {
-    market: str(env, 'NICEHASH_MARKET', 'EU'),
+    market: str(env, 'NICEHASH_MARKET', 'BTC'),
     algorithm: str(env, 'NICEHASH_ALGORITHM', 'SHA256ASICBOOST'),
     pool_id: str(env, 'NICEHASH_POOL_ID', ''),
     target_speed_units: num(env, 'NICEHASH_TARGET_SPEED', 1),

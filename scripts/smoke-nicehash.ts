@@ -47,7 +47,7 @@ async function main() {
   const orgId = required('NICEHASH_ORG_ID');
   const baseUrl = process.env.NICEHASH_BASE_URL ?? NICEHASH_TEST_BASE_URL;
   const algorithm = process.env.NICEHASH_ALGORITHM ?? 'SHA256ASICBOOST';
-  const market = process.env.NICEHASH_MARKET ?? 'EU';
+  const market = process.env.NICEHASH_MARKET ?? 'BTC';
   const currency = process.env.NICEHASH_CURRENCY ?? 'TBTC';
 
   console.log('NiceHash smoke test (read-only)');
