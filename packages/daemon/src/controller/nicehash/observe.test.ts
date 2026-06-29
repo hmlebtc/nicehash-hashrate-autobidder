@@ -72,15 +72,28 @@ describe('observe', () => {
     expect(state.tick_at).toBe(1_700_000_000_000);
   });
 
-  it('forces market=null when the my-orders read fails (refuse to act blind)', async () => {
+  it('forces market=null and records the error when the my-orders read fails (refuse to act blind)', async () => {
     const svc = service({
       getMyOrders: vi.fn(async () => {
-        throw new Error('down');
+        throw new Error('HTTP 401 unauthorized');
       }) as unknown as NiceHashService['getMyOrders'],
     });
     const state = await observe({ service: svc, ...base });
     expect(state.market).toBeNull();
     expect(state.owned_orders).toEqual([]);
+    expect(state.orders_error).toMatch(/401/);
+  });
+
+  it('records the order-book error when the book read fails', async () => {
+    const svc = service({
+      getOrderBook: vi.fn(async () => {
+        throw new Error('book boom');
+      }) as unknown as NiceHashService['getOrderBook'],
+    });
+    const state = await observe({ service: svc, ...base });
+    expect(state.market).toBeNull();
+    expect(state.market_error).toMatch(/book boom/);
+    expect(state.orders_error == null).toBe(true);
   });
 
   it('degrades balance to null when the balance read fails, keeping the anchor', async () => {

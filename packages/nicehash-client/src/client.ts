@@ -54,6 +54,11 @@ export interface NiceHashClientConfig {
   readonly fetch?: typeof fetch;
   /** Max attempts for retryable failures. Default 3. */
   readonly maxRetries?: number;
+  /**
+   * Per-request timeout in ms. A stalled connection aborts (and, for reads, is
+   * retried) instead of hanging the control loop. Default 15000.
+   */
+  readonly timeoutMs?: number;
   /** Sleep function (override for tests). */
   readonly sleep?: (ms: number) => Promise<void>;
   /** Clock source (override for tests). Default Date.now. */
@@ -89,6 +94,7 @@ export interface NiceHashClient {
 export function createNiceHashClient(config: NiceHashClientConfig = {}): NiceHashClient {
   const baseUrl = (config.baseUrl ?? NICEHASH_PROD_BASE_URL).replace(/\/$/, '');
   const maxRetries = config.maxRetries ?? 3;
+  const timeoutMs = config.timeoutMs ?? 15_000;
   const sleep = config.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const baseNow = config.now ?? Date.now;
   const fetchImpl = config.fetch ?? fetch;
@@ -170,6 +176,9 @@ export function createNiceHashClient(config: NiceHashClientConfig = {}): NiceHas
         response = await fetchImpl(url, {
           method: opts.method,
           headers,
+          // Abort a stalled request so a hung connection can't pin the control
+          // loop; reads retry, mutations surface the timeout.
+          signal: AbortSignal.timeout(timeoutMs),
           ...(bodyStr !== undefined ? { body: bodyStr } : {}),
         });
       } catch (err) {

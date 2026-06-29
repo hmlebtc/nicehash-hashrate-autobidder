@@ -54,6 +54,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .mode-DRY_RUN { background: #3b82f633; color: #60a5fa; }
   .mode-LIVE { background: #34d39933; color: var(--green); }
   .mode-PAUSED { background: #facc1533; color: var(--gold); }
+  .badge.switching { background: #facc1533; color: var(--gold); animation: nhpulse 1s ease-in-out infinite; }
+  .badge.switching::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nhspin .7s linear infinite; }
+  @keyframes nhspin { to { transform: rotate(360deg); } }
+  @keyframes nhpulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  .controls button:disabled, .toggle button:disabled { opacity: .45; cursor: default; }
   main { padding: 20px; max-width: 1180px; margin: 0 auto; }
   .page { display: none; }
   .page.active { display: block; }
@@ -307,10 +312,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   });
 
   // ---- run mode ------------------------------------------------------------
+  var modeBusy = false;
+  function modeSwitching(on) {
+    modeBusy = on;
+    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.disabled = on; });
+    if (on) { var badge = $('modeBadge'); badge.textContent = 'switching…'; badge.className = 'badge switching'; }
+  }
   async function setMode(mode) {
+    if (modeBusy) return;
     if (mode === 'LIVE' && !confirm('Switch to LIVE? The bidder will place and manage REAL orders.')) return;
-    await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
-    refreshStatus();
+    modeSwitching(true); // instant feedback: the round trip can take a moment
+    try {
+      await fetch('/api/nicehash/run-mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: mode }) });
+    } catch (e) { /* surfaced by the refresh below */ }
+    modeSwitching(false);
+    await refreshStatus(); // re-paints the badge + buttons from the applied mode
   }
   Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
@@ -458,8 +474,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   function renderStatus() {
     var s = lastStatus; if (!s) return;
-    var badge = $('modeBadge'); badge.textContent = s.run_mode; badge.className = 'badge mode-' + s.run_mode;
-    Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.classList.toggle('active', b.getAttribute('data-mode') === s.run_mode); });
+    if (!modeBusy) {
+      var badge = $('modeBadge'); badge.textContent = s.run_mode; badge.className = 'badge mode-' + s.run_mode;
+      Array.prototype.forEach.call(document.querySelectorAll('.controls button'), function (b) { b.classList.toggle('active', b.getAttribute('data-mode') === s.run_mode); });
+    }
     $('sub').textContent = s.tick_at ? ('last tick ' + new Date(s.tick_at).toLocaleTimeString()) : 'no tick yet';
     $('build').textContent = 'build ' + s.build;
 
@@ -488,8 +506,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="muted">no order — ' + (s.market ? 'holding' : 'market unavailable') + '</td></tr>';
 
-    var warn = (s.unknown_orders || []).length ? ('⚠️ ' + s.unknown_orders.length + ' unknown order(s) on the account — the controller PAUSES until resolved.') : '';
-    $('unknownWarn').innerHTML = warn ? '<div class="warn">' + esc(warn) + '</div>' : '';
+    var warns = [];
+    if ((s.unknown_orders || []).length) warns.push('⚠️ ' + s.unknown_orders.length + ' unknown order(s) on the account — the controller PAUSES until resolved.');
+    if (s.orders_error) warns.push('⚠️ Can’t read your NiceHash orders: ' + s.orders_error + ' — the bot is holding (no action) until this clears. Check your API key/secret/permissions on the Config tab.');
+    else if (s.market_error) warns.push('⚠️ Can’t read the order book: ' + s.market_error + ' — the bot is holding (no action) until this clears.');
+    $('unknownWarn').innerHTML = warns.length ? warns.map(function (w) { return '<div class="warn">' + esc(w) + '</div>'; }).join('') : '';
 
     var outs = s.outcomes || [];
     $('actions').innerHTML = props.length ? props.map(function (p, i) {
