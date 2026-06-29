@@ -26,6 +26,10 @@ website: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 repo: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 support: https://github.com/hmlebtc/nicehash-hashrate-autobidder/issues
 port: 3010
+gallery:
+  - https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/screenshot-1.png
+  - https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/screenshot-2.png
+  - https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/screenshot-3.png
 path: ""
 defaultUsername: ""
 defaultPassword: ""
