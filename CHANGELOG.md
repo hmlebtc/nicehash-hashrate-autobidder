@@ -2,6 +2,34 @@
 
 ## 2026-06-29
 
+### `[Fix]` Floor reads the GLOBAL marginal (scan the whole book)
+
+v0.6.3 stopped paging the order book at the first zero-miner order, assuming the
+filled region is one contiguous block at the top. It isn't: orders with no
+miners are routinely interleaved *above* the true marginal, so the anchor still
+read far above NiceHash's purple (e.g. ~0.4665 vs a real 0.4482). The bidder now
+scans the whole book - bounded by the page count, a short final page, a
+no-progress guard, and a hard cap - and anchors at the **global** cheapest order
+that still has miners, matching the purple price.
+
+### `[Feature]` One order, identified by the `.autobidder` pool worker
+
+The bot now treats an order as its own only if it's in our ledger **or** it's a
+live order whose pool worker (stratum username) matches your configured pool user
+(e.g. `<address>.autobidder`). It manages exactly that one order and **ignores**
+any other order on the account - no more pausing on manual or leftover orders.
+This also lets it re-adopt its own order after a restart instead of orphaning it.
+
+### `[Feature]` Walk-ups every tick; never chase the floor up while filled
+
+Raises are unconstrained on NiceHash, so while under-filled the bidder now walks
+up to the next filled tier + overpay **every tick** (no settle delay), climbing
+the ladder until filled or a cap binds. Once filled it holds its (cheaper) bid
+even if the marginal rises above it - only walking *down* toward the floor
+(still throttled to one down-step per change, ~10 min apart) - and resumes
+climbing only after it falls under-filled again. Retired the now-unused "Walk-up
+settle (seconds)" setting.
+
 ### `[Fix]` Anchor reads the true marginal (paginate the order book)
 
 The NiceHash order-book endpoint returns only the **top ~100 orders by price**,
