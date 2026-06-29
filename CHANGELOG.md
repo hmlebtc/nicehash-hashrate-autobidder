@@ -2,6 +2,24 @@
 
 ## 2026-06-29
 
+### `[Fix]` Surface the real cause when the market is unavailable
+
+When `observe()` failed to read the order book or your orders, every tick
+logged a generic "market unavailable (order book / my-orders read failed)"
+that hid the actual error — making a misconfigured API key or a permissions
+problem look like a dead app. The decision log now reports the specific cause
+(e.g. `my-orders read failed: NiceHash API ... returned 401`) at `error`
+level, the Status page shows a banner explaining the bot is holding and why,
+and `observe()` carries `market_error` / `orders_error` through to the API.
+NiceHash calls also gained a 15s per-request timeout so a stalled connection
+fails fast (and reads retry) instead of hanging the control loop.
+
+### `[UI]` Immediate feedback when switching run mode
+
+Switching DRY-RUN / PAUSE / LIVE now shows a "switching…" badge with a spinner
+and disables the buttons until the change is applied, so the round trip no
+longer looks like nothing is happening.
+
 ### `[Fix]` Market anchor tracks the real marginal (purple) price
 
 The pricing anchor was derived from each competing order's price *cap*

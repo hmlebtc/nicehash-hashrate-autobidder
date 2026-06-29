@@ -286,15 +286,26 @@ function buildDecisionRow(result: NiceHashTickResult): NiceHashLogInput {
   const paused = result.proposals.some((p) => p.kind === 'PAUSE');
   const marketDown = !s.market;
 
-  const level: NiceHashLogInput['level'] = failed
-    ? 'error'
-    : blocked || paused || marketDown
-      ? 'warn'
-      : 'info';
+  // A read that actually threw (orders/market error) is an error - it blocks all
+  // action and is what the operator needs to debug; a market that is merely
+  // empty/unpriceable is a warn.
+  const readErrored = Boolean(s.orders_error || s.market_error);
+  const level: NiceHashLogInput['level'] =
+    failed || (marketDown && readErrored)
+      ? 'error'
+      : blocked || paused || marketDown
+        ? 'warn'
+        : 'info';
 
   let message: string;
-  if (marketDown) message = 'market unavailable (order book / my-orders read failed)';
-  else if (result.proposals.length === 0) message = 'holding — no action';
+  if (marketDown) {
+    const cause = s.orders_error
+      ? `my-orders read failed: ${s.orders_error}`
+      : s.market_error
+        ? `order book read failed: ${s.market_error}`
+        : 'order book / my-orders read failed';
+    message = `market unavailable (${cause})`;
+  } else if (result.proposals.length === 0) message = 'holding — no action';
   else message = result.proposals.map((p, i) => `${p.kind} → ${outs[i]?.outcome ?? '?'}`).join(', ');
 
   const lines = result.proposals.map((p, i) => {
@@ -310,6 +321,8 @@ function buildDecisionRow(result: NiceHashTickResult): NiceHashLogInput {
   const detail = [
     `run=${s.run_mode} balance=${s.balance_btc ?? '?'} anchor=${s.market?.anchor_price_btc ?? 'n/a'} ` +
       `hashprice=${s.hashprice_btc_per_unit_day ?? 'n/a'} owned=${s.owned_orders.length} unknown=${s.unknown_orders.length}`,
+    ...(s.orders_error ? [`my-orders error: ${s.orders_error}`] : []),
+    ...(s.market_error ? [`order-book error: ${s.market_error}`] : []),
     ...lines,
   ].join('\n');
 

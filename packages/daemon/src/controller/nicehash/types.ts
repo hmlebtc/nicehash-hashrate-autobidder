@@ -144,6 +144,10 @@ export interface NiceHashState {
   readonly unknown_orders: readonly UnknownOrderSnapshot[];
   /** Break-even hashprice in BTC/unit/day; null when unavailable. */
   readonly hashprice_btc_per_unit_day: number | null;
+  /** Diagnostic: order-book read error this tick (null when it succeeded). */
+  readonly market_error?: string | null;
+  /** Diagnostic: my-orders read error this tick (null when it succeeded). */
+  readonly orders_error?: string | null;
 }
 
 // ---------------------------------------------------------------------------

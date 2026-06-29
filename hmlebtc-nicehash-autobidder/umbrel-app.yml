@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.5.1"
+version: "0.5.2"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,15 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.5.2 - surface API errors, fail fast, snappier mode switch.
+
+  When the bot couldn't read the order book or your orders it just logged a
+  vague "market unavailable". It now reports the actual cause (e.g. an HTTP 401
+  on the my-orders read) in the Logs tab and as a banner on the Status page, so
+  a misconfigured API key/permission is obvious instead of looking like a dead
+  app. NiceHash API calls now time out after 15s instead of hanging the loop.
+  Switching DRY-RUN / PAUSE / LIVE shows an immediate "switching…" indicator.
+
   v0.5.1 - fix the market anchor (price to beat).
 
   The "Market anchor" was computed from each competing order's price *cap*

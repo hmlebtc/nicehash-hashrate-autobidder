@@ -144,6 +144,8 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     hashprice_btc_per_unit_day: s.hashprice_btc_per_unit_day,
     owned_orders: s.owned_orders,
     unknown_orders: s.unknown_orders,
+    market_error: s.market_error ?? null,
+    orders_error: s.orders_error ?? null,
     proposals: result.proposals.map(proposalView),
     outcomes: result.outcomes.map(outcomeView),
   };

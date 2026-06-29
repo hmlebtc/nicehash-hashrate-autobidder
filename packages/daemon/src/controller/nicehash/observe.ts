@@ -36,10 +36,14 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   const tickAt = now();
   const { service, config } = deps;
 
+  const errMsg = (err: unknown): string =>
+    err instanceof Error ? err.message : String(err);
+
   // Our own orders first - if this read fails we must not act (avoid dup create).
   let owned: NiceHashState['owned_orders'] = [];
   let unknown: NiceHashState['unknown_orders'] = [];
   let ordersOk = true;
+  let ordersError: string | null = null;
   try {
     const res = await service.getMyOrders({ algorithm: config.algorithm, market: config.market });
     const split = reconcileOrders(
@@ -49,17 +53,19 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     );
     owned = split.owned;
     unknown = split.unknown;
-  } catch {
+  } catch (err) {
     ordersOk = false;
+    ordersError = errMsg(err);
   }
 
   // Order book -> pricing anchor (exclude our own orders).
   let market: MarketAnchor | null = null;
+  let marketError: string | null = null;
   try {
     const book = await service.getOrderBook(config.algorithm);
     market = marketAnchorFromBook(book, config.target_speed_units, deps.knownOrderIds, deps.currency);
-  } catch {
-    market = null;
+  } catch (err) {
+    marketError = errMsg(err); // market stays null
   }
 
   // Available balance.
@@ -68,7 +74,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     const bal = await service.getAccountBalance(deps.balanceCurrency);
     balanceBtc = availableBtcFromBalance(bal);
   } catch {
-    balanceBtc = null;
+    /* leave balanceBtc null on failure */
   }
 
   // Blind to our own orders -> force a no-op tick.
@@ -83,5 +89,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     owned_orders: owned,
     unknown_orders: unknown,
     hashprice_btc_per_unit_day: deps.hashprice ?? null,
+    market_error: marketError,
+    orders_error: ordersError,
   };
 }
