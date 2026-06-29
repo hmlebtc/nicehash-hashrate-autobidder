@@ -40,6 +40,11 @@ function service(myOrders: unknown[] = []): NiceHashService {
       displayMarketFactor: 'PH',
     })),
     getMyOrders: vi.fn(async () => ({ list: myOrders })),
+    // Detail echoes the list entry so enrichment leaves owned orders unchanged.
+    getOrder: vi.fn(async (id: string) => {
+      const found = (myOrders as { id?: string }[]).find((o) => o.id === id);
+      return found ?? { id, price: '0.0102', limit: '4', amount: '0.01' };
+    }),
     getOrderBook: vi.fn(async () => ({
       stats: { BTC: { totalSpeed: '100', orders: [{ id: 'rival', price: '0.0102', limit: '5', alive: true }] } },
     })),

@@ -35,6 +35,7 @@ function service(): NiceHashService {
       displayMarketFactor: 'PH',
     })),
     getMyOrders: vi.fn(async () => ({ list: [] })),
+    getOrder: vi.fn(async (id: string) => ({ id, price: '0.0102', limit: '4', amount: '0.01' })),
     getOrderBook: vi.fn(async () => ({
       stats: { BTC: { totalSpeed: '100', orders: [{ id: 'rival', price: '0.0102', limit: '5', alive: true }] } },
     })),
