@@ -2,6 +2,18 @@
 
 ## 2026-06-29
 
+### `[Feature]` Configurable fees + fee-adjusted break-even
+
+Added NiceHash-fee and pool-fee percentage settings (default 3% / 1%). The
+bot computes a break-even = `hashprice / (1 + (niceHashFee + poolFee)/100)` -
+the highest bid that still covers the bid plus both fees out of the
+hashprice. New Status tiles (Break-even, Margin to break-even), a break-even
+line on the price chart, and a fee-aware profit & loss panel surface it. A
+"Cap bids at break-even" toggle (default on) makes `decide()` never price
+above break-even when a hashprice is available (graceful when it isn't), so
+the bot only rents hashrate that should pay for itself. Settings loaded from
+an older version are backfilled with the new fields' defaults.
+
 ### `[Infra]` Default to mainnet; remove baked testnet credentials
 
 The Umbrel compose now points at `https://api2.nicehash.com` with

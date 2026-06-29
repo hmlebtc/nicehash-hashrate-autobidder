@@ -174,6 +174,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#fb923c"></i>our price</span>
           <span><i class="swatch" style="background:#22d3ee"></i>anchor</span>
           <span><i class="swatch" style="background:#a78bfa"></i>hashprice</span>
+          <span><i class="swatch" style="background:#34d399"></i>break-even</span>
           <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
           <span><i class="swatch" style="background:#facc15;border-radius:50%;width:6px;height:6px"></i>edit</span>
           <span><i class="swatch" style="background:#f87171;border-radius:50%;width:6px;height:6px"></i>cancel</span>
@@ -253,6 +254,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function fmtSpeed(ph, d) { var v = cvSpeed(ph); return v == null ? '—' : v.toFixed(d == null ? 2 : d); }
   function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
+  function totalFeePct() { var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
+  function breakEvenBtc(hp) { return (hp == null) ? null : hp / (1 + totalFeePct() / 100); }
 
   // ---- routing -------------------------------------------------------------
   function showPage(p) {
@@ -373,7 +376,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var price = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
       { color: '#22d3ee', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
-      { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) }
+      { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
+      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(breakEvenBtc(r.hashprice_btc_per_unit_day)) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
@@ -385,13 +389,15 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function renderTiles() {
     var s = lastSummary && lastSummary.summary;
     if (!s) { $('tiles').innerHTML = ''; return; }
-    var costVs = (s.avg_our_price_btc != null && s.avg_hashprice_btc_per_unit_day != null) ? (s.avg_our_price_btc - s.avg_hashprice_btc_per_unit_day) : null;
+    var be = breakEvenBtc(s.avg_hashprice_btc_per_unit_day);
+    var margin = (be != null && s.avg_our_price_btc != null) ? (be - s.avg_our_price_btc) : null;
     var html = '';
     html += tile('Uptime', s.uptime_pct == null ? '—' : s.uptime_pct.toFixed(1), '%');
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
     html += tile('Avg hashprice', fmtPrice(s.avg_hashprice_btc_per_unit_day, 6), priceUnit());
-    html += tile('Cost vs hashprice', costVs == null ? '—' : (costVs > 0 ? '+' : '') + fmtPrice(costVs, 6), costVs == null ? '' : (costVs <= 0 ? 'below hashprice' : 'above hashprice'), costVs == null ? '' : (costVs <= 0 ? 'pos' : 'neg'));
+    html += tile('Break-even', fmtPrice(be, 6), priceUnit() + ' · after ' + totalFeePct() + '% fees');
+    html += tile('Margin to break-even', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? '' : (margin >= 0 ? 'under break-even' : 'OVER break-even'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
   }
@@ -402,17 +408,19 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var price = s ? s.avg_our_price_btc : null;
     var hp = sum ? sum.hashprice_now : (s ? s.avg_hashprice_btc_per_unit_day : null);
     var avgHp = s ? s.avg_hashprice_btc_per_unit_day : null;
+    var feeMul = 1 + totalFeePct() / 100;
+    var effSpend = spend != null ? spend * feeMul : null; // bid + NiceHash + pool fees
     var income = (spend != null && price > 0 && avgHp != null) ? spend * (avgHp / price) : null;
-    var net = (income != null && spend != null) ? income - spend : null;
-    var ret = (net != null && spend > 0) ? (net / spend * 100) : null;
+    var net = (income != null && effSpend != null) ? income - effSpend : null;
+    var ret = (net != null && effSpend > 0) ? (net / effSpend * 100) : null;
     var bal = sum && sum.current ? sum.current.balance_btc : (lastStatus ? lastStatus.balance_btc : null);
     var html = '';
     html += tile('Balance', fmtBtc(bal), 'BTC');
     html += tile('Lifetime spent', fmtBtc(sum ? sum.lifetime_spent_btc : null), 'BTC');
-    html += tile('Spend / day', fmtBtc(spend, 6), 'BTC/day');
-    html += tile('Est. income / day', fmtBtc(income, 6), 'BTC/day');
+    html += tile('Spend + fees / day', fmtBtc(effSpend, 6), 'BTC/day · incl. ' + totalFeePct() + '% fees');
+    html += tile('Est. income / day', fmtBtc(income, 6), 'BTC/day · at hashprice');
     html += tile('Est. net / day', net == null ? '—' : (net >= 0 ? '+' : '') + fmtBtc(net, 6), 'BTC/day', net == null ? '' : (net >= 0 ? 'pos' : 'neg'));
-    html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / spend', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
+    html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / cost', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
     $('pnl').innerHTML = html;
   }
 
@@ -542,6 +550,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
       ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number', 'Engage cheap mode when our bid is below this percentage of the network hashprice (e.g. 95).'] ] },
+    { group: 'Fees & break-even', items: [
+      ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Used to compute your fee-adjusted break-even.'],
+      ['poolFeePct', 'Pool fee (%)', 'number', 'Your mining pool fee (typically ~1%). Break-even = hashprice / (1 + (NiceHash fee + pool fee)/100) - the most you can bid and still cover the bid plus both fees out of the hashprice.'],
+      ['capAtBreakEven', 'Cap bids at break-even', 'checkbox', 'Never bid above the fee-adjusted break-even hashprice, so a bid plus both fees never exceeds what the rented hashrate earns. Needs a hashprice source; in markets priced above break-even the bot will sit at break-even and may not win, by design.'] ] },
     { group: 'Pool', items: [
       ['poolHost', 'Pool host', 'text', 'Your stratum pool hostname. The app registers it with NiceHash automatically (no fee).'],
       ['poolPort', 'Pool port', 'number', 'Stratum port of your pool.'],

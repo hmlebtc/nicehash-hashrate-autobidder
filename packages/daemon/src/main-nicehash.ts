@@ -28,6 +28,7 @@ import { createNiceHashClient } from '@hashrate-autopilot/nicehash-client';
 import { NiceHashController } from './controller/nicehash/controller.js';
 import { ensurePool } from './controller/nicehash/pool-manager.js';
 import {
+  mergeSettings,
   resolveBootRunMode,
   settingsFromEnv,
   toControllerConfig,
@@ -80,9 +81,16 @@ async function main(): Promise<void> {
   const metricsRepo = new NiceHashMetricsRepo(handle.db);
   const eventsRepo = new NiceHashEventsRepo(handle.db);
 
-  // 2. Load persisted settings, or seed from env on first boot.
-  let settings = await settingsRepo.get();
-  if (!settings) {
+  // 2. Load persisted settings, or seed from env on first boot. A stored row
+  // from an older version may lack newer fields; backfill them from the env
+  // defaults (mergeSettings keeps every stored value and fills only the gaps)
+  // and persist the normalised row.
+  const stored = await settingsRepo.get();
+  let settings: ReturnType<typeof settingsFromEnv>;
+  if (stored) {
+    settings = mergeSettings(settingsFromEnv(process.env), stored);
+    await settingsRepo.put(settings);
+  } else {
     settings = settingsFromEnv(process.env);
     await settingsRepo.put(settings);
     console.log('settings seeded from environment (edit them on the dashboard config screen)');

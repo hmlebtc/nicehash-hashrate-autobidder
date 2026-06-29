@@ -51,6 +51,18 @@ export interface NiceHashSettings {
   readonly maxPremiumOverHashpriceBtc: number;
   /** Re-price only when the move exceeds this % of the overpay cushion. */
   readonly editPriceDeadbandPct: number;
+  // --- Fees / break-even ---
+  /** NiceHash marketplace fee on the order, percent (e.g. 3). */
+  readonly niceHashFeePct: number;
+  /** Mining-pool fee, percent (e.g. 1). */
+  readonly poolFeePct: number;
+  /**
+   * When true, never bid above the fee-adjusted break-even hashprice
+   * (= hashprice / (1 + (niceHashFee + poolFee)/100)) when a hashprice is
+   * available - so a bid plus both fees never exceeds what the rented hashrate
+   * earns.
+   */
+  readonly capAtBreakEven: boolean;
   // --- Daemon / data ---
   readonly bootMode: BootMode;
   /** Network-hashprice oracle provider. */
@@ -127,6 +139,9 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
+    niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
+    poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
+    capAtBreakEven: b(env, 'NICEHASH_CAP_AT_BREAKEVEN', true),
     bootMode: asBootMode(env.NICEHASH_BOOT_MODE),
     hashpriceSource: asHashpriceSource(env.NICEHASH_HASHPRICE_SOURCE),
     priceSource: s(env, 'NICEHASH_PRICE_SOURCE', 'coingecko'),
@@ -159,6 +174,9 @@ export function toControllerConfig(
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
+    nicehash_fee_pct: settings.niceHashFeePct,
+    pool_fee_pct: settings.poolFeePct,
+    cap_at_break_even: settings.capAtBreakEven,
   };
 }
 
@@ -225,6 +243,9 @@ export function mergeSettings(
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
+    niceHashFeePct: num('niceHashFeePct'),
+    poolFeePct: num('poolFeePct'),
+    capAtBreakEven: bool('capAtBreakEven'),
     bootMode: asBootMode(typeof patch.bootMode === 'string' ? patch.bootMode : existing.bootMode),
     hashpriceSource: asHashpriceSource(
       typeof patch.hashpriceSource === 'string' ? patch.hashpriceSource : existing.hashpriceSource,
