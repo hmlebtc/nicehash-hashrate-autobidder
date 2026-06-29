@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.2.0"
+version: "0.3.0"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,15 +41,17 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
-  v0.2.0 - in-dashboard configuration + connectivity test.
+  v0.3.0 - full dashboard: charts, history, profit & loss.
 
-  The dashboard now has a Config panel so you can edit credentials, connection,
-  strategy, and pool from the UI instead of the compose file, plus a Test
-  connection button that checks the signed NiceHash API path (clock sync,
-  algorithm metadata, balance) and reports the result inline. Settings persist
-  across restarts and seed from the compose env on first boot. For mainnet you
-  can now set the base URL, balance currency, and API keys entirely from the
-  Config panel. The API secret is write-only and masked in the UI.
+  The dashboard is now a tabbed Status / History / Config app. Status adds a
+  "Run decision now" button with a next-tick countdown, hero cards, a
+  time-range selector, summary tiles (uptime, average price, cost vs hashprice),
+  hashrate + price charts (the price chart marks create/edit/cancel events), the
+  orders table, and a profit & loss panel. History is the full order-mutation
+  audit trail with filters. Config gains minimum floor, cheap mode, the dynamic
+  hashprice cap, the edit-price deadband, boot mode, and history retention.
 
-  Connection and strategy changes apply on the next app restart; the run mode
-  (DRY-RUN / LIVE / PAUSED) applies immediately.
+  A network-hashprice estimate (opt-in, mempool.space) powers the cost-vs-
+  hashprice tile and the estimated income/net figures. Header toggles switch
+  speed (TH/PH/EH) and price (sat/BTC) units. The daemon persists a per-tick
+  metrics series + the order-event log behind it all.
