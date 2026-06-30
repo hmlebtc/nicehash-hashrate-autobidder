@@ -86,11 +86,44 @@ export function ownedOrderFromWire(
     available_amount_btc: parseDecimal(order.availableAmount),
     payed_amount_btc: parseDecimal(order.payedAmount),
     accepted_speed_units: parseDecimal(order.acceptedCurrentSpeed),
+    rigs_count: typeof order.rigsCount === 'number' ? order.rigsCount : 0,
     status: codeOf(order.status),
     pool_username: order.pool?.username ?? null,
     last_price_decrease_at: lastPriceDecreaseAt,
     last_price_change_at: lastPriceChangeAt,
   };
+}
+
+/**
+ * Recover our own orders' real fill from the public order book.
+ *
+ * The `myOrders` LIST and the per-order detail endpoint both under-report
+ * delivered speed - `acceptedCurrentSpeed` routinely reads 0 even while the
+ * order is being filled - but our order's own row in the order book carries the
+ * `acceptedSpeed` + `rigsCount` that NiceHash actually shows the operator. We
+ * therefore look our resting orders up by id in the book and return their fill
+ * so `observe()` can cross-reference it (taking the larger of the two readings).
+ *
+ * Keyed by order id; only ids present in both `ownOrderIds` and the book appear.
+ */
+export function ownOrderFillsFromBook(
+  book: OrderBookResponse,
+  ownOrderIds: ReadonlySet<string>,
+  currency = 'BTC',
+): Map<string, { accepted_speed_units: number; rigs_count: number }> {
+  const fills = new Map<string, { accepted_speed_units: number; rigs_count: number }>();
+  // Read the same currency bucket competingOrdersFromBook anchors on, so the
+  // anchor exclusion and the fill recovery never disagree about which book we mean.
+  const stats = book.stats?.[currency];
+  if (!stats) return fills;
+  for (const entry of stats.orders ?? []) {
+    if (entry.id === undefined || !ownOrderIds.has(entry.id)) continue;
+    fills.set(entry.id, {
+      accepted_speed_units: parseDecimal(entry.acceptedSpeed),
+      rigs_count: typeof entry.rigsCount === 'number' ? entry.rigsCount : Number(entry.rigsCount ?? 0),
+    });
+  }
+  return fills;
 }
 
 /**

@@ -176,11 +176,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </div>
 
     <div class="grid">
-      <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice">—</div><div class="muted" id="curPriceUnit"></div></div>
-      <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered">—</div><div class="muted" id="curDeliveredUnit"></div></div>
+      <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice" style="color:#fb923c">—</div><div class="muted" id="curPriceUnit"></div></div>
+      <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered" style="color:#fb923c">—</div><div class="muted" id="curDeliveredUnit"></div></div>
       <div class="card"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
       <div class="card"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
-      <div class="card"><h2>Market anchor</h2><div class="big" id="anchor">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
+      <div class="card"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
       <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
     </div>
 
@@ -230,7 +230,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
     <h2 class="section">Our orders</h2>
     <table>
-      <thead><tr><th>Order</th><th>Price</th><th>Limit</th><th>Delivered</th><th>Escrow left</th><th>Runway</th><th>Status</th></tr></thead>
+      <thead><tr><th>Order</th><th>Price</th><th>Limit</th><th>Delivered</th><th>Miners</th><th>Escrow left</th><th>Runway</th><th>Status</th></tr></thead>
       <tbody id="orders"><tr><td colspan="7" class="muted">—</td></tr></tbody>
     </table>
 
@@ -330,7 +330,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function cvPrice(btc) { return (btc == null) ? null : (UI.price === 'sat' ? btc * 1e8 : btc); }
   function speedUnit() { return UI.speed + '/s'; }
   function priceUnit() { return (UI.price === 'sat' ? 'sat' : 'BTC') + '/EH/day'; }
-  function fmtSpeed(ph, d) { var v = cvSpeed(ph); return v == null ? '—' : v.toFixed(d == null ? 2 : d); }
+  function fmtSpeed(ph, d) {
+    var v = cvSpeed(ph);
+    if (v == null) return '—';
+    if (d != null) return v.toFixed(d);
+    // Adaptive precision so a small-but-real fill (e.g. 0.0005 EH/s) is not
+    // collapsed to "0.00": more decimals as the magnitude shrinks.
+    var av = Math.abs(v);
+    if (av === 0) return '0.00';
+    if (av < 0.0001) return v.toExponential(1);
+    if (av < 1) return v.toFixed(4);
+    return v.toFixed(2);
+  }
   function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
   function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
@@ -593,8 +604,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
 
-  function tile(label, value, sub, cls) {
-    return '<div class="card"><h2>' + esc(label) + '</h2><div class="big ' + (cls || '') + '">' + value + '</div><div class="muted">' + esc(sub || '') + '</div></div>';
+  // Chart line colours, reused to colour the matching tile values so a tile and
+  // its line read as the same series (e.g. dynamic cap green, hashprice slate).
+  var C = {
+    bid: '#fb923c', delivered: '#fb923c', marginal: '#a855f7', nextfill: '#38bdf8',
+    hashprice: '#94a3b8', dyncap: '#34d399', hardcap: '#f87171', limit: '#3b82f6',
+  };
+
+  function tile(label, value, sub, cls, color) {
+    var style = color ? ' style="color:' + color + '"' : '';
+    return '<div class="card"><h2>' + esc(label) + '</h2><div class="big ' + (cls || '') + '"' + style + '>' + value + '</div><div class="muted">' + esc(sub || '') + '</div></div>';
   }
 
   function renderTiles() {
@@ -615,11 +634,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     }
     var margin = (cap != null && liveBid != null) ? (cap - liveBid) : null;
     var html = '';
-    html += tile('Uptime', s.uptime_pct == null ? '—' : s.uptime_pct.toFixed(1), '%');
-    html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit());
-    html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit());
-    html += tile('Hashprice (now)', fmtPrice(hpNow, 6), priceUnit());
-    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice − ' + totalFeePct() + '% fees − buffer') : 'dynamic cap off');
+    // Fill uptime = % of ticks an order was filled (delivering ≥ the fill
+    // threshold) out of the ticks an order was active. This is the "is my order
+    // winning hashrate" signal, not API reachability.
+    html += tile('Fill uptime', s.fill_uptime_pct == null ? '—' : s.fill_uptime_pct.toFixed(1),
+      s.fill_uptime_pct == null ? 'no active order in range' : ('% filled · ' + (s.active_samples || 0) + ' active ticks'),
+      '', C.delivered);
+    html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit(), '', C.delivered);
+    html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit(), '', C.bid);
+    html += tile('Hashprice (now)', fmtPrice(hpNow, 6), priceUnit(), '', C.hashprice);
+    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice − ' + totalFeePct() + '% fees − buffer') : 'dynamic cap off', '', C.dyncap);
     html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? 'no active bid' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
@@ -683,7 +707,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('curPrice').textContent = primary ? fmtPrice(primary.price_btc) : '—';
     $('curPriceUnit').textContent = primary ? priceUnit() : 'no active order';
     $('curDelivered').textContent = fmtSpeed(live.reduce(function (a, o) { return a + (o.accepted_speed_units || 0); }, 0));
-    $('curDeliveredUnit').textContent = speedUnit();
+    var liveRigs = live.reduce(function (a, o) { return a + (o.rigs_count || 0); }, 0);
+    $('curDeliveredUnit').textContent = speedUnit() + (liveRigs ? (' · ' + liveRigs + ' miner' + (liveRigs === 1 ? '' : 's')) : '');
     // Order balance = escrow remaining in the live order (not the wallet); the
     // wallet balance still shows in the P&L panel.
     $('orderBalance').textContent = primary ? fmtBtc(primary.available_amount_btc) : '—';
@@ -706,7 +731,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (s.run_mode === 'PAUSED') nowMsg = 'Paused — no decisions are running.';
     else if (s.orders_error) nowMsg = 'Holding — can’t read your NiceHash orders.';
     else if (!s.market) nowMsg = 'Holding — market unavailable.';
-    else if (primary) nowMsg = 'Tracking order ' + (primary.order_id || '').slice(0, 8) + ' at ' + fmtPrice(primary.price_btc) + ' ' + priceUnit() + ' · delivering ' + fmtSpeed(primary.accepted_speed_units) + ' ' + speedUnit();
+    else if (primary) nowMsg = 'Tracking order ' + (primary.order_id || '').slice(0, 8) + ' at ' + fmtPrice(primary.price_btc) + ' ' + priceUnit() + ' · delivering ' + fmtSpeed(primary.accepted_speed_units) + ' ' + speedUnit() + (primary.rigs_count ? (' · ' + primary.rigs_count + ' miner' + (primary.rigs_count === 1 ? '' : 's')) : '');
     else if (props.length && props[0].kind === 'CREATE_ORDER') nowMsg = 'No active order — placing a new bid this cycle.';
     else nowMsg = 'Holding — no order yet, waiting for conditions.';
     $('actNow').textContent = nowMsg;
@@ -720,8 +745,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('orders').innerHTML = orders.length ? orders.map(function (o) {
       return '<tr><td><code>' + esc((o.order_id || '').slice(0, 8)) + '</code></td><td>' + fmtPrice(o.price_btc) +
         '</td><td>' + fmtSpeed(o.limit_units) + ' ' + speedUnit() + '</td><td>' + fmtSpeed(o.accepted_speed_units) + ' ' + speedUnit() +
-        '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="muted">no order — ' + (s.market ? 'holding' : 'market unavailable') + '</td></tr>';
+        '</td><td>' + (o.rigs_count || 0) + '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="muted">no order — ' + (s.market ? 'holding' : 'market unavailable') + '</td></tr>';
 
     var warns = [];
     if ((s.unknown_orders || []).length) warns.push('⚠️ ' + s.unknown_orders.length + ' unknown order(s) on the account — the controller PAUSES until resolved.');

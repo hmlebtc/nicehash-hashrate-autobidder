@@ -2,6 +2,36 @@
 
 ## 2026-06-30
 
+### `[Fix]` Delivered hashrate + miner count now reflect the live order
+
+The `myOrders` list and per-order detail endpoints under-report delivered speed
+(they often read 0 even while the order is being filled), so the dashboard showed
+"delivering 0.00 EH/s" for an order NiceHash clearly showed as filled. The bidder
+now cross-references each owned order against its own row in the public order book
+— the same number NiceHash displays — and takes the larger reading, so delivered
+speed and the new miner count track the real fill. Anchor exclusion now uses the
+actual owned-order ids (not just ledger ids), so a pool-adopted order is never
+mistaken for the marginal. The order table gains a Miners column.
+
+### `[UI]` "Uptime" tile is now fill uptime (filled vs active)
+
+The Uptime tile previously showed API reachability (always ~100%). It now shows
+fill uptime: of the ticks an order was active, the % where it was actually
+delivering at or above the fill threshold (target × min-fill %) — the real
+"is my order winning hashrate" signal.
+
+### `[UI]` Tile values colour-matched to their chart lines
+
+Tile values now use the same colour as their corresponding chart series — current
+bid and delivered amber, marginal purple, hashprice slate, dynamic cap green — so
+a tile and its line read as one series at a glance.
+
+### `[UI]` App icon updated to match the dashboard favicon
+
+The Umbrel app icon is now the same geometric bar-chart mark as the browser-tab
+favicon (three ascending amber bars on a dark navy tile), replacing the older
+illustration.
+
 ### `[UI]` Chart vertical-stretch handle + true-purple marginal line
 
 Each chart gets a ⇕ drag handle below it to stretch it taller or shorter with the

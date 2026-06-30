@@ -13,7 +13,12 @@
 import { parseDecimal } from '@hashrate-autopilot/nicehash-client';
 
 import type { MarketAnchor, NiceHashControllerConfig, NiceHashState, RunMode } from './types.js';
-import { availableBtcFromBalance, marketAnchorFromBook, reconcileOrders } from './wire.js';
+import {
+  availableBtcFromBalance,
+  marketAnchorFromBook,
+  ownOrderFillsFromBook,
+  reconcileOrders,
+} from './wire.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
 
 export interface NiceHashObserveDeps {
@@ -84,12 +89,37 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     ordersError = errMsg(err);
   }
 
-  // Order book -> pricing anchor (exclude our own orders).
+  // Order book -> pricing anchor (exclude our own orders) + recover our fill.
+  // Ownership is by ledger id OR pool-worker adoption, so exclude the actual
+  // reconciled owned ids (a superset of knownOrderIds) from the anchor - a
+  // pool-adopted order not yet in the ledger must not be mistaken for the
+  // marginal we're trying to beat.
+  const ownedIds = new Set<string>(deps.knownOrderIds);
+  for (const o of owned) ownedIds.add(o.order_id);
+
   let market: MarketAnchor | null = null;
   let marketError: string | null = null;
   try {
     const book = await service.getOrderBook(config.algorithm, deps.currency);
-    market = marketAnchorFromBook(book, config.target_speed_units, deps.knownOrderIds, deps.currency);
+    market = marketAnchorFromBook(book, config.target_speed_units, ownedIds, deps.currency);
+
+    // The myOrders LIST and per-order detail both under-report delivered speed
+    // (often 0 even while filling). Our order's own row in the order book carries
+    // the real acceptedSpeed + rigsCount NiceHash shows the operator, so cross-
+    // reference it and take the larger reading - this is what makes the dashboard
+    // reflect a fill the operator can see on NiceHash.
+    const fills = ownOrderFillsFromBook(book, ownedIds, deps.currency);
+    if (fills.size > 0) {
+      owned = owned.map((o) => {
+        const f = fills.get(o.order_id);
+        if (!f) return o;
+        return {
+          ...o,
+          accepted_speed_units: Math.max(o.accepted_speed_units, f.accepted_speed_units),
+          rigs_count: Math.max(o.rigs_count ?? 0, f.rigs_count),
+        };
+      });
+    }
   } catch (err) {
     marketError = errMsg(err); // market stays null
   }
