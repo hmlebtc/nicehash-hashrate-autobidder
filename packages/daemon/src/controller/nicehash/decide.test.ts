@@ -318,9 +318,9 @@ describe('decide - track to fill', () => {
     expect(e.new_price_btc).toBeCloseTo(0.0009 - 0.0000001, 10);
   });
 
-  it('walks up every tick while under-filled (raises are unconstrained - no settle window)', () => {
-    // Even immediately after a price change, an under-filled order below the floor
-    // climbs again.
+  it('walks up every tick while under-filled when the grace is disabled (default 0)', () => {
+    // With no grace configured, even immediately after a price change an
+    // under-filled order below the floor climbs again (raises are unconstrained).
     const out = decide(
       state({
         tick_at: T,
@@ -334,6 +334,69 @@ describe('decide - track to fill', () => {
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
     expect(e.new_price_btc).toBeCloseTo(0.00051, 9);
+  });
+
+  it('holds (no walk up) while under-filled until the grace period elapses', () => {
+    const out = decide(
+      state({
+        tick_at: T,
+        market: market(),
+        owned_orders: [
+          ownedOrder({ price_btc: 0.0004, accepted_speed_units: 5, under_filled_since: T - 60_000 }),
+        ],
+        config: config({
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+          walk_up_grace_seconds: 180,
+        }),
+      }),
+    );
+    // under-filled for only 60s of a 180s grace -> hold.
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('walks up once the under-filled grace period has elapsed', () => {
+    const out = decide(
+      state({
+        tick_at: T,
+        market: market(),
+        owned_orders: [
+          ownedOrder({ price_btc: 0.0004, accepted_speed_units: 5, under_filled_since: T - 200_000 }),
+        ],
+        config: config({
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+          walk_up_grace_seconds: 180,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00051, 9);
+  });
+
+  it('still walks DOWN during the grace (grace only gates climbing, not floor-tracking down)', () => {
+    const out = decide(
+      state({
+        tick_at: T,
+        market: market({ filled_prices: [0.0005] }),
+        owned_orders: [
+          ownedOrder({ price_btc: 0.0009, accepted_speed_units: 0, under_filled_since: T - 1_000 }),
+        ],
+        config: config({
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+          walk_up_grace_seconds: 180,
+          price_down_step_btc: 0.0000001,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.0009 - 0.0000001, 10);
   });
 
   it('does NOT walk up while filled, even when the floor rises above our bid', () => {

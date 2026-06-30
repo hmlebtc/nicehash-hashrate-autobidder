@@ -2,6 +2,21 @@
 
 ## 2026-06-30
 
+### `[Feature]` Configurable walk-up grace period
+
+A new "Walk-up grace (seconds)" setting (default 180) makes the bidder wait until
+delivered hashrate has stayed below your minimum fill for that long before it
+starts walking the price up. This gives a freshly placed or just-repriced order
+time to attract miners before escalating, and paces walk-ups (the timer resets
+after each raise). 0 = walk up as soon as under-filled (the previous every-tick
+behaviour). Walk-down/floor-tracking is unaffected.
+
+### `[UI]` Hashrate chart labels each line's current value
+
+The hashrate chart now prints each series' current value at the right edge in its
+colour — so the order **limit** reads its real number (e.g. 0.075) directly,
+alongside delivered/target/min-fill, instead of having to eyeball it off the axis.
+
 ### `[Fix]` Metrics only count the live order, not finished ones
 
 `myOrders` returns a long tail of finished orders, and the bot was adopting

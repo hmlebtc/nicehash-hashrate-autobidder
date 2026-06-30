@@ -34,6 +34,15 @@ export interface NiceHashObserveDeps {
   readonly lastPriceDecreaseById?: ReadonlyMap<string, number>;
   /** Per-order last price-change timestamps (from the ledger); settle window. */
   readonly lastPriceChangeById?: ReadonlyMap<string, number>;
+  /**
+   * Mutable per-order "under-filled since" timestamps, owned by the controller
+   * across ticks (in memory). observe() updates it from this tick's delivered
+   * speed vs the fill threshold (set when an order goes under-filled, cleared when
+   * it fills) and stamps each owned order's `under_filled_since`. The controller
+   * also resets an entry on a walk-up so each new price gets a fresh grace window.
+   * Drives the walk-up grace period in decide().
+   */
+  readonly underFilledSinceById?: Map<string, number>;
   readonly runMode: RunMode;
   /** Break-even hashprice in BTC/price-unit/day, or null when unavailable. */
   readonly hashprice?: number | null;
@@ -131,6 +140,26 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     balanceBtc = availableBtcFromBalance(bal);
   } catch {
     /* leave balanceBtc null on failure */
+  }
+
+  // Walk-up grace bookkeeping: stamp each owned order with when it most recently
+  // went under-filled (delivered below target x min-fill%), tracked across ticks
+  // in the controller-owned map. Set on the transition into under-fill, cleared
+  // when it reaches the threshold (the controller also resets it on a walk-up).
+  // decide() uses this to hold off climbing the price until the grace elapses.
+  const graceMap = deps.underFilledSinceById;
+  if (graceMap) {
+    const fillThreshold = (config.target_speed_units * (config.min_fill_pct ?? 100)) / 100;
+    const ownedIds = new Set(owned.map((o) => o.order_id));
+    for (const id of [...graceMap.keys()]) if (!ownedIds.has(id)) graceMap.delete(id);
+    owned = owned.map((o) => {
+      if (fillThreshold <= 0 || o.accepted_speed_units >= fillThreshold) {
+        graceMap.delete(o.order_id);
+        return { ...o, under_filled_since: null };
+      }
+      if (!graceMap.has(o.order_id)) graceMap.set(o.order_id, tickAt);
+      return { ...o, under_filled_since: graceMap.get(o.order_id) ?? null };
+    });
   }
 
   // Blind to our own orders -> force a no-op tick.

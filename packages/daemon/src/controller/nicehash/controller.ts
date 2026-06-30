@@ -68,6 +68,15 @@ export interface NiceHashControllerDeps {
 }
 
 export class NiceHashController {
+  /**
+   * Per-order "under-filled since" timestamps for the walk-up grace period, kept
+   * in memory across ticks. observe() sets/clears entries from each tick's
+   * delivered speed; persist() resets an entry on a walk-up so each new price gets
+   * a fresh grace window. Resets on restart (a brief grace re-applies, which is
+   * the safe direction).
+   */
+  private readonly underFilledSince = new Map<string, number>();
+
   constructor(private readonly deps: NiceHashControllerDeps) {}
 
   async tick(): Promise<NiceHashTickResult> {
@@ -92,6 +101,7 @@ export class NiceHashController {
       knownOrderIds,
       lastPriceDecreaseById,
       lastPriceChangeById,
+      underFilledSinceById: this.underFilledSince,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
@@ -169,8 +179,11 @@ export class NiceHashController {
         if (p.new_price_btc < p.old_price_btc) {
           await this.deps.ledger.setLastPriceDecrease(p.order_id, now(), p.new_price_btc);
         } else if (p.new_price_btc > p.old_price_btc) {
-          // Upward move: no decrease cooldown, but reset the walk-up settle window.
+          // Upward move: no decrease cooldown, but reset the walk-up grace window
+          // so the new (higher) price gets the full grace to attract miners before
+          // we climb again.
           await this.deps.ledger.setLastPriceChange(p.order_id, now(), p.new_price_btc);
+          this.underFilledSince.set(p.order_id, now());
         }
         return;
       case 'CANCEL_ORDER':

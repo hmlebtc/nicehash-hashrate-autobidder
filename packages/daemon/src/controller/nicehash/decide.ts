@@ -203,6 +203,19 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const walkUpEnabled = config.walk_up_enabled ?? false;
   const fillThreshold = (effectiveTarget * minFillPct) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
+
+  // Walk-up grace: only chase the price up once the order has been continuously
+  // under-filled for at least this long, so a freshly placed or just-repriced
+  // order gets time to attract miners before escalating (and walk-ups are paced -
+  // the controller resets the timer on each upward move). 0 disables it. Tracked
+  // across ticks via `under_filled_since`. Only gates real fill-chasing walk-ups;
+  // pure floor-tracking (walk-up off) still climbs to the floor immediately.
+  const graceMs = Math.max(0, (config.walk_up_grace_seconds ?? 0) * 1000);
+  const gracePassed =
+    graceMs === 0 ||
+    (primary.under_filled_since != null && state.tick_at - primary.under_filled_since >= graceMs);
+  const wantWalkUp = walkUpEnabled ? underFilled && gracePassed : true;
+
   const cur = primary.price_btc;
   const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);
 
@@ -212,9 +225,10 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     // Overpaying above the floor: walk down toward it (filled or not).
     editTo = walkDownTo;
     mode = 'walk down to floor';
-  } else if (targetPrice - cur >= editDeadband && (underFilled || !walkUpEnabled)) {
-    // Below the floor: climb to it when under-filled (or always, if walk-up is
-    // off). When filled we skip this - hold the cheaper bid, don't chase up.
+  } else if (targetPrice - cur >= editDeadband && wantWalkUp) {
+    // Below the floor: climb to it when under-filled and the grace has elapsed
+    // (or always, if walk-up is off). When filled we skip this - hold the cheaper
+    // bid, don't chase up.
     editTo = Math.min(effectiveCap, targetPrice);
     mode = 'walk up to floor';
   }
