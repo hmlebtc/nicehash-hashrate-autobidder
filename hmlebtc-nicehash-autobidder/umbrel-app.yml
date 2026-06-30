@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.11"
+version: "0.6.12"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.12 - correct chart limit + readable delivered line.
+
+  Fixes the hashrate chart showing a limit line of ~2-4 EH when your order's
+  limit was much smaller (e.g. 0.075). The bot was treating every finished order
+  in its history as still "owned" and summing all their limits into the chart;
+  ownership is now restricted to the live order, so the limit reflects your actual
+  order (and escrow/runway are no longer inflated). This also cuts a pile of
+  redundant per-tick API calls.
+
+  The hashrate chart now gives delivered its own left axis (autoscaled) with the
+  order limit/target/fill-threshold as references on a right axis, so a
+  small-but-real delivered amount is readable instead of being flattened against
+  zero by the limit line.
+
   v0.6.11 - delivered hashrate tracks the real fill + dashboard polish.
 
   The dashboard showed "delivering 0.00 EH/s" for an order NiceHash clearly showed
