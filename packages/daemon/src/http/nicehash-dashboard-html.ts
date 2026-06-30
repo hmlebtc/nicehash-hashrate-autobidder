@@ -495,8 +495,15 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       : span <= 24 * 3600_000
         ? { hour: '2-digit', minute: '2-digit' }
         : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    [xmin, (xmin + xmax) / 2, xmax].forEach(function (t, idx) {
-      var lx = X(t); ctx.textAlign = idx === 0 ? 'left' : idx === 2 ? 'right' : 'center';
+    // One label when the window holds a single timestamp; otherwise left/mid/right,
+    // skipping any that would overlap a already-placed one (sparse short windows).
+    var labelTs = xmax === xmin ? [xmin] : [xmin, (xmin + xmax) / 2, xmax];
+    var placedX = [];
+    labelTs.forEach(function (t, idx) {
+      var lx = X(t);
+      if (placedX.some(function (px) { return Math.abs(px - lx) < 44; })) return;
+      placedX.push(lx);
+      ctx.textAlign = labelTs.length === 1 ? 'center' : idx === 0 ? 'left' : idx === labelTs.length - 1 ? 'right' : 'center';
       ctx.fillText(new Date(t).toLocaleString([], tFmt), lx, padT + h + 14);
     });
     ctx.textAlign = 'left';
@@ -508,13 +515,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       var Yf = Y;
       ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6;
       ctx.setLineDash(s.dashed ? [4, 3] : []);
-      ctx.beginPath(); var started = false;
+      ctx.beginPath(); var started = false; var pts = [];
       s.points.forEach(function (pt) {
         if (pt.y == null || !isFinite(pt.y)) { started = false; return; }
         var px = X(pt.x), py = Yf(pt.y);
+        pts.push([px, py]);
         if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
       });
       ctx.stroke();
+      // Sparse windows (a handful of ticks) can't form a visible line - a single
+      // sample draws nothing - so mark each point with a dot when few enough.
+      if (pts.length > 0 && pts.length <= 50) {
+        ctx.setLineDash([]); ctx.fillStyle = s.color;
+        pts.forEach(function (p) { ctx.beginPath(); ctx.arc(p[0], p[1], 2, 0, 6.283); ctx.fill(); });
+      }
     });
     ctx.setLineDash([]);
     (opts.markers || []).forEach(function (m) {

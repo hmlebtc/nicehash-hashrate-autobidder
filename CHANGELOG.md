@@ -2,6 +2,15 @@
 
 ## 2026-06-30
 
+### `[Fix]` Sparse chart windows render visibly
+
+On the very short ranges (30s/1m) at a coarse tick rate there are only 1–2 data
+points, and a single point can't form a visible line — so those charts looked
+empty. Each series now also draws a dot at every point when the window holds few
+samples, so a 1-tick window shows its values instead of a blank chart, and the
+degenerate x-axis (single timestamp) no longer overprints its labels. (For dense
+short-window charts, lower "Tick seconds" so more points fall in the window.)
+
 ### `[UI]` Short chart ranges: 30s / 1m / 5m / 10m / 15m
 
 Added sub-30-minute range options for watching the loop closely at fast tick
