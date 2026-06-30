@@ -70,6 +70,14 @@ export interface OwnedOrderSnapshot {
   readonly payed_amount_btc: number;
   /** Currently delivered speed (display units); 0 when not delivering. */
   readonly accepted_speed_units: number;
+  /**
+   * Mining rigs currently delivering to this order (NiceHash's "Miners"
+   * column), recovered from our order's own order-book row. 0 / undefined when
+   * none. This is the reliable fill signal - `accepted_speed_units` from the
+   * myOrders/detail endpoints under-reports, so the order book is cross-referenced
+   * in `observe()` for both fields.
+   */
+  readonly rigs_count?: number;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */

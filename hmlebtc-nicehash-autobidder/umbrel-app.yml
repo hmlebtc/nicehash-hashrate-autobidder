@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.10"
+version: "0.6.11"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.11 - delivered hashrate tracks the real fill + dashboard polish.
+
+  The dashboard showed "delivering 0.00 EH/s" for an order NiceHash clearly showed
+  as filled: the myOrders/detail endpoints under-report delivered speed. The bidder
+  now reads your order's own row in the public order book (the value NiceHash shows)
+  and takes the larger reading, so delivered speed and a new miner count track the
+  real fill. The orders table gains a Miners column.
+
+  The "Uptime" tile now shows fill uptime - of the ticks an order was active, the %
+  it was actually delivering at/above your fill threshold - instead of API
+  reachability (which always read ~100%). Tile values are colour-matched to their
+  chart lines (current bid/delivered amber, marginal purple, hashprice slate,
+  dynamic cap green). The app icon now matches the dashboard's browser-tab favicon.
+
   v0.6.10 - chart stretch handle + clearer line colours.
 
   Each chart now has a drag handle below it to stretch it taller or shorter, and

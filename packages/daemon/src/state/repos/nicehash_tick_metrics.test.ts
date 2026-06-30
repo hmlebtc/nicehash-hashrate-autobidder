@@ -73,6 +73,23 @@ describe('NiceHashMetricsRepo', () => {
     expect(s.last_ts).toBe(3000);
   });
 
+  it('computes fill uptime: filled ticks / active ticks, ignoring no-order ticks', async () => {
+    await repo.record(row(1000, { owned_count: 1, accepted_speed_units: 0.9, floor_units: 0.5 })); // active + filled
+    await repo.record(row(2000, { owned_count: 1, accepted_speed_units: 0.1, floor_units: 0.5 })); // active + under-filled
+    await repo.record(row(3000, { owned_count: 1, accepted_speed_units: 0, floor_units: 0.5 })); // active + zero draw
+    await repo.record(row(4000, { owned_count: 0, accepted_speed_units: 0, floor_units: 0.5 })); // no order -> not active
+    const s = await repo.summary(0);
+    expect(s.active_samples).toBe(3); // ticks 1000-3000
+    expect(s.fill_uptime_pct).toBeCloseTo((1 / 3) * 100, 6); // only tick 1000 met the floor
+  });
+
+  it('fill uptime is null when no order was ever active in the window', async () => {
+    await repo.record(row(1000, { owned_count: 0 }));
+    const s = await repo.summary(0);
+    expect(s.active_samples).toBe(0);
+    expect(s.fill_uptime_pct).toBeNull();
+  });
+
   it('prunes rows older than the cutoff', async () => {
     await repo.record(row(1000));
     await repo.record(row(2000));

@@ -7,6 +7,7 @@ import {
   competingOrdersFromBook,
   marketAnchorFromBook,
   ownedOrderFromWire,
+  ownOrderFillsFromBook,
   reconcileOrders,
 } from './wire.js';
 
@@ -53,6 +54,32 @@ describe('marketAnchorFromBook', () => {
     const a = marketAnchorFromBook(BOOK, 4, new Set(['mine']));
     expect(a.anchor_price_btc).toBe(0.0102);
     expect(a.thin).toBe(false);
+  });
+});
+
+describe('ownOrderFillsFromBook', () => {
+  // Our order resting in the public book with a real draw + miner count, the
+  // value NiceHash shows even though myOrders/detail report acceptedCurrentSpeed 0.
+  const FILLED_BOOK: OrderBookResponse = {
+    stats: {
+      BTC: {
+        orders: [
+          { id: 'a', type: 'STANDARD', price: '0.5', limit: '5', acceptedSpeed: '2', rigsCount: 50, alive: true },
+          { id: 'mine', type: 'STANDARD', price: '0.4528', limit: '4', acceptedSpeed: '0.0005', rigsCount: 137, alive: true },
+        ],
+      },
+    },
+  };
+
+  it('recovers our order fill (speed + miners) from its own book row', () => {
+    const fills = ownOrderFillsFromBook(FILLED_BOOK, new Set(['mine']), 'BTC');
+    expect(fills.size).toBe(1);
+    expect(fills.get('mine')).toEqual({ accepted_speed_units: 0.0005, rigs_count: 137 });
+  });
+
+  it('ignores ids we do not own and unknown currency buckets', () => {
+    expect(ownOrderFillsFromBook(FILLED_BOOK, new Set(['nope']), 'BTC').size).toBe(0);
+    expect(ownOrderFillsFromBook(FILLED_BOOK, new Set(['mine']), 'EU').size).toBe(0);
   });
 });
 

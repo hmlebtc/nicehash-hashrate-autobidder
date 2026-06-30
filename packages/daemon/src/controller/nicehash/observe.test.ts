@@ -128,6 +128,31 @@ describe('observe', () => {
     expect(svc.getOrder).toHaveBeenCalledWith('mine');
   });
 
+  it('recovers delivered speed + miner count from our order-book row when the list/detail report 0', async () => {
+    // myOrders + detail both read 0, but our order is being filled in the public
+    // book (the value NiceHash shows the operator). observe should surface it.
+    const filledBook = {
+      stats: {
+        BTC: {
+          totalSpeed: '100',
+          displayMarketFactor: 'PH',
+          displayPriceFactor: 'EH',
+          orders: [
+            { id: 'mine', price: '0.0102', limit: '4', acceptedSpeed: '0.0005', rigsCount: 137, alive: true },
+            { id: 'rival', price: '0.0102', limit: '5', acceptedSpeed: '0', alive: true },
+          ],
+        },
+      },
+    };
+    const svc = service({
+      getOrderBook: vi.fn(async () => filledBook) as unknown as NiceHashService['getOrderBook'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.accepted_speed_units).toBe(0.0005);
+    expect(mine?.rigs_count).toBe(137);
+  });
+
   it('keeps the list-reported speed when the order-detail read fails', async () => {
     const svc = service({
       getOrder: vi.fn(async () => {

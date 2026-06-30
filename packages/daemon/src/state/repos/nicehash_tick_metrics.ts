@@ -7,7 +7,7 @@
  * pruned by the configurable retention window.
  */
 
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 
 import type { Database, NiceHashTickMetricsTable } from '../types.js';
 
@@ -16,7 +16,18 @@ export type NiceHashMetricRow = NiceHashTickMetricsTable;
 /** Aggregate over a window, for the summary tiles. NULLs are ignored by AVG. */
 export interface NiceHashMetricsSummary {
   readonly samples: number;
+  /** % of ticks where the NiceHash API (order book) was reachable. */
   readonly uptime_pct: number | null;
+  /**
+   * Fill uptime: of the ticks where an order was *active* (one existed on the
+   * account), the % where it was actually *filled* - delivering at/above the
+   * fill threshold (target × min-fill %). null when no order was active in the
+   * window. This is the "is my order winning hashrate" health signal, distinct
+   * from API uptime.
+   */
+  readonly fill_uptime_pct: number | null;
+  /** Ticks in the window where an order existed (the fill-uptime denominator). */
+  readonly active_samples: number;
   readonly avg_accepted_units: number | null;
   readonly avg_limit_units: number | null;
   readonly avg_our_price_btc: number | null;
@@ -87,6 +98,13 @@ export class NiceHashMetricsRepo {
       .select((eb) => [
         eb.fn.countAll<number>().as('samples'),
         eb.fn.avg<number | null>('api_ok').as('uptime_frac'),
+        // Fill uptime: ticks with an order present (active) vs of those the ones
+        // delivering at/above the fill threshold (floor_units = target × min-fill%).
+        // floor_units 0/null (degenerate config) requires any positive delivery.
+        sql<number>`sum(case when owned_count > 0 then 1 else 0 end)`.as('active_samples'),
+        sql<number>`sum(case when owned_count > 0 and accepted_speed_units > 0 and accepted_speed_units >= coalesce(floor_units, 0) then 1 else 0 end)`.as(
+          'filled_samples',
+        ),
         eb.fn.avg<number | null>('accepted_speed_units').as('avg_accepted_units'),
         eb.fn.avg<number | null>('limit_units').as('avg_limit_units'),
         eb.fn.avg<number | null>('our_price_btc').as('avg_our_price_btc'),
@@ -98,9 +116,13 @@ export class NiceHashMetricsRepo {
       ])
       .executeTakeFirst();
     const uptimeFrac = row?.uptime_frac ?? null;
+    const activeSamples = Number(row?.active_samples ?? 0);
+    const filledSamples = Number(row?.filled_samples ?? 0);
     return {
       samples: Number(row?.samples ?? 0),
       uptime_pct: uptimeFrac === null ? null : Number(uptimeFrac) * 100,
+      fill_uptime_pct: activeSamples > 0 ? (filledSamples / activeSamples) * 100 : null,
+      active_samples: activeSamples,
       avg_accepted_units: nn(row?.avg_accepted_units),
       avg_limit_units: nn(row?.avg_limit_units),
       avg_our_price_btc: nn(row?.avg_our_price_btc),
