@@ -2,6 +2,15 @@
 
 ## 2026-06-30
 
+### `[UI]` Hashrate chart: delivered gets its own axis
+
+The hashrate chart now plots delivered on the left axis (autoscaled to itself)
+while the order limit/cap, target, and fill threshold are references on a new
+right axis. Previously the large limit line flattened the delivered curve against
+zero, so a barely-filled order looked like a flat line; delivered is now readable
+regardless of how small it is relative to the cap. Axis ticks use adaptive
+precision so small fills aren't all shown as "0.00".
+
 ### `[Fix]` Delivered hashrate + miner count now reflect the live order
 
 The `myOrders` list and per-order detail endpoints under-report delivered speed
