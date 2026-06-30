@@ -431,7 +431,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     canvas.width = cssW * dpr; canvas.height = cssH * dpr;
     var ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    var padL = 60, padR = opts.rightAxis ? 56 : (opts.rightLabels ? 66 : 12), padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
+    var padL = 60, padR = opts.rightLabels ? 66 : (opts.rightAxis ? 56 : 12), padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
     // Series can opt onto a secondary right-hand Y axis (s.axis === 'right'); the
     // left axis then autoscales to the left series only, so a large reference line
     // (e.g. the order limit/cap) no longer flattens a small primary line (delivered).
@@ -474,7 +474,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + w, yy); ctx.stroke();
       ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
       ctx.fillText(opts.fmtY ? opts.fmtY(val) : val.toFixed(2), 4, yy + 3);
-      if (opts.rightAxis) {
+      if (opts.rightAxis && !opts.rightLabels) {
         var rval = rmax - (rmax - rmin) * (i / 4);
         ctx.textAlign = 'right'; ctx.fillStyle = '#6b7280';
         ctx.fillText(opts.fmtY ? opts.fmtY(rval) : rval.toFixed(2), cssW - 4, yy + 3);
@@ -518,7 +518,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         var lp = null;
         for (var k = s.points.length - 1; k >= 0; k--) { var q = s.points[k]; if (q && q.y != null && isFinite(q.y)) { lp = q; break; } }
         if (!lp) return;
-        var ly = Y(lp.y);
+        var ly = (s.axis === 'right' ? Yr : Y)(lp.y);
         // nudge apart from any label already placed at nearly the same height
         while (placed.some(function (py) { return Math.abs(py - ly) < 10; })) ly += 10;
         placed.push(ly);
@@ -624,7 +624,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
       { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
     ];
-    drawChart($('hashChart'), hash, { yMinZero: true, rightAxis: true, fmtY: fmtAxis });
+    drawChart($('hashChart'), hash, { yMinZero: true, rightAxis: true, rightLabels: true, fmtY: fmtAxis });
 
     var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
     var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });
@@ -900,7 +900,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
-      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled, raise the bid to just above the next filled order on the book (the next tier with miners) + your overpay — climbing tier by tier, every tick (raises are unconstrained on NiceHash), until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'] ] },
+      ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled (and past the grace period below), raise the bid toward the floor + your overpay to win hashrate, until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'],
+      ['walkUpGraceSeconds', 'Walk-up grace (seconds)', 'number', 'How long delivered hashrate must stay below your minimum fill before the bidder starts walking the price up. Gives a freshly placed or just-repriced order time to attract miners before escalating, and paces walk-ups (the timer resets after each raise). 0 = walk up as soon as under-filled. e.g. 180.'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],

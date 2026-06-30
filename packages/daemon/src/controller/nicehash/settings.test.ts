@@ -41,6 +41,7 @@ describe('settingsFromEnv', () => {
     expect(s.poolFeePct).toBe(1);
     expect(s.dynamicCapEnabled).toBe(true);
     expect(s.dynamicCapBufferBtc).toBe(0);
+    expect(s.walkUpGraceSeconds).toBe(180);
     expect(s.logRetentionDays).toBe(30);
   });
 
@@ -185,6 +186,12 @@ describe('toControllerConfig', () => {
     expect(cfg.min_order_amount_btc).toBe(0.001);
     expect(cfg.min_speed_limit_units).toBe(0.1);
     expect(cfg.price_down_step_btc).toBe(0.1); // absolute value of the negative step
+    expect(cfg.walk_up_grace_seconds).toBe(settings.walkUpGraceSeconds);
+  });
+
+  it('coerces the walk-up grace period', () => {
+    expect(toControllerConfig({ ...base(), walkUpGraceSeconds: 0 }, algo, 'p').walk_up_grace_seconds).toBe(0);
+    expect(mergeSettings(base(), { walkUpGraceSeconds: '240' }).walkUpGraceSeconds).toBe(240);
   });
 
   it('maps the edit-price deadband and the hashprice cap (0 disables)', () => {

@@ -58,6 +58,12 @@ export interface NiceHashSettings {
    * filled or a cap binds. When false, pure floor-tracking. Default true.
    */
   readonly walkUpEnabled: boolean;
+  /**
+   * Seconds the order must stay under-filled before the bidder walks the price up.
+   * Gives a fresh/just-repriced order time to attract miners before escalating,
+   * and paces walk-ups. 0 = climb as soon as under-filled. Default 180.
+   */
+  readonly walkUpGraceSeconds: number;
   // --- Fees / break-even ---
   /** NiceHash marketplace fee on the order, percent (e.g. 3). */
   readonly niceHashFeePct: number;
@@ -155,6 +161,7 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
+    walkUpGraceSeconds: n(env, 'NICEHASH_WALK_UP_GRACE_SECONDS', 180),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
     dynamicCapEnabled: b(env, 'NICEHASH_DYNAMIC_CAP', true),
@@ -212,6 +219,7 @@ export function toControllerConfig(
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
     walk_up_enabled: settings.walkUpEnabled,
+    walk_up_grace_seconds: settings.walkUpGraceSeconds,
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
@@ -287,6 +295,7 @@ export function mergeSettings(
     editPriceDeadbandPct: num('editPriceDeadbandPct'),
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
+    walkUpGraceSeconds: num('walkUpGraceSeconds'),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
     dynamicCapEnabled: bool('dynamicCapEnabled'),

@@ -78,6 +78,16 @@ export interface OwnedOrderSnapshot {
    * in `observe()` for both fields.
    */
   readonly rigs_count?: number;
+  /**
+   * Epoch ms when the order most recently became (and has since stayed)
+   * under-filled - delivered below the fill threshold - or null when it is
+   * currently filled. Reset whenever the bidder walks the price up, so each new
+   * price gets a fresh grace window. Feeds the walk-up grace period
+   * ({@link NiceHashControllerConfig.walk_up_grace_seconds}): the bidder waits
+   * this long under-filled before climbing. Tracked across ticks by the
+   * controller (in memory), populated in `observe()`.
+   */
+  readonly under_filled_since?: number | null;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */
@@ -139,6 +149,15 @@ export interface NiceHashControllerConfig {
    * escalation). Default false.
    */
   readonly walk_up_enabled?: boolean;
+  /**
+   * Grace period (seconds) the order must be continuously under-filled before the
+   * bidder walks the price up. Gives a freshly placed or just-repriced order time
+   * to attract miners before escalating, and paces walk-ups (the timer resets on
+   * each upward move). 0 disables the grace (walk up as soon as under-filled).
+   * Only affects walk-ups (walk_up_enabled); pure floor-tracking ignores it.
+   * Default 0.
+   */
+  readonly walk_up_grace_seconds?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */

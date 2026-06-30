@@ -153,6 +153,39 @@ describe('observe', () => {
     expect(mine?.rigs_count).toBe(137);
   });
 
+  it('stamps under_filled_since while under-filled and clears it once filled', async () => {
+    const map = new Map<string, number>();
+    // 'mine' delivers 0 (< threshold target 4 x 100%) -> stamp under_filled_since.
+    const s1 = await observe({ service: service(), ...base, underFilledSinceById: map, now: () => 1000 });
+    expect(s1.owned_orders.find((o) => o.order_id === 'mine')?.under_filled_since).toBe(1000);
+    expect(map.get('mine')).toBe(1000);
+
+    // Still under-filled a later tick -> keep the original (continuous) timestamp.
+    const s2 = await observe({ service: service(), ...base, underFilledSinceById: map, now: () => 5000 });
+    expect(s2.owned_orders.find((o) => o.order_id === 'mine')?.under_filled_since).toBe(1000);
+
+    // Now the order book shows it filled (>= threshold) -> cleared.
+    const filledBook = {
+      stats: {
+        BTC: {
+          totalSpeed: '100',
+          displayMarketFactor: 'PH',
+          displayPriceFactor: 'EH',
+          orders: [
+            { id: 'mine', price: '0.0102', limit: '4', acceptedSpeed: '4', alive: true },
+            { id: 'rival', price: '0.0102', limit: '5', acceptedSpeed: '0', alive: true },
+          ],
+        },
+      },
+    };
+    const svc = service({
+      getOrderBook: vi.fn(async () => filledBook) as unknown as NiceHashService['getOrderBook'],
+    });
+    const s3 = await observe({ service: svc, ...base, underFilledSinceById: map, now: () => 9000 });
+    expect(s3.owned_orders.find((o) => o.order_id === 'mine')?.under_filled_since).toBeNull();
+    expect(map.has('mine')).toBe(false);
+  });
+
   it('keeps the list-reported speed when the order-detail read fails', async () => {
     const svc = service({
       getOrder: vi.fn(async () => {

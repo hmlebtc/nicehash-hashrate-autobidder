@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.12"
+version: "0.6.13"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,18 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.13 - walk-up grace period + clearer chart labels.
+
+  New "Walk-up grace (seconds)" setting (default 180): the bidder waits until
+  delivered hashrate has stayed below your minimum fill for that long before it
+  starts walking the price up, so a freshly placed or just-repriced order gets
+  time to attract miners before escalating (and walk-ups are paced - the timer
+  resets after each raise). 0 = walk up as soon as under-filled. Walk-down is
+  unaffected.
+
+  The hashrate chart now labels each line's current value at the right edge in its
+  colour, so the order limit reads its real number directly instead of off the axis.
+
   v0.6.12 - correct chart limit + readable delivered line.
 
   Fixes the hashrate chart showing a limit line of ~2-4 EH when your order's
