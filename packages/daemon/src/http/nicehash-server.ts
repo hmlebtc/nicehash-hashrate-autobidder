@@ -44,8 +44,12 @@ export interface NiceHashHttpDeps {
   /** Controller config, or a getter resolved per request (live config edits). */
   readonly config: NiceHashControllerConfig | (() => NiceHashControllerConfig);
   readonly buildNumber: number;
-  /** Seconds between ticks - surfaced so the UI can show the next-tick countdown. */
-  readonly tickSeconds: number;
+  /**
+   * Seconds between ticks - surfaced so the UI can show the next-tick countdown.
+   * A getter is resolved per request so a live "Tick seconds" edit is reflected
+   * in the countdown without a restart (the loop already re-reads it each cycle).
+   */
+  readonly tickSeconds: number | (() => number);
   /** Time-series + history sinks (charts, tiles, P&L, History page). */
   readonly metrics?: NiceHashMetricsRepo;
   readonly events?: NiceHashEventsRepo;
@@ -104,6 +108,7 @@ function outcomeView(o: TickOutcome): { kind: string; outcome: string; detail: s
 
 function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): unknown {
   const cfg = typeof deps.config === 'function' ? deps.config() : deps.config;
+  const tickSeconds = typeof deps.tickSeconds === 'function' ? deps.tickSeconds() : deps.tickSeconds;
   const configView = {
     algorithm: cfg.algorithm,
     market: cfg.market,
@@ -123,7 +128,7 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     return {
       run_mode: deps.store.getRunMode(),
       tick_at: null,
-      tick_seconds: deps.tickSeconds,
+      tick_seconds: tickSeconds,
       build: deps.buildNumber,
       config: configView,
       market: null,
@@ -138,7 +143,7 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
   return {
     run_mode: s.run_mode,
     tick_at: s.tick_at,
-    tick_seconds: deps.tickSeconds,
+    tick_seconds: tickSeconds,
     build: deps.buildNumber,
     config: configView,
     // Only the fields the dashboard needs - omit the full filled-price ladder.

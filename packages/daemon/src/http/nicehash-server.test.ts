@@ -145,6 +145,20 @@ describe('NiceHash HTTP server', () => {
     expect(body.outcomes[0]).toEqual({ kind: 'CREATE_ORDER', outcome: 'BLOCKED', detail: 'RUN_MODE_NOT_LIVE' });
   });
 
+  it('GET /api/nicehash/status reflects a live tickSeconds getter (no restart)', async () => {
+    let tick = 60;
+    const app2 = await createNiceHashHttpServer({ ...deps(store, settings.repo), tickSeconds: () => tick });
+    try {
+      let body = (await app2.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
+      expect(body.tick_seconds).toBe(60);
+      tick = 30; // simulate a live "Tick seconds" config edit
+      body = (await app2.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
+      expect(body.tick_seconds).toBe(30);
+    } finally {
+      await app2.close();
+    }
+  });
+
   it('POST /api/nicehash/run-mode updates the store and persists', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/nicehash/run-mode', payload: { mode: 'PAUSED' } });
     expect(res.statusCode).toBe(200);

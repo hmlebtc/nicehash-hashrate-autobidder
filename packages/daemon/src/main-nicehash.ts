@@ -226,7 +226,10 @@ async function main(): Promise<void> {
     settingsRepo,
     config: () => config,
     buildNumber: readBuildNumber(),
-    tickSeconds: settings.tickSeconds,
+    // Getter so a live "Tick seconds" edit shows in the dashboard countdown
+    // without a restart (applyLiveSettings reassigns `settings` each cycle, and
+    // the loop sleep already uses it).
+    tickSeconds: () => settings.tickSeconds,
     metrics: metricsRepo,
     events: eventsRepo,
     decisionLog: decisionLogRepo,
