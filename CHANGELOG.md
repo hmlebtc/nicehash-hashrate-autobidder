@@ -2,6 +2,21 @@
 
 ## 2026-06-30
 
+### `[UI]` 30m + 1h chart ranges
+
+The range bar gains 30m and 1h options alongside the existing 3h–All, for a
+tighter view of recent activity. Charts, summary tiles, and P&L all honor them.
+
+### `[UI]` Price chart focuses on the bid/marginal action
+
+The price chart's Y scale now follows the action — our bid, the marginal, and the
+binding dynamic cap — instead of being stretched by lines far above it. Hashprice
+is removed from this chart (it sits well above the action and duplicates the green
+dynamic-cap line + the "Hashprice (now)" tile); the hard cap and the wildly-
+swinging next-filled tier are kept but no longer set the scale (they show with
+their value labels and clip at the edges). Net effect: the bid/marginal band fills
+the chart instead of being squashed into a sliver.
+
 ### `[Fix]` Next-tick countdown follows a live "Tick seconds" change
 
 The dashboard's next-decision countdown was wired to the tick interval captured

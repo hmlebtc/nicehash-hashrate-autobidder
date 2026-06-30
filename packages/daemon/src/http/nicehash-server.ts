@@ -64,6 +64,8 @@ const RUN_MODES: readonly RunMode[] = ['DRY_RUN', 'LIVE', 'PAUSED'];
 
 /** Chart/summary time-range windows. */
 const RANGE_MS: Record<string, number> = {
+  '30m': 30 * 60_000,
+  '1h': 3600_000,
   '3h': 3 * 3600_000,
   '6h': 6 * 3600_000,
   '12h': 12 * 3600_000,
