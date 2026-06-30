@@ -2,6 +2,15 @@
 
 ## 2026-06-30
 
+### `[Fix]` Next-tick countdown follows a live "Tick seconds" change
+
+The dashboard's next-decision countdown was wired to the tick interval captured
+once at boot, so changing "Tick seconds" live (e.g. 60 → 30) left the countdown
+still showing the old period even though the control loop had already switched.
+The HTTP layer now reads the interval live (a getter, like the config), so the
+countdown matches the saved value within one refresh. The actual bidding cadence
+was already correct — this only fixes the display.
+
 ### `[UI]` Faster dashboard refresh
 
 The dashboard now polls the status tiles every 3s (was 5s) and the hashrate/price
