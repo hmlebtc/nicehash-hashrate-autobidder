@@ -185,11 +185,14 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </div>
 
     <div class="rangebar" id="rangebar">
-      <button data-range="30m">30m</button><button data-range="1h">1h</button>
-      <button data-range="3h">3h</button><button data-range="6h">6h</button>
-      <button data-range="12h">12h</button><button data-range="24h" class="active">24h</button>
-      <button data-range="1w">1w</button><button data-range="1m">1m</button>
-      <button data-range="1y">1y</button><button data-range="all">All</button>
+      <button data-range="30s">30s</button><button data-range="1m">1m</button>
+      <button data-range="5m">5m</button><button data-range="10m">10m</button>
+      <button data-range="15m">15m</button><button data-range="30m">30m</button>
+      <button data-range="1h">1h</button><button data-range="3h">3h</button>
+      <button data-range="6h">6h</button><button data-range="12h">12h</button>
+      <button data-range="24h" class="active">24h</button><button data-range="1w">1w</button>
+      <button data-range="30d">30d</button><button data-range="1y">1y</button>
+      <button data-range="all">All</button>
     </div>
 
     <div class="grid" id="tiles"></div>
@@ -484,9 +487,17 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ctx.fillText(opts.fmtY ? opts.fmtY(val) : val.toFixed(2), 4, yy + 3);
     }
     ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
+    // Adaptive x-axis label resolution: seconds for short windows (the new
+    // 30s..15m ranges), HH:MM intraday, and month/day beyond a day.
+    var span = xmax - xmin;
+    var tFmt = span <= 15 * 60_000
+      ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+      : span <= 24 * 3600_000
+        ? { hour: '2-digit', minute: '2-digit' }
+        : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     [xmin, (xmin + xmax) / 2, xmax].forEach(function (t, idx) {
       var lx = X(t); ctx.textAlign = idx === 0 ? 'left' : idx === 2 ? 'right' : 'center';
-      ctx.fillText(new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), lx, padT + h + 14);
+      ctx.fillText(new Date(t).toLocaleString([], tFmt), lx, padT + h + 14);
     });
     ctx.textAlign = 'left';
     // Clip data lines + markers to the plot box so a zoomed/panned view never

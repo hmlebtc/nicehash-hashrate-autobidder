@@ -2,6 +2,14 @@
 
 ## 2026-06-30
 
+### `[UI]` Short chart ranges: 30s / 1m / 5m / 10m / 15m
+
+Added sub-30-minute range options for watching the loop closely at fast tick
+rates. The chart x-axis now shows seconds on these short windows. Note `m` in the
+range bar now means minutes (1m–30m); the month window is relabelled `30d` to free
+that up. (Very short windows show only as many points as ticks have occurred — at
+a 30s tick, 30s/1m are necessarily sparse.)
+
 ### `[UI]` 30m + 1h chart ranges
 
 The range bar gains 30m and 1h options alongside the existing 3h–All, for a
