@@ -2,6 +2,12 @@
 
 ## 2026-06-30
 
+### `[UI]` Faster dashboard refresh
+
+The dashboard now polls the status tiles every 3s (was 5s) and the hashrate/price
+charts every 10s (was 30s), so a finished tick shows up sooner. (New data points
+are still produced once per control-loop tick — the "Tick seconds" setting.)
+
 ### `[UI]` Hashrate chart back to one axis (limit reads in sync with delivered)
 
 With the limit now correctly small (after the v0.6.12 metrics fix) the dual-axis

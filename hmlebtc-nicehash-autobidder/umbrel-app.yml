@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.14"
+version: "0.6.15"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,13 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.15 - faster dashboard refresh.
+
+  The status tiles now refresh every 3s (was 5s) and the charts every 10s (was
+  30s), so a finished tick shows on the dashboard sooner. New data points are
+  still produced once per control-loop tick (the "Tick seconds" setting), so lower
+  that if you want the bot to act/record more often.
+
   v0.6.14 - hashrate chart reads in sync.
 
   The hashrate chart is back to a single shared axis. Now that the limit is

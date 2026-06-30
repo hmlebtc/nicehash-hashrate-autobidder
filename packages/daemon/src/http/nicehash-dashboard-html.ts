@@ -1007,9 +1007,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   syncToggles();
   Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === UI.range); });
   refreshStatus(); loadMetrics(); loadSummary();
-  setInterval(refreshStatus, 5000);
+  // Poll cadence. The underlying data only changes once per control-loop tick
+  // (the "Tick seconds" setting), so these mainly bound how soon a finished tick
+  // shows up: status/tiles every 3s, charts every 10s.
+  setInterval(refreshStatus, 3000);
   setInterval(updateTickCountdown, 1000);
-  setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); } }, 30000);
+  setInterval(function () { if ($('page-status').classList.contains('active')) { loadMetrics(); } }, 10000);
   window.addEventListener('resize', renderCharts);
 })();
 </script>
