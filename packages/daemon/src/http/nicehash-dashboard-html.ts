@@ -185,6 +185,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </div>
 
     <div class="rangebar" id="rangebar">
+      <button data-range="30m">30m</button><button data-range="1h">1h</button>
       <button data-range="3h">3h</button><button data-range="6h">6h</button>
       <button data-range="12h">12h</button><button data-range="24h" class="active">24h</button>
       <button data-range="1w">1w</button><button data-range="1m">1m</button>
@@ -214,7 +215,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           <span><i class="swatch" style="background:#fb923c"></i>our bid</span>
           <span><i class="swatch" style="background:#a855f7"></i>marginal (purple)</span>
           <span><i class="swatch" style="background:#38bdf8"></i>next filled tier</span>
-          <span><i class="swatch" style="background:#94a3b8"></i>hashprice</span>
           <span><i class="swatch" style="background:#34d399"></i>dynamic cap</span>
           <span><i class="swatch" style="background:#f87171"></i>hard cap</span>
           <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
@@ -436,14 +436,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // order limit/target) contributes only its CURRENT value to the autoscale, not
     // its whole history - so a stale spike in a reference (e.g. the pre-fix limit
     // that briefly recorded ~2) cannot blow up the axis and desync it from the
-    // primary line. Reference lines still draw fully; any stale portion just clips
-    // at the top edge.
+    // primary line. A series flagged noscale:true contributes NOTHING to the
+    // autoscale (e.g. hashprice / hard cap on the price chart, which sit well above
+    // the bid/marginal action and would otherwise compress it) - it still draws
+    // and gets a right-edge value label, clipping at the top if it's above range.
+    // Both kinds still draw fully; any out-of-range portion just clips at the edge.
     var xs = [], ys = [];
     series.forEach(function (s) {
       var lastY = null;
       s.points.forEach(function (p) {
         if (p.y == null || !isFinite(p.y)) return;
         xs.push(p.x);
+        if (s.noscale) return;
         if (!s.ref) ys.push(p.y);
         lastY = p.y;
       });
@@ -631,13 +635,19 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // (if enabled) is the fee-adjusted, buffered hashprice and sits below it.
     var cfg = lastStatus && lastStatus.config;
     var hardcap = cfg && cfg.max_price_btc_per_unit_day ? cfg.max_price_btc_per_unit_day : null;
+    // The Y scale follows the action that matters: our bid, the marginal we track,
+    // and the (binding) dynamic cap. Hashprice is dropped from this chart (it sits
+    // far above the action and is redundant with the green dynamic-cap line + the
+    // Hashprice tile). The hard cap and the next-filled tier are kept but flagged
+    // noscale - the hard cap is a far backstop, and the next-filled tier swings
+    // wildly (a separate market tier) - so they show with their value labels but
+    // don't squash the bid/marginal action band.
     var price = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
       { color: '#a855f7', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
-      { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
-      { color: '#94a3b8', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
+      { color: '#38bdf8', noscale: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
       { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
-      { color: '#f87171', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
+      { color: '#f87171', dashed: true, noscale: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }

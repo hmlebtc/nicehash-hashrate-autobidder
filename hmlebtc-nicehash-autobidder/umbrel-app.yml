@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.16"
+version: "0.6.17"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,17 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.17 - 30m/1h chart ranges + price chart focuses on the action.
+
+  The range bar gains 30m and 1h options (charts, tiles and P&L all honor them).
+
+  The price chart's Y scale now follows the action - your bid, the marginal, and
+  the binding dynamic cap - instead of being stretched by lines far above it.
+  Hashprice is removed from this chart (it sits well above the action and
+  duplicates the dynamic-cap line + the Hashprice tile); the hard cap and the
+  wildly-swinging next-filled tier stay but no longer set the scale (shown with
+  value labels, clipping at the edges). The bid/marginal band now fills the chart.
+
   v0.6.16 - next-tick countdown follows live "Tick seconds".
 
   Changing "Tick seconds" live (e.g. 60 to 30) used to leave the dashboard's
