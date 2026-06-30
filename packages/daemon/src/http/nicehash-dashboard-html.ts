@@ -100,9 +100,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
-  /* Drag the wrapper's bottom edge to grow a chart vertically; scroll to zoom, drag to pan. */
-  .chartwrap { height: 220px; min-height: 140px; margin-top: 8px; resize: vertical; overflow: hidden; }
+  /* Drag the ⇕ handle below a chart to stretch it taller/shorter; scroll to zoom, drag to pan. */
+  .chartwrap { height: 220px; min-height: 140px; margin-top: 8px; overflow: hidden; }
   .chartwrap canvas { width: 100%; height: 100%; display: block; margin: 0; cursor: grab; }
+  .chart-resize { height: 16px; margin-top: 2px; display: flex; align-items: center; justify-content: center;
+    cursor: ns-resize; color: var(--muted); border-radius: 4px; user-select: none; font-size: 12px; line-height: 1; }
+  .chart-resize:hover { background: var(--border); color: var(--text); }
   canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
   .btn-reset { margin-left: auto; font-size: 11px; padding: 2px 9px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; }
   .btn-reset:hover { color: var(--text); border-color: var(--muted); }
@@ -201,16 +204,17 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         <button class="btn-reset" data-chart="hashChart">⟲ reset zoom &amp; size</button>
       </div>
       <div class="chartwrap"><canvas id="hashChart"></canvas></div>
-      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
+      <div class="chart-resize" title="drag up/down to stretch the chart">⇕</div>
+      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · drag the ⇕ handle to stretch taller/shorter</div>
     </div>
 
     <div class="chartcard">
       <div class="head"><h3>Price</h3>
         <div class="legend">
           <span><i class="swatch" style="background:#fb923c"></i>our bid</span>
-          <span><i class="swatch" style="background:#22d3ee"></i>marginal (purple)</span>
+          <span><i class="swatch" style="background:#a855f7"></i>marginal (purple)</span>
           <span><i class="swatch" style="background:#38bdf8"></i>next filled tier</span>
-          <span><i class="swatch" style="background:#a78bfa"></i>hashprice</span>
+          <span><i class="swatch" style="background:#94a3b8"></i>hashprice</span>
           <span><i class="swatch" style="background:#34d399"></i>dynamic cap</span>
           <span><i class="swatch" style="background:#f87171"></i>hard cap</span>
           <span><i class="swatch" style="background:#34d399;border-radius:50%;width:6px;height:6px"></i>create</span>
@@ -220,7 +224,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         <button class="btn-reset" data-chart="priceChart">⟲ reset zoom &amp; size</button>
       </div>
       <div class="chartwrap"><canvas id="priceChart"></canvas></div>
-      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · or drag the bottom edge to resize</div>
+      <div class="chart-resize" title="drag up/down to stretch the chart">⇕</div>
+      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · drag the ⇕ handle to stretch taller/shorter</div>
     </div>
 
     <h2 class="section">Our orders</h2>
@@ -540,6 +545,23 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   Array.prototype.forEach.call(document.querySelectorAll('.btn-reset'), function (b) {
     b.addEventListener('click', function () { var cv = $(b.getAttribute('data-chart')); if (cv) resetZoom(cv); });
   });
+  // Vertical stretch: drag the ⇕ handle to grow/shrink the chart above it. The
+  // canvas is height:100% of the wrapper, so the ResizeObserver redraws on change.
+  Array.prototype.forEach.call(document.querySelectorAll('.chart-resize'), function (h) {
+    var drag = null;
+    h.addEventListener('mousedown', function (e) {
+      var wrap = h.previousElementSibling;
+      if (!wrap) return;
+      drag = { y: e.clientY, h: wrap.getBoundingClientRect().height, wrap: wrap };
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!drag) return;
+      drag.wrap.style.height = Math.max(140, drag.h + (e.clientY - drag.y)) + 'px';
+    });
+    window.addEventListener('mouseup', function () { if (drag) { drag = null; document.body.style.userSelect = ''; } });
+  });
   Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) {
     b.addEventListener('click', function () { setRange(b.getAttribute('data-range')); });
   });
@@ -562,9 +584,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var hardcap = cfg && cfg.max_price_btc_per_unit_day ? cfg.max_price_btc_per_unit_day : null;
     var price = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
-      { color: '#22d3ee', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
+      { color: '#a855f7', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
       { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
-      { color: '#a78bfa', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
+      { color: '#94a3b8', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.hashprice_btc_per_unit_day) }; }) },
       { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
       { color: '#f87171', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
     ];

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-30
+
+### `[UI]` Chart vertical-stretch handle + true-purple marginal line
+
+Each chart gets a ⇕ drag handle below it to stretch it taller or shorter with the
+mouse (replacing the small corner grip), and the reset button still restores the
+default height. The "marginal (purple)" line is now actually purple, so it is no
+longer confused with the blue "next filled tier" line; the hashprice reference
+line is recoloured to a neutral slate to keep all six lines distinct.
+
 ## 2026-06-29
 
 ### `[Feature]` Live config (auto-save, no restart)
