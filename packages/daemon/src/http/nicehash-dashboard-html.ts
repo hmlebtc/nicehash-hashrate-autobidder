@@ -196,10 +196,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="chartcard">
       <div class="head"><h3>Hashrate</h3>
         <div class="legend">
-          <span><i class="swatch" style="background:#fb923c"></i>delivered (left)</span>
-          <span><i class="swatch" style="background:#3b82f6"></i>limit (right)</span>
-          <span><i class="swatch" style="background:#64748b"></i>target (right)</span>
-          <span><i class="swatch" style="background:#64748b"></i>min fill (right)</span>
+          <span><i class="swatch" style="background:#fb923c"></i>delivered</span>
+          <span><i class="swatch" style="background:#3b82f6"></i>limit</span>
+          <span><i class="swatch" style="background:#64748b"></i>target</span>
+          <span><i class="swatch" style="background:#64748b"></i>min fill</span>
         </div>
         <button class="btn-reset" data-chart="hashChart">⟲ reset zoom &amp; size</button>
       </div>
@@ -431,20 +431,28 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     canvas.width = cssW * dpr; canvas.height = cssH * dpr;
     var ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    var padL = 60, padR = opts.rightLabels ? 66 : (opts.rightAxis ? 56 : 12), padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
-    // Series can opt onto a secondary right-hand Y axis (s.axis === 'right'); the
-    // left axis then autoscales to the left series only, so a large reference line
-    // (e.g. the order limit/cap) no longer flattens a small primary line (delivered).
-    var xs = [], lys = [], rys = [];
+    var padL = 60, padR = opts.rightLabels ? 66 : 12, padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
+    // Single shared Y axis. A series flagged ref:true (a reference line like the
+    // order limit/target) contributes only its CURRENT value to the autoscale, not
+    // its whole history - so a stale spike in a reference (e.g. the pre-fix limit
+    // that briefly recorded ~2) cannot blow up the axis and desync it from the
+    // primary line. Reference lines still draw fully; any stale portion just clips
+    // at the top edge.
+    var xs = [], ys = [];
     series.forEach(function (s) {
+      var lastY = null;
       s.points.forEach(function (p) {
         if (p.y == null || !isFinite(p.y)) return;
         xs.push(p.x);
-        (s.axis === 'right' ? rys : lys).push(p.y);
+        if (!s.ref) ys.push(p.y);
+        lastY = p.y;
       });
+      if (s.ref && lastY != null) ys.push(lastY);
     });
     ctx.font = '10px system-ui';
     if (!xs.length) { ctx.fillStyle = '#586069'; ctx.fillText('no data yet', padL, padT + h / 2); return; }
+    // Fallback: if every series is a reference (no primary points), scale to all.
+    if (!ys.length) series.forEach(function (s) { s.points.forEach(function (p) { if (p.y != null && isFinite(p.y)) ys.push(p.y); }); });
     function domainOf(arr) {
       var lo = arr.length ? Math.min.apply(null, arr) : 0;
       var hi = arr.length ? Math.max.apply(null, arr) : 1;
@@ -455,10 +463,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       return [lo, hi];
     }
     var xmin = Math.min.apply(null, xs), xmax = Math.max.apply(null, xs);
-    var ld = domainOf(lys), ymin = ld[0], ymax = ld[1];
-    // Right axis keeps its full autoscaled domain (vertical zoom/pan acts on the
-    // left axis only) and shares the x range.
-    var rd = domainOf(rys.length ? rys : lys), rmin = rd[0], rmax = rd[1];
+    var ld = domainOf(ys), ymin = ld[0], ymax = ld[1];
     // Cache the full (auto) domain + inputs so the zoom/pan handlers can redraw,
     // and apply the current zoom view (data-coordinate window) if the user set one.
     var full = { xmin: xmin, xmax: xmax, ymin: ymin, ymax: ymax };
@@ -467,21 +472,14 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (!canvas._zoomWired) wireZoom(canvas);
     function X(x) { return padL + (xmax === xmin ? 0 : (x - xmin) / (xmax - xmin)) * w; }
     function Y(y) { return padT + h - (y - ymin) / (ymax - ymin) * h; }
-    function Yr(y) { return padT + h - (y - rmin) / (rmax - rmin) * h; }
     ctx.strokeStyle = '#21262d'; ctx.fillStyle = '#8b949e'; ctx.lineWidth = 1;
     for (var i = 0; i <= 4; i++) {
       var yy = padT + h * (i / 4), val = ymax - (ymax - ymin) * (i / 4);
       ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + w, yy); ctx.stroke();
       ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
       ctx.fillText(opts.fmtY ? opts.fmtY(val) : val.toFixed(2), 4, yy + 3);
-      if (opts.rightAxis && !opts.rightLabels) {
-        var rval = rmax - (rmax - rmin) * (i / 4);
-        ctx.textAlign = 'right'; ctx.fillStyle = '#6b7280';
-        ctx.fillText(opts.fmtY ? opts.fmtY(rval) : rval.toFixed(2), cssW - 4, yy + 3);
-      }
     }
     ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
-    ctx.fillStyle = '#8b949e';
     [xmin, (xmin + xmax) / 2, xmax].forEach(function (t, idx) {
       var lx = X(t); ctx.textAlign = idx === 0 ? 'left' : idx === 2 ? 'right' : 'center';
       ctx.fillText(new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), lx, padT + h + 14);
@@ -492,7 +490,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     ctx.save();
     ctx.beginPath(); ctx.rect(padL, padT, w, h); ctx.clip();
     series.forEach(function (s) {
-      var Yf = s.axis === 'right' ? Yr : Y;
+      var Yf = Y;
       ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6;
       ctx.setLineDash(s.dashed ? [4, 3] : []);
       ctx.beginPath(); var started = false;
@@ -518,7 +516,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         var lp = null;
         for (var k = s.points.length - 1; k >= 0; k--) { var q = s.points[k]; if (q && q.y != null && isFinite(q.y)) { lp = q; break; } }
         if (!lp) return;
-        var ly = (s.axis === 'right' ? Yr : Y)(lp.y);
+        var ly = Y(lp.y);
         // nudge apart from any label already placed at nearly the same height
         while (placed.some(function (py) { return Math.abs(py - ly) < 10; })) ly += 10;
         placed.push(ly);
@@ -615,16 +613,17 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   function renderCharts() {
     var m = lastMetrics;
-    // Delivered owns the LEFT axis (autoscaled to itself) so a barely-filled order
-    // is still readable; the order cap + target + fill threshold are references on
-    // the RIGHT axis, which would otherwise flatten delivered against zero.
+    // Delivered (the time series we watch) sets the Y scale; the order limit/cap,
+    // target, and fill threshold are reference lines that scale only by their
+    // CURRENT value (ref: true), so the pre-fix stale limit history can't blow up
+    // the axis - they stay on the same scale as delivered and read in sync.
     var hash = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.accepted_speed_units) }; }) },
-      { color: '#3b82f6', axis: 'right', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
-      { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
-      { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
+      { color: '#3b82f6', ref: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
+      { color: '#64748b', ref: true, dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
+      { color: '#64748b', ref: true, dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
     ];
-    drawChart($('hashChart'), hash, { yMinZero: true, rightAxis: true, rightLabels: true, fmtY: fmtAxis });
+    drawChart($('hashChart'), hash, { yMinZero: true, rightLabels: true, fmtY: fmtAxis });
 
     var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
     var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });

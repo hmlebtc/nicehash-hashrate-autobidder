@@ -2,6 +2,16 @@
 
 ## 2026-06-30
 
+### `[UI]` Hashrate chart back to one axis (limit reads in sync with delivered)
+
+With the limit now correctly small (after the v0.6.12 metrics fix) the dual-axis
+chart made the limit's value land on a different scale than delivered, so they
+looked out of sync. The chart is now a single shared axis: delivered sets the
+scale, and the limit/target/min-fill reference lines scale only by their *current*
+value — so the leftover pre-fix stale limit history (~2) can't blow up the axis
+(it just clips at the top and ages out), and the limit/target lines line up with
+delivered on the same scale.
+
 ### `[Feature]` Configurable walk-up grace period
 
 A new "Walk-up grace (seconds)" setting (default 180) makes the bidder wait until
