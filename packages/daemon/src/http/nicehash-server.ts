@@ -62,8 +62,17 @@ export interface NiceHashHttpDeps {
 
 const RUN_MODES: readonly RunMode[] = ['DRY_RUN', 'LIVE', 'PAUSED'];
 
-/** Chart/summary time-range windows. */
+/**
+ * Chart/summary time-range windows. Note `m` means MINUTES here (1m..30m) and the
+ * month window is `30d` - this avoids the old `1m` ambiguity now that sub-minute
+ * tick rates make short windows useful.
+ */
 const RANGE_MS: Record<string, number> = {
+  '30s': 30_000,
+  '1m': 60_000,
+  '5m': 5 * 60_000,
+  '10m': 10 * 60_000,
+  '15m': 15 * 60_000,
   '30m': 30 * 60_000,
   '1h': 3600_000,
   '3h': 3 * 3600_000,
@@ -71,7 +80,7 @@ const RANGE_MS: Record<string, number> = {
   '12h': 12 * 3600_000,
   '24h': 24 * 3600_000,
   '1w': 7 * 24 * 3600_000,
-  '1m': 30 * 24 * 3600_000,
+  '30d': 30 * 24 * 3600_000,
   '1y': 365 * 24 * 3600_000,
   all: Infinity,
 };
