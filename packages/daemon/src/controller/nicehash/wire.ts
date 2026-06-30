@@ -151,12 +151,14 @@ export function isLiveOrder(order: HashpowerOrder): boolean {
 /**
  * Pick out the autobidder's own orders from the account's hash-power orders.
  *
- * An order is ours when it is in our ledger (an order we created and recorded)
- * OR it is a *live* order whose pool worker matches our configured `poolUser`
- * (e.g. `<address>.autobidder`). The pool-worker match makes ownership robust
- * across a ledger reset - after a restart the bot re-adopts its existing
- * `.autobidder` order instead of orphaning it - and is what lets it keep to a
- * single managed order (`decide()` cancels any extra owned order).
+ * An order is ours when it is **live** AND either in our ledger (an order we
+ * created and recorded) or on our configured pool worker (`poolUser`, e.g.
+ * `<address>.autobidder`). The pool-worker match makes ownership robust across a
+ * ledger reset - after a restart the bot re-adopts its existing `.autobidder`
+ * order instead of orphaning it - and is what lets it keep to a single managed
+ * order (`decide()` cancels any extra owned order). Terminal orders
+ * (CANCELLED/COMPLETED/...) are never returned even if in the ledger: they are
+ * finished history, not state to manage or measure.
  *
  * Everything else (a manual or legacy order on a different worker) is simply
  * **ignored**: the bot neither manages nor pauses on it. `unknown` is therefore
@@ -173,8 +175,17 @@ export function reconcileOrders(
   const owned: OwnedOrderSnapshot[] = [];
   const unknown: UnknownOrderSnapshot[] = [];
   for (const order of wireOrders) {
+    // Only *live* orders count as currently owned. A terminal order we created
+    // (in the ledger) is history: adopting it would pile every past
+    // CANCELLED/COMPLETED order into owned_orders - inflating the per-tick metrics
+    // (e.g. summing all their `limit`s, which made the hashrate chart's limit line
+    // read the total of dozens of dead orders instead of the live one), bloating
+    // the orders table, and making observe() re-fetch order detail for every dead
+    // order each tick. myOrders returns a long tail of finished orders, so this
+    // matters in practice.
+    if (!isLiveOrder(order)) continue;
     const inLedger = knownOrderIds.has(order.id);
-    const poolMatch = poolUser !== '' && (order.pool?.username ?? '') === poolUser && isLiveOrder(order);
+    const poolMatch = poolUser !== '' && (order.pool?.username ?? '') === poolUser;
     if (inLedger || poolMatch) {
       owned.push(
         ownedOrderFromWire(

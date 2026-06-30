@@ -2,6 +2,26 @@
 
 ## 2026-06-30
 
+### `[Fix]` Metrics only count the live order, not finished ones
+
+`myOrders` returns a long tail of finished orders, and the bot was adopting
+every one in its ledger as "currently owned" regardless of status. That summed
+all their `limit`s into the per-tick metrics — so the hashrate chart's limit line
+showed the total of dozens of cancelled/completed orders (e.g. ~2-4 EH) instead
+of your live order's actual limit (e.g. 0.075), and escrow/runway were inflated
+too. Ownership is now restricted to **live** orders. This also stops `observe()`
+from re-fetching order detail for every dead order each tick (one call instead of
+dozens), and the orders table now lists just the live order.
+
+### `[UI]` Hashrate chart: delivered gets its own axis
+
+The hashrate chart now plots delivered on the left axis (autoscaled to itself)
+while the order limit/cap, target, and fill threshold are references on a new
+right axis. Previously the large limit line flattened the delivered curve against
+zero, so a barely-filled order looked like a flat line; delivered is now readable
+regardless of how small it is relative to the cap. Axis ticks use adaptive
+precision so small fills aren't all shown as "0.00".
+
 ### `[Fix]` Delivered hashrate + miner count now reflect the live order
 
 The `myOrders` list and per-order detail endpoints under-report delivered speed

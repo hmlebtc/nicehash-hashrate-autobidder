@@ -196,10 +196,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <div class="chartcard">
       <div class="head"><h3>Hashrate</h3>
         <div class="legend">
-          <span><i class="swatch" style="background:#fb923c"></i>delivered</span>
-          <span><i class="swatch" style="background:#3b82f6"></i>limit</span>
-          <span><i class="swatch" style="background:#64748b"></i>target</span>
-          <span><i class="swatch" style="background:#64748b"></i>min fill</span>
+          <span><i class="swatch" style="background:#fb923c"></i>delivered (left)</span>
+          <span><i class="swatch" style="background:#3b82f6"></i>limit (right)</span>
+          <span><i class="swatch" style="background:#64748b"></i>target (right)</span>
+          <span><i class="swatch" style="background:#64748b"></i>min fill (right)</span>
         </div>
         <button class="btn-reset" data-chart="hashChart">⟲ reset zoom &amp; size</button>
       </div>
@@ -344,6 +344,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   }
   function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
+  // Adaptive Y-axis tick formatter: keeps small values (e.g. a 0.0005 EH/s fill on
+  // the delivered axis) legible instead of rounding them all to "0.00".
+  function fmtAxis(v) {
+    var a = Math.abs(v);
+    if (a === 0) return '0';
+    if (a >= 10) return v.toFixed(0);
+    if (a >= 1) return v.toFixed(2);
+    if (a >= 0.01) return v.toFixed(3);
+    return v.toPrecision(2);
+  }
   function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
   function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
   function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
@@ -421,17 +431,34 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     canvas.width = cssW * dpr; canvas.height = cssH * dpr;
     var ctx = canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    var padL = 60, padR = opts.rightLabels ? 66 : 12, padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
-    var xs = [], ys = [];
-    series.forEach(function (s) { s.points.forEach(function (p) { if (p.y != null && isFinite(p.y)) { xs.push(p.x); ys.push(p.y); } }); });
+    var padL = 60, padR = opts.rightAxis ? 56 : (opts.rightLabels ? 66 : 12), padT = 8, padB = 22, w = cssW - padL - padR, h = cssH - padT - padB;
+    // Series can opt onto a secondary right-hand Y axis (s.axis === 'right'); the
+    // left axis then autoscales to the left series only, so a large reference line
+    // (e.g. the order limit/cap) no longer flattens a small primary line (delivered).
+    var xs = [], lys = [], rys = [];
+    series.forEach(function (s) {
+      s.points.forEach(function (p) {
+        if (p.y == null || !isFinite(p.y)) return;
+        xs.push(p.x);
+        (s.axis === 'right' ? rys : lys).push(p.y);
+      });
+    });
     ctx.font = '10px system-ui';
     if (!xs.length) { ctx.fillStyle = '#586069'; ctx.fillText('no data yet', padL, padT + h / 2); return; }
+    function domainOf(arr) {
+      var lo = arr.length ? Math.min.apply(null, arr) : 0;
+      var hi = arr.length ? Math.max.apply(null, arr) : 1;
+      if (opts.yMinZero && lo > 0) lo = 0;
+      if (hi === lo) hi = lo + (lo === 0 ? 1 : Math.abs(lo) * 0.1);
+      var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      if (opts.yMinZero && lo < 0) lo = 0;
+      return [lo, hi];
+    }
     var xmin = Math.min.apply(null, xs), xmax = Math.max.apply(null, xs);
-    var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
-    if (opts.yMinZero && ymin > 0) ymin = 0;
-    if (ymax === ymin) ymax = ymin + (ymin === 0 ? 1 : Math.abs(ymin) * 0.1);
-    var p = (ymax - ymin) * 0.08; ymin -= p; ymax += p;
-    if (opts.yMinZero && ymin < 0) ymin = 0;
+    var ld = domainOf(lys), ymin = ld[0], ymax = ld[1];
+    // Right axis keeps its full autoscaled domain (vertical zoom/pan acts on the
+    // left axis only) and shares the x range.
+    var rd = domainOf(rys.length ? rys : lys), rmin = rd[0], rmax = rd[1];
     // Cache the full (auto) domain + inputs so the zoom/pan handlers can redraw,
     // and apply the current zoom view (data-coordinate window) if the user set one.
     var full = { xmin: xmin, xmax: xmax, ymin: ymin, ymax: ymax };
@@ -440,12 +467,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (!canvas._zoomWired) wireZoom(canvas);
     function X(x) { return padL + (xmax === xmin ? 0 : (x - xmin) / (xmax - xmin)) * w; }
     function Y(y) { return padT + h - (y - ymin) / (ymax - ymin) * h; }
+    function Yr(y) { return padT + h - (y - rmin) / (rmax - rmin) * h; }
     ctx.strokeStyle = '#21262d'; ctx.fillStyle = '#8b949e'; ctx.lineWidth = 1;
     for (var i = 0; i <= 4; i++) {
       var yy = padT + h * (i / 4), val = ymax - (ymax - ymin) * (i / 4);
       ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL + w, yy); ctx.stroke();
+      ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
       ctx.fillText(opts.fmtY ? opts.fmtY(val) : val.toFixed(2), 4, yy + 3);
+      if (opts.rightAxis) {
+        var rval = rmax - (rmax - rmin) * (i / 4);
+        ctx.textAlign = 'right'; ctx.fillStyle = '#6b7280';
+        ctx.fillText(opts.fmtY ? opts.fmtY(rval) : rval.toFixed(2), cssW - 4, yy + 3);
+      }
     }
+    ctx.textAlign = 'left'; ctx.fillStyle = '#8b949e';
     ctx.fillStyle = '#8b949e';
     [xmin, (xmin + xmax) / 2, xmax].forEach(function (t, idx) {
       var lx = X(t); ctx.textAlign = idx === 0 ? 'left' : idx === 2 ? 'right' : 'center';
@@ -457,12 +492,13 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     ctx.save();
     ctx.beginPath(); ctx.rect(padL, padT, w, h); ctx.clip();
     series.forEach(function (s) {
+      var Yf = s.axis === 'right' ? Yr : Y;
       ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.6;
       ctx.setLineDash(s.dashed ? [4, 3] : []);
       ctx.beginPath(); var started = false;
       s.points.forEach(function (pt) {
         if (pt.y == null || !isFinite(pt.y)) { started = false; return; }
-        var px = X(pt.x), py = Y(pt.y);
+        var px = X(pt.x), py = Yf(pt.y);
         if (!started) { ctx.moveTo(px, py); started = true; } else ctx.lineTo(px, py);
       });
       ctx.stroke();
@@ -579,13 +615,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
 
   function renderCharts() {
     var m = lastMetrics;
+    // Delivered owns the LEFT axis (autoscaled to itself) so a barely-filled order
+    // is still readable; the order cap + target + fill threshold are references on
+    // the RIGHT axis, which would otherwise flatten delivered against zero.
     var hash = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.accepted_speed_units) }; }) },
-      { color: '#3b82f6', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
-      { color: '#64748b', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
-      { color: '#64748b', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
+      { color: '#3b82f6', axis: 'right', points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.limit_units) }; }) },
+      { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.target_units) }; }) },
+      { color: '#64748b', axis: 'right', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvSpeed(r.floor_units) }; }) }
     ];
-    drawChart($('hashChart'), hash, { yMinZero: true, fmtY: function (v) { return v.toFixed(v < 10 ? 2 : 0); } });
+    drawChart($('hashChart'), hash, { yMinZero: true, rightAxis: true, fmtY: fmtAxis });
 
     var markerColor = { CREATE: '#34d399', EDIT_PRICE: '#facc15', EDIT_LIMIT: '#38bdf8', REFILL: '#c084fc', CANCEL: '#f87171' };
     var markers = lastEventsForChart.map(function (e) { return { x: e.ts, color: markerColor[e.action] || '#64748b' }; });

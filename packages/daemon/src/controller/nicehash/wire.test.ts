@@ -162,6 +162,21 @@ describe('ownedOrderFromWire / reconcileOrders', () => {
     const { owned } = reconcileOrders([cancelledMine], new Set(), 'bc1qme.autobidder');
     expect(owned).toEqual([]); // historical orders on our worker are not re-adopted
   });
+
+  it('does not adopt a terminal order even when it is in the ledger', () => {
+    // The ledger accumulates every order the bot created; a CANCELLED/COMPLETED
+    // one must NOT be re-adopted as owned, or its stale limit/escrow would pile
+    // into the per-tick metrics (this is what made the hashrate chart sum dozens
+    // of dead orders' limits).
+    const liveMine: HashpowerOrder = { ...orderA, id: 'live', status: { code: 'ACTIVE' } };
+    const cancelledLedger: HashpowerOrder = { ...orderA, id: 'dead', status: { code: 'CANCELLED' }, limit: '2' };
+    const completedLedger: HashpowerOrder = { ...orderA, id: 'done', status: { code: 'COMPLETED' }, limit: '1' };
+    const { owned } = reconcileOrders(
+      [liveMine, cancelledLedger, completedLedger],
+      new Set(['live', 'dead', 'done']), // all three are in the ledger
+    );
+    expect(owned.map((o) => o.order_id)).toEqual(['live']);
+  });
 });
 
 describe('availableBtcFromBalance', () => {
