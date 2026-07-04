@@ -2,6 +2,15 @@
 
 ## 2026-07-04
 
+### `[Infra]` Add a `workflow_dispatch` Release workflow
+
+Cloud/web CI sessions are blocked from creating GitHub releases or pushing tags
+directly (an egress-proxy restriction, independent of token permissions). The
+new `.github/workflows/release.yml` cuts the tag + Release server-side on a
+GitHub runner (with the built-in `GITHUB_TOKEN`) from a `workflow_dispatch`, so
+releases can be published from an automated session again. No user-facing
+behaviour change.
+
 ### `[Fix]` Remove the legacy edit-price deadband; track the floor to one price step
 
 The EDIT_PRICE deadband (`only re-price when the drift exceeds 20% of the

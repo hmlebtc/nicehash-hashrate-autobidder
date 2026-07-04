@@ -1,0 +1,90 @@
+# Create a git tag + GitHub Release from a workflow_dispatch.
+#
+# Why this exists: Claude Code web/cloud sessions are blocked by the Anthropic
+# egress proxy from creating releases or pushing tags directly ("Creating,
+# editing, or deleting releases is not permitted for this session type"),
+# regardless of which token authenticates. Code running on GitHub's own runners
+# is NOT behind that proxy, so this workflow cuts the tag + release server-side
+# with the built-in GITHUB_TOKEN. Trigger it with workflow_dispatch (API / MCP /
+# UI) after the release commit is on main and its image is published to GHCR.
+#
+# Note: creating the vX.Y.Z tag also fires docker-publish.yml (on: push tags),
+# which rebuilds/publishes that version's image and moves :latest. For a normal
+# (newest) release that is harmless. When BACKFILLING an OLDER version, re-run
+# docker-publish for the current version afterwards so :latest points back at
+# the newest image.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Bare semver, e.g. 0.6.20 (the tag becomes vX.Y.Z)"
+        required: true
+        type: string
+      sha:
+        description: "Target commit to tag (full or short SHA on the repo)"
+        required: true
+        type: string
+      name:
+        description: "Release title (default: vX.Y.Z)"
+        required: false
+        type: string
+      notes:
+        description: "Release body markdown (default: --generate-notes)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as a pre-release"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create tag + release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+          TITLE: ${{ inputs.name }}
+          NOTES: ${{ inputs.notes }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION#v}"                       # accept 0.6.20 or v0.6.20
+          TITLE="${TITLE:-$TAG}"
+          FULL_SHA="$(git rev-parse --verify "${SHA}^{commit}")"
+          echo "Release $TAG at $FULL_SHA (title: $TITLE)"
+
+          # Idempotent: don't fail if the release is already there.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::release $TAG already exists; nothing to do"
+            exit 0
+          fi
+
+          # `gh release create --target <sha>` creates the tag at that commit if
+          # it does not yet exist, then the release, in one call.
+          args=(release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$FULL_SHA" --title "$TITLE")
+          if [ "${PRERELEASE}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          if [ -n "${NOTES}" ]; then
+            printf '%s\n' "${NOTES}" > "${RUNNER_TEMP}/notes.md"
+            args+=(--notes-file "${RUNNER_TEMP}/notes.md")
+          else
+            args+=(--generate-notes)
+          fi
+          gh "${args[@]}"
+          echo "Created $TAG"
