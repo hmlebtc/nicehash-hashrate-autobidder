@@ -97,7 +97,6 @@ export function buildControllerConfig(
     refill_amount_btc: num(env, 'NICEHASH_REFILL_AMOUNT_BTC', 0),
     refill_when_runway_hours: num(env, 'NICEHASH_REFILL_RUNWAY_HOURS', 6),
     min_order_amount_btc: minOrder,
-    price_edit_deadband_pct: num(env, 'NICEHASH_DEADBAND_PCT', 20),
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     cheap_threshold_pct: num(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),

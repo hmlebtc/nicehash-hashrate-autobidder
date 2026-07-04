@@ -2,6 +2,19 @@
 
 ## 2026-07-04
 
+### `[Fix]` Remove the legacy edit-price deadband; track the floor to one price step
+
+The EDIT_PRICE deadband (`only re-price when the drift exceeds 20% of the
+overpay cushion`) was inherited from the upstream Braiins controller — it was
+originally a hard-coded `overpay/5` rule, later the configurable
+`price_edit_deadband_pct` env knob. It is **not** the overpay: overpay is how far
+above the marginal you bid, whereas the deadband was a re-pricing hysteresis that
+let the bid drift up to a fifth of the overpay above the floor before correcting.
+It has been removed. The bid now re-prices on any move of at least one NiceHash
+price step (the smallest change the API will actually execute), so it hugs the
+marginal tightly in both directions instead of lagging. The `NICEHASH_DEADBAND_PCT`
+env var / `editPriceDeadbandPct` setting are gone.
+
 ### `[Fix]` Walk a bid parked above the cap back down to break-even
 
 When the dynamic cap fell below the current bid (hashprice dropped, so the

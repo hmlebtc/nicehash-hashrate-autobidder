@@ -47,8 +47,6 @@ export interface NiceHashSettings {
   readonly cheapThresholdPct: number;
   /** Dynamic ceiling = hashprice + this (BTC/unit/day); 0 disables. */
   readonly maxPremiumOverHashpriceBtc: number;
-  /** Re-price only when the move exceeds this % of the overpay cushion. */
-  readonly editPriceDeadbandPct: number;
   // --- Track-to-fill ---
   /** Treat the order as filled once delivered ≥ this % of target. Default 80. */
   readonly minFillPct: number;
@@ -158,7 +156,6 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     cheapModeTargetUnits: n(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
-    editPriceDeadbandPct: n(env, 'NICEHASH_DEADBAND_PCT', 20),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     walkUpGraceSeconds: n(env, 'NICEHASH_WALK_UP_GRACE_SECONDS', 180),
@@ -214,7 +211,6 @@ export function toControllerConfig(
     refill_amount_btc: settings.refillAmountBtc,
     refill_when_runway_hours: settings.refillWhenRunwayHours,
     min_order_amount_btc: parseDecimal(algo.minimalOrderAmount, 0.001),
-    price_edit_deadband_pct: settings.editPriceDeadbandPct,
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
@@ -292,7 +288,6 @@ export function mergeSettings(
     cheapModeTargetUnits: num('cheapModeTargetUnits'),
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
-    editPriceDeadbandPct: num('editPriceDeadbandPct'),
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
     walkUpGraceSeconds: num('walkUpGraceSeconds'),

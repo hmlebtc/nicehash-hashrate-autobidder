@@ -17,7 +17,6 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     refill_amount_btc: 0.01,
     refill_when_runway_hours: 6,
     min_order_amount_btc: 0.001,
-    price_edit_deadband_pct: 20,
     min_speed_limit_units: 0.01,
     price_down_step_btc: 0.0000001,
     cheap_threshold_pct: 0,
@@ -220,7 +219,7 @@ describe('decide - create', () => {
 });
 
 describe('decide - maintain', () => {
-  it('edits price when drifted beyond the deadband', () => {
+  it('edits price when drifted at least one price step from the floor', () => {
     const out = decide(state({ owned_orders: [ownedOrder({ price_btc: 0.0004 })] }));
     const kinds = out.map((p) => p.kind);
     expect(kinds).toContain('EDIT_PRICE');
@@ -229,9 +228,10 @@ describe('decide - maintain', () => {
     expect(edit.new_price_btc).toBeCloseTo(0.00051, 12);
   });
 
-  it('does not edit price within the deadband', () => {
-    // deadband = max(1e-7, 1e-5*0.2)=2e-6; drift 1e-6 < deadband
-    const out = decide(state({ owned_orders: [ownedOrder({ price_btc: 0.000509 })] }));
+  it('does not edit price for a sub-price-step drift', () => {
+    // reprice threshold = one price step (0.0000001); drift 0.00000005 < a step,
+    // so the bid holds (no % deadband any more - it re-prices on any full step).
+    const out = decide(state({ owned_orders: [ownedOrder({ price_btc: 0.00050995 })] }));
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
   });
 
@@ -444,16 +444,15 @@ describe('decide - track to fill', () => {
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
   });
 
-  it('walks a bid parked just above the cap down, even inside the deadband', () => {
+  it('walks a bid parked a sub-price-step above the cap down to break-even', () => {
     // The operator's 6h-flat case: the dynamic cap fell under the bid (hashprice
-    // dropped) so the bid is 0.000719 OVER the cap - but that gap is smaller than
-    // the deadband (max(down-step, overpay x 20%)), so the plain floor-tracking
-    // walk-down never fired and the bid sat above break-even indefinitely.
-    // Over-cap must bypass the deadband and step the bid back down.
+    // dropped) so the bid ends up OVER the cap by less than one price step. The
+    // normal floor-tracking walk-down needs a full-step drift, so only the
+    // over-cap bypass (paying above break-even is never OK) moves it back down.
     const out = decide(
       state({
         market: market({ anchor_price_btc: 0.4556, filled_prices: [0.4556] }),
-        owned_orders: [ownedOrder({ price_btc: 0.4549, accepted_speed_units: 0 })],
+        owned_orders: [ownedOrder({ price_btc: 0.45423, accepted_speed_units: 0 })],
         config: config({
           walk_up_enabled: true,
           min_fill_pct: 80,
@@ -463,22 +462,20 @@ describe('decide - track to fill', () => {
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
           dynamic_cap_buffer_btc: 0,
-          // Big overpay so the deadband (max(down-step, overpay x 20%)) exceeds
-          // the over-cap gap and would otherwise suppress the edit.
-          overpay_btc_per_unit_day: 0.01,
+          overpay_btc_per_unit_day: 0.0001,
           price_down_step_btc: 0.0001,
         }),
-        // cap = hashprice / (1 + 4%) = 0.472348 / 1.04 = 0.454181; bid 0.4549 is
-        // 0.000719 over it, deadband = max(0.0001, 0.01*0.2=0.002) = 0.002, so the
-        // gap is inside the deadband - only the over-cap bypass makes it move.
+        // cap = hashprice / (1 + 4%) = 0.472348 / 1.04 = 0.4541808; bid 0.45423 is
+        // ~0.0000492 over it - smaller than the 0.0001 price step, so the normal
+        // walk-down stays silent and only the over-cap bypass fires.
         hashprice_btc_per_unit_day: 0.472348,
       }),
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    // Steps down by one down-step toward the cap (the gate paces further drops).
-    expect(e.new_price_btc).toBeCloseTo(0.4549 - 0.0001, 10);
-    expect(e.new_price_btc).toBeLessThan(0.4549);
+    // walkDownTo clamps to the cap (target), so it lands exactly at break-even.
+    expect(e.new_price_btc).toBeCloseTo(0.472348 / 1.04, 8);
+    expect(e.new_price_btc).toBeLessThan(0.45423);
   });
 
   it('caps the walk-up at the price ceiling', () => {

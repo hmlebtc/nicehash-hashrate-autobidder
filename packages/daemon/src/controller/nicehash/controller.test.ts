@@ -24,7 +24,6 @@ function config(): NiceHashControllerConfig {
     refill_amount_btc: 0,
     refill_when_runway_hours: 6,
     min_order_amount_btc: 0.001,
-    price_edit_deadband_pct: 20,
     min_speed_limit_units: 0.1,
     price_down_step_btc: 0.0001,
     min_fill_pct: 80,

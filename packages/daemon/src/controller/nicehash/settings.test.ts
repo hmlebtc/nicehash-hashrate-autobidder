@@ -33,7 +33,6 @@ describe('settingsFromEnv', () => {
     // parity-expansion defaults
     expect(s.cheapModeEnabled).toBe(false);
     expect(s.maxPremiumOverHashpriceBtc).toBe(0);
-    expect(s.editPriceDeadbandPct).toBe(20);
     expect(s.bootMode).toBe('RESUME');
     expect(s.hashpriceSource).toBe('none');
     expect(s.retentionDays).toBe(30);
@@ -194,9 +193,8 @@ describe('toControllerConfig', () => {
     expect(mergeSettings(base(), { walkUpGraceSeconds: '240' }).walkUpGraceSeconds).toBe(240);
   });
 
-  it('maps the edit-price deadband and the hashprice cap (0 disables)', () => {
-    const off = toControllerConfig({ ...base(), editPriceDeadbandPct: 35 }, algo, 'p');
-    expect(off.price_edit_deadband_pct).toBe(35);
+  it('maps the hashprice cap (0 disables)', () => {
+    const off = toControllerConfig({ ...base() }, algo, 'p');
     expect(off.max_overpay_vs_hashprice_btc_per_unit_day).toBeNull();
     const on = toControllerConfig({ ...base(), maxPremiumOverHashpriceBtc: 0.002 }, algo, 'p');
     expect(on.max_overpay_vs_hashprice_btc_per_unit_day).toBe(0.002);
