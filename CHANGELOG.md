@@ -2,6 +2,17 @@
 
 ## 2026-06-30
 
+### `[Fix]` Dynamic cap uses the break-even markup (÷), consistent with P&L
+
+The dynamic cap subtracted fees as a percent *of the hashprice* (`hashprice ×
+(1 − fees)`), while the P&L panel treats fees as a *markup on your bid* (`cost =
+bid × (1 + fees)`). Those disagree. Fees are a markup, so the break-even bid
+divides them out: the cap is now `hashprice ÷ (1 + fees) − buffer`, so
+`cap × (1 + fees) = hashprice` and it lines up with the P&L. For a 4% total fee
+this raises the cap slightly (e.g. hashprice 0.4728 → cap 0.4546 instead of
+0.4539) — true break-even rather than a hair conservative. Tile/help labels
+updated to the `÷ (1 + fees)` form.
+
 ### `[Fix]` Sparse chart windows render visibly
 
 On the very short ranges (30s/1m) at a coarse tick rate there are only 1–2 data

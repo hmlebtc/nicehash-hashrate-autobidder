@@ -187,17 +187,20 @@ export interface NiceHashControllerConfig {
   readonly dynamic_cap_enabled?: boolean;
   /**
    * Profit buffer for the dynamic cap, an absolute amount in BTC/price-unit/day
-   * held back below the fee-adjusted hashprice. dynamic cap = hashprice x
-   * (1 - (nicehash_fee + pool_fee)/100) - this. Default 0 (pure break-even).
+   * held back below the fee-adjusted hashprice. dynamic cap = hashprice /
+   * (1 + (nicehash_fee + pool_fee)/100) - this. Default 0 (pure break-even).
    */
   readonly dynamic_cap_buffer_btc?: number;
 }
 
 /**
- * The dynamic price cap: the most you can pay per price-unit/day and still keep
- * your chosen profit buffer after the NiceHash + pool fees come out of the
- * hashprice. `cap = hashprice x (1 - (nicehash_fee + pool_fee)/100) - buffer`.
- * Returns null when the hashprice is unavailable.
+ * The dynamic price cap: the most you can bid per price-unit/day and still keep
+ * your chosen profit buffer after fees. The fees are a *markup* on what you pay
+ * (bid + fees must not exceed the hashprice), so the break-even bid divides them
+ * out: `cap = hashprice / (1 + (nicehash_fee + pool_fee)/100) - buffer`. This
+ * matches the P&L panel, whose effective cost is `bid x (1 + fees)` - i.e.
+ * `cap x (1 + fees) = hashprice` at break-even. Returns null when the hashprice
+ * is unavailable.
  */
 export function dynamicCapPrice(
   hashprice: number | null,
@@ -207,7 +210,7 @@ export function dynamicCapPrice(
 ): number | null {
   if (hashprice === null || !Number.isFinite(hashprice)) return null;
   const totalFee = (niceHashFeePct || 0) + (poolFeePct || 0);
-  return hashprice * (1 - totalFee / 100) - (bufferBtc || 0);
+  return hashprice / (1 + totalFee / 100) - (bufferBtc || 0);
 }
 
 export interface NiceHashState {
