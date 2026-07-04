@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-04
+
+### `[Fix]` Walk a bid parked above the cap back down to break-even
+
+When the dynamic cap fell below the current bid (hashprice dropped, so the
+fee-adjusted cap followed it down) but the over-cap gap was smaller than the
+edit deadband, the bid never walked down — it sat above break-even
+indefinitely, flat for hours, while the market moved beneath it. The deadband
+exists to damp churn as the bid hugs the floor, not to license overpaying above
+the ceiling, so an over-cap bid now walks down regardless of the deadband,
+stepping back toward the cap one price-down step at a time. (Note: tracking the
+bid down to the cap does not by itself win hashrate when the market's marginal
+price is *above* the cap — that just means it is currently unprofitable to fill,
+which is exactly what the cap is there to prevent.)
+
 ## 2026-06-30
 
 ### `[Fix]` Dynamic cap uses the break-even markup (÷), consistent with P&L

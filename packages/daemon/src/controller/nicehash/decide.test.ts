@@ -444,6 +444,43 @@ describe('decide - track to fill', () => {
     expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
   });
 
+  it('walks a bid parked just above the cap down, even inside the deadband', () => {
+    // The operator's 6h-flat case: the dynamic cap fell under the bid (hashprice
+    // dropped) so the bid is 0.000719 OVER the cap - but that gap is smaller than
+    // the deadband (max(down-step, overpay x 20%)), so the plain floor-tracking
+    // walk-down never fired and the bid sat above break-even indefinitely.
+    // Over-cap must bypass the deadband and step the bid back down.
+    const out = decide(
+      state({
+        market: market({ anchor_price_btc: 0.4556, filled_prices: [0.4556] }),
+        owned_orders: [ownedOrder({ price_btc: 0.4549, accepted_speed_units: 0 })],
+        config: config({
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          // Fixed cap high; the dynamic cap (below) is what bites.
+          max_price_btc_per_unit_day: 1,
+          dynamic_cap_enabled: true,
+          nicehash_fee_pct: 3,
+          pool_fee_pct: 1,
+          dynamic_cap_buffer_btc: 0,
+          // Big overpay so the deadband (max(down-step, overpay x 20%)) exceeds
+          // the over-cap gap and would otherwise suppress the edit.
+          overpay_btc_per_unit_day: 0.01,
+          price_down_step_btc: 0.0001,
+        }),
+        // cap = hashprice / (1 + 4%) = 0.472348 / 1.04 = 0.454181; bid 0.4549 is
+        // 0.000719 over it, deadband = max(0.0001, 0.01*0.2=0.002) = 0.002, so the
+        // gap is inside the deadband - only the over-cap bypass makes it move.
+        hashprice_btc_per_unit_day: 0.472348,
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    // Steps down by one down-step toward the cap (the gate paces further drops).
+    expect(e.new_price_btc).toBeCloseTo(0.4549 - 0.0001, 10);
+    expect(e.new_price_btc).toBeLessThan(0.4549);
+  });
+
   it('caps the walk-up at the price ceiling', () => {
     // Floor would be anchor 0.001 + overpay 0.00001 = 0.00101, but the cap is
     // 0.00095, so we climb only to the cap.
