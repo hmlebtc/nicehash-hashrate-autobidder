@@ -125,9 +125,10 @@ describe('decide - create', () => {
     expect(p.price_btc).toBe(0.001);
   });
 
-  it('caps the bid at the dynamic cap (hashprice − fees − buffer) when enabled', () => {
-    // hashprice 0.0008, fees 3% + 1% = 4%, buffer 0 => cap = 0.0008 × 0.96 = 0.000768.
-    // anchor 0.0009 + overpay would be 0.00091, so the cap binds.
+  it('caps the bid at the dynamic cap (hashprice / (1 + fees) − buffer) when enabled', () => {
+    // hashprice 0.0008, fees 3% + 1% = 4%, buffer 0 => cap = 0.0008 / 1.04 (fees are
+    // a markup on the bid, so cap × 1.04 = hashprice). anchor 0.0009 + overpay would
+    // be 0.00091, so the cap binds.
     const out = decide(
       state({
         market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
@@ -142,11 +143,11 @@ describe('decide - create', () => {
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.0008 * 0.96, 9);
+    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04, 9);
   });
 
   it('subtracts the absolute profit buffer from the dynamic cap', () => {
-    // cap = 0.0008 × 0.96 − 0.00005 = 0.000718.
+    // cap = 0.0008 / 1.04 − 0.00005.
     const out = decide(
       state({
         market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
@@ -162,7 +163,7 @@ describe('decide - create', () => {
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.0008 * 0.96 - 0.00005, 9);
+    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04 - 0.00005, 9);
   });
 
   it('does not apply the dynamic cap when disabled (anchor + overpay wins)', () => {

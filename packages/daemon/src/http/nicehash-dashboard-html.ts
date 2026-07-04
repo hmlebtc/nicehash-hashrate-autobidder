@@ -360,7 +360,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
   function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
   function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
-  function dynamicCapBtc(hp) { return (hp == null || !dynamicCapOn()) ? null : hp * (1 - totalFeePct() / 100) - capBufferBtc(); }
+  function dynamicCapBtc(hp) { return (hp == null || !dynamicCapOn()) ? null : hp / (1 + totalFeePct() / 100) - capBufferBtc(); }
   function isLiveOrderStatus(st) { st = (st || '').toString().toUpperCase(); return !!st && ['CANCELLED', 'CANCELED', 'COMPLETED', 'COMPLETE', 'DEAD', 'STOPPED', 'EXPIRED', 'ERROR'].indexOf(st) < 0; }
 
   // ---- routing -------------------------------------------------------------
@@ -716,7 +716,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit(), '', C.delivered);
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit(), '', C.bid);
     html += tile('Hashprice (now)', fmtPrice(hpNow, 6), priceUnit(), '', C.hashprice);
-    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice − ' + totalFeePct() + '% fees − buffer') : 'dynamic cap off', '', C.dyncap);
+    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice ÷ (1 + ' + totalFeePct() + '% fees) − buffer') : 'dynamic cap off', '', C.dyncap);
     html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? 'no active bid' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
@@ -944,7 +944,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['dynamicCapEnabled', 'Enable dynamic cap', 'checkbox', 'When on, the bid is capped at the fee-adjusted, buffered hashprice (the formula below), so the bid plus both fees never eats into your profit buffer. The fixed Max price still applies as an absolute backstop (effective cap = the lower of the two). Needs a hashprice source; if hashprice is unavailable the bot falls back to the Max price. Off = pricing uses overpay + Max price only.'],
       ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Subtracted from hashprice in the dynamic cap and the fee-aware P&L.'],
       ['poolFeePct', 'Pool fee (%)', 'number', 'Your mining pool fee (typically ~1%). Subtracted from hashprice in the dynamic cap and the fee-aware P&L.'],
-      ['dynamicCapBufferBtc', 'Profit buffer (BTC/EH/day)', 'number', 'Margin held back below the fee-adjusted hashprice. Dynamic cap = hashprice × (1 − (NiceHash fee + pool fee)/100) − this buffer. Higher = more profit headroom but you may not win when the market runs hot; 0 = pure break-even (no margin).'] ] },
+      ['dynamicCapBufferBtc', 'Profit buffer (BTC/EH/day)', 'number', 'Margin held back below the fee-adjusted hashprice. Dynamic cap = hashprice ÷ (1 + (NiceHash fee + pool fee)/100) − this buffer (fees are a markup on your bid, so bid + fees stays within hashprice). Higher = more profit headroom but you may not win when the market runs hot; 0 = pure break-even (no margin).'] ] },
     { group: 'Pool', items: [
       ['poolHost', 'Pool host', 'text', 'Your stratum pool hostname. The app registers it with NiceHash automatically (no fee).'],
       ['poolPort', 'Pool port', 'number', 'Stratum port of your pool.'],
