@@ -219,12 +219,22 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const cur = primary.price_btc;
   const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);
 
+  // A bid sitting ABOVE the effective cap is paying past break-even. Correct it
+  // down regardless of the deadband: the deadband only exists to damp churn as
+  // the bid hugs the floor, not to license overpaying above the ceiling. Without
+  // this, a bid parked just over the cap (by less than one deadband) never walks
+  // down - it stays above break-even indefinitely once the cap drops under it
+  // (e.g. hashprice falls and the dynamic cap follows, but the bid doesn't).
+  const overCap = cur - effectiveCap > 1e-9;
+
   let editTo = cur;
   let mode = '';
-  if (cur - targetPrice >= editDeadband) {
-    // Overpaying above the floor: walk down toward it (filled or not).
+  if (cur - targetPrice >= editDeadband || overCap) {
+    // Overpaying above the floor (or above the cap): walk down toward it
+    // (filled or not). `walkDownTo` clamps to `targetPrice`, which is itself
+    // <= effectiveCap, so this always steps the bid back toward break-even.
     editTo = walkDownTo;
-    mode = 'walk down to floor';
+    mode = overCap && cur - targetPrice < editDeadband ? 'walk down under cap' : 'walk down to floor';
   } else if (targetPrice - cur >= editDeadband && wantWalkUp) {
     // Below the floor: climb to it when under-filled and the grace has elapsed
     // (or always, if walk-up is off). When filled we skip this - hold the cheaper
