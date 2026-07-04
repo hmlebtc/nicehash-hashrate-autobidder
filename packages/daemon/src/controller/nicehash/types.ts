@@ -132,8 +132,6 @@ export interface NiceHashControllerConfig {
   readonly refill_when_runway_hours: number;
   /** NiceHash minimum order amount (BTC), from algorithm metadata. */
   readonly min_order_amount_btc: number;
-  /** Re-price only when the move exceeds this % of the overpay cushion. */
-  readonly price_edit_deadband_pct: number;
   /**
    * Track-to-fill: treat the order as "filled" once delivered speed reaches this
    * percent of the (effective) target. Below it, the bidder walks the price up.

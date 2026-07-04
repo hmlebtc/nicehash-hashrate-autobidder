@@ -15,8 +15,9 @@
  *     `execute()`.
  *
  * Preserved from upstream: unknown-order -> PAUSE, keep-one-order (cancel
- * extras), price deadband to avoid edit spam, cheap-mode opportunistic
- * scale-up. The price-decrease cooldown / down-step clamp live in `gate.ts`.
+ * extras), cheap-mode opportunistic scale-up. The bid re-prices on any move of
+ * at least one price step (the upstream "% of overpay" edit deadband was
+ * removed). The price-decrease cooldown / down-step clamp live in `gate.ts`.
  */
 
 import { dynamicCapPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
@@ -108,12 +109,15 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   }
   const limitUnits = Math.max(config.min_speed_limit_units, effectiveTarget);
 
-  // Deadband on EDIT_PRICE: only re-price when the move exceeds a fraction of
-  // the overpay cushion (never below the price-down step the API would reject).
-  const editDeadband = Math.max(
-    config.price_down_step_btc,
-    (config.overpay_btc_per_unit_day * config.price_edit_deadband_pct) / 100,
-  );
+  // Re-price whenever the target moves by at least one NiceHash price step - the
+  // smallest change the API will actually execute (sub-step edits quantize to a
+  // no-op or get rejected). This is the price granularity, NOT the old
+  // "% of overpay" deadband: that was a churn-damper inherited from the upstream
+  // Braiins controller (originally a hard-coded overpay/5, later the configurable
+  // `price_edit_deadband_pct`) and has been removed, so the bid now hugs the
+  // floor to within one price step instead of drifting up to a fraction of the
+  // overpay cushion above it.
+  const minRepriceStep = config.price_down_step_btc;
 
   const capLabel = cappedByDynamic ? 'dynamic cap' : 'cap';
   const priceSuffix = cappedByCeiling
@@ -220,22 +224,22 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);
 
   // A bid sitting ABOVE the effective cap is paying past break-even. Correct it
-  // down regardless of the deadband: the deadband only exists to damp churn as
-  // the bid hugs the floor, not to license overpaying above the ceiling. Without
-  // this, a bid parked just over the cap (by less than one deadband) never walks
-  // down - it stays above break-even indefinitely once the cap drops under it
-  // (e.g. hashprice falls and the dynamic cap follows, but the bid doesn't).
+  // down even when the over-cap gap is smaller than one price step: paying above
+  // the ceiling is never acceptable, so it takes priority over the reprice-step
+  // threshold. Without this, a bid parked a sub-step amount over the cap never
+  // walks down - it stays above break-even once the cap drops under it (e.g.
+  // hashprice falls and the dynamic cap follows, but the bid doesn't).
   const overCap = cur - effectiveCap > 1e-9;
 
   let editTo = cur;
   let mode = '';
-  if (cur - targetPrice >= editDeadband || overCap) {
+  if (cur - targetPrice >= minRepriceStep || overCap) {
     // Overpaying above the floor (or above the cap): walk down toward it
     // (filled or not). `walkDownTo` clamps to `targetPrice`, which is itself
     // <= effectiveCap, so this always steps the bid back toward break-even.
     editTo = walkDownTo;
-    mode = overCap && cur - targetPrice < editDeadband ? 'walk down under cap' : 'walk down to floor';
-  } else if (targetPrice - cur >= editDeadband && wantWalkUp) {
+    mode = overCap && cur - targetPrice < minRepriceStep ? 'walk down under cap' : 'walk down to floor';
+  } else if (targetPrice - cur >= minRepriceStep && wantWalkUp) {
     // Below the floor: climb to it when under-filled and the grace has elapsed
     // (or always, if walk-up is off). When filled we skip this - hold the cheaper
     // bid, don't chase up.
