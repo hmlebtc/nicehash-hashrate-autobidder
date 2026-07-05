@@ -85,7 +85,17 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     cappedByDynamic = true;
   }
 
-  const anchor = state.market.anchor_price_btc; // non-null per guard above
+  // The tracking anchor. By default the marginal (cheapest competitor still
+  // winning hashrate = filled_prices[0], NiceHash's purple). Optionally the
+  // *next filled tier* (filled_prices[1], the cyan line) - where the market is
+  // actually allocating hashrate on a thin/lumpy book, so a bid at
+  // marginal+overpay wins nothing but next-tier+overpay does. Falls back to the
+  // marginal when there is no distinct second tier. Either way the ceiling caps
+  // the worst case.
+  const marginal = state.market.anchor_price_btc; // non-null per guard above
+  const ladder = state.market.filled_prices ?? [];
+  const nextTier = ladder.length > 1 ? ladder[1]! : null;
+  const anchor = config.anchor_next_filled_tier && nextTier !== null ? nextTier : marginal;
   const desired = anchor + config.overpay_btc_per_unit_day;
   const targetPrice = Math.min(desired, effectiveCap);
   const cappedByCeiling = desired > effectiveCap;

@@ -1,6 +1,21 @@
 # Changelog
 
-## 2026-07-04
+## 2026-07-05
+
+### `[Feature]` Anchor on the next filled tier (track the cyan line, not purple)
+
+The bidder anchored on the **marginal** (purple — the cheapest competitor still
+winning hashrate) and bid `marginal + overpay`. On a thin/lumpy market that wins
+nothing: the market is actually allocating hashrate one tier up, so the bid sat
+just above the marginal, delivered 0, and — because it was already exactly at
+`marginal + overpay` and the marginal was stable — never walked up or down. It
+now anchors on the **next filled tier** (cyan — the second rung of the fill
+ladder) by default, placing the bid where fills actually land and giving the
+walk-up/walk-down a target that moves. Falls back to the marginal when there is
+no distinct second tier, and the dynamic/hard cap still bounds the worst case. A
+new **Anchor on next filled tier** toggle (Config → Track-to-fill, on by
+default) switches back to marginal tracking. Walk-up/down logic audited and
+confirmed correct — the "stuck" bid was the anchor choice, not the walk logic.
 
 ### `[Infra]` Add a `workflow_dispatch` Release workflow
 

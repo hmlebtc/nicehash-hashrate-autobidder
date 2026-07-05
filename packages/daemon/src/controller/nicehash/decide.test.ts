@@ -508,3 +508,97 @@ describe('decide - track to fill', () => {
     expect(e.new_price_btc).toBeCloseTo(0.0009 - 0.0000001, 10);
   });
 });
+
+describe('decide - anchor on the next filled tier', () => {
+  // Fill ladder with a gap: marginal 0.0005, next tier 0.0007, then 0.0009.
+  const market = (over = {}) => ({
+    anchor_price_btc: 0.0005,
+    total_speed_units: 100,
+    thin: false,
+    filled_prices: [0.0005, 0.0007, 0.0009],
+    ...over,
+  });
+
+  it('CREATEs at the next tier + overpay when enabled', () => {
+    const out = decide(
+      state({
+        owned_orders: [],
+        market: market(),
+        config: config({ anchor_next_filled_tier: true, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    // next tier 0.0007 + overpay 0.00001 = 0.00071 (not marginal 0.0005 + overpay)
+    expect(p.price_btc).toBeCloseTo(0.00071, 9);
+  });
+
+  it('falls back to the marginal when there is no distinct second tier', () => {
+    const out = decide(
+      state({
+        owned_orders: [],
+        market: market({ filled_prices: [0.0005] }),
+        config: config({ anchor_next_filled_tier: true, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.00051, 9); // marginal 0.0005 + overpay
+  });
+
+  it('walks up from marginal+overpay to next-tier+overpay (the stuck-bid case)', () => {
+    // Bid sat at marginal(0.0005)+overpay(0.00001)=0.00051, under-filled. Anchored
+    // on the marginal it would hold there forever (target == current). Anchored on
+    // the next tier (0.0007) the target becomes 0.00071, so it walks UP into the
+    // fill zone - the fix for "the bid never walks up or down".
+    const out = decide(
+      state({
+        market: market(),
+        owned_orders: [ownedOrder({ price_btc: 0.00051, accepted_speed_units: 0 })],
+        config: config({
+          anchor_next_filled_tier: true,
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00071, 9);
+  });
+
+  it('walks DOWN when the next tier falls (tracks the tier both ways)', () => {
+    // Bid at 0.00071 (next-tier 0.0007 + overpay). The next tier drops to 0.0006,
+    // so the target falls to 0.00061 and the bid steps down toward it.
+    const out = decide(
+      state({
+        market: market({ filled_prices: [0.0005, 0.0006, 0.0009] }),
+        owned_orders: [ownedOrder({ price_btc: 0.00071, accepted_speed_units: 0 })],
+        config: config({
+          anchor_next_filled_tier: true,
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          max_price_btc_per_unit_day: 1,
+          price_down_step_btc: 0.0000001,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.00071 - 0.0000001, 10); // one step down toward 0.00061
+  });
+
+  it('anchors on the marginal when the toggle is off (default in the pure controller)', () => {
+    const out = decide(
+      state({
+        owned_orders: [],
+        market: market(),
+        config: config({ max_price_btc_per_unit_day: 1 }), // anchor_next_filled_tier unset
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.00051, 9); // marginal 0.0005 + overpay
+  });
+});
