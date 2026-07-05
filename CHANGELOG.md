@@ -2,6 +2,21 @@
 
 ## 2026-07-05
 
+### `[Fix]` Price chart: a single bad tick no longer blows out the axis
+
+A one-off tick that recorded a price near 0 (a transient order-book / oracle
+glitch, common right after a daemon restart) made a line on the Price chart
+plunge toward 0 and — because the chart shares one Y axis — dragged the whole
+axis down with it. Short windows (15m and below) that started after the glitch
+looked fine while 30m+ looked broken. The chart now drops non-positive prices
+and filters single-tick outliers via a median band (points more than 2× off the
+window's median price), so a genuine sustained move still shows but a lone spike
+can't distort the view. `dynamicCapBtc` also treats a ≤0 hashprice as "no cap"
+so the dynamic-cap line breaks over the gap instead of plotting 0.
+
+(Version 0.6.24 was skipped: an escalate-to-cap change was reverted before
+release, but its image tag had already published to GHCR.)
+
 ### `[Feature]` Anchor on the next filled tier (track the cyan line, not purple)
 
 The bidder anchored on the **marginal** (purple — the cheapest competitor still

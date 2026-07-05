@@ -331,6 +331,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function spFactor() { return (UNIT_HS[baseSpeedUnit] || UNIT_HS.PH) / (UNIT_HS[UI.speed] || UNIT_HS.PH); }
   function cvSpeed(v) { return (v == null) ? null : v * spFactor(); }
   function cvPrice(btc) { return (btc == null) ? null : (UI.price === 'sat' ? btc * 1e8 : btc); }
+  // Prices are strictly positive; a recorded 0 (or negative) is bad data - a
+  // transient oracle/order-book miss, common right after a restart. Map it to
+  // null so the line breaks over the gap instead of plunging to 0 and dragging
+  // the whole (shared) Y axis down with it on any window that includes the tick.
+  function pp(btc) { return (btc == null || !(btc > 0)) ? null : cvPrice(btc); }
   function speedUnit() { return UI.speed + '/s'; }
   function priceUnit() { return (UI.price === 'sat' ? 'sat' : 'BTC') + '/EH/day'; }
   function fmtSpeed(ph, d) {
@@ -360,7 +365,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
   function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
   function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
-  function dynamicCapBtc(hp) { return (hp == null || !dynamicCapOn()) ? null : hp / (1 + totalFeePct() / 100) - capBufferBtc(); }
+  function dynamicCapBtc(hp) { return (hp == null || hp <= 0 || !dynamicCapOn()) ? null : hp / (1 + totalFeePct() / 100) - capBufferBtc(); }
   function isLiveOrderStatus(st) { st = (st || '').toString().toUpperCase(); return !!st && ['CANCELLED', 'CANCELED', 'COMPLETED', 'COMPLETE', 'DEAD', 'STOPPED', 'EXPIRED', 'ERROR'].indexOf(st) < 0; }
 
   // ---- routing -------------------------------------------------------------
@@ -660,6 +665,26 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // (if enabled) is the fee-adjusted, buffered hashprice and sits below it.
     var cfg = lastStatus && lastStatus.config;
     var hardcap = cfg && cfg.max_price_btc_per_unit_day ? cfg.max_price_btc_per_unit_day : null;
+    // Robust price band. A single-tick blip (a restart / oracle / order-book
+    // glitch that records a price near 0) would otherwise plunge a line toward 0
+    // and, because the Y axis is shared, drag the whole axis down with it on any
+    // window that spans the tick (15m and below miss it; 30m+ don't). Take the
+    // median of the real price series - robust to a handful of outliers - and drop
+    // points more than 2x off it as bad data. A genuine sustained move shifts the
+    // median, so only true one-off spikes get filtered.
+    var band = [];
+    m.forEach(function (r) {
+      [r.our_price_btc, r.anchor_price_btc, r.next_filled_price_btc].forEach(function (v) {
+        if (v != null && isFinite(v) && v > 0) band.push(v);
+      });
+    });
+    band.sort(function (a, b) { return a - b; });
+    var med = band.length ? band[Math.floor(band.length / 2)] : 0;
+    function ppb(btc) {
+      if (btc == null || !(btc > 0)) return null;
+      if (med > 0 && (btc < med * 0.5 || btc > med * 2)) return null; // outlier -> drop
+      return cvPrice(btc);
+    }
     // The Y scale follows the action that matters: our bid, the marginal we track,
     // and the (binding) dynamic cap. Hashprice is dropped from this chart (it sits
     // far above the action and is redundant with the green dynamic-cap line + the
@@ -668,11 +693,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // wildly (a separate market tier) - so they show with their value labels but
     // don't squash the bid/marginal action band.
     var price = [
-      { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.our_price_btc) }; }) },
-      { color: '#a855f7', points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.anchor_price_btc) }; }) },
-      { color: '#38bdf8', noscale: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(r.next_filled_price_btc) }; }) },
-      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
-      { color: '#f87171', dashed: true, noscale: true, points: m.map(function (r) { return { x: r.ts, y: cvPrice(hardcap) }; }) }
+      { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: ppb(r.our_price_btc) }; }) },
+      { color: '#a855f7', points: m.map(function (r) { return { x: r.ts, y: ppb(r.anchor_price_btc) }; }) },
+      { color: '#38bdf8', noscale: true, points: m.map(function (r) { return { x: r.ts, y: ppb(r.next_filled_price_btc) }; }) },
+      { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: ppb(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
+      { color: '#f87171', dashed: true, noscale: true, points: m.map(function (r) { return { x: r.ts, y: pp(hardcap) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
