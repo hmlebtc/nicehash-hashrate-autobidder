@@ -49,6 +49,12 @@ function str(env: EnvMap, key: string, fallback: string): string {
   return v === undefined || v === '' ? fallback : v;
 }
 
+function bool(env: EnvMap, key: string, fallback: boolean): boolean {
+  const v = env[key];
+  if (v === undefined || v === '') return fallback;
+  return v === '1' || v.toLowerCase() === 'true';
+}
+
 /** Read connection settings; throws if a required credential is missing. */
 export function readConnection(env: EnvMap = process.env): NiceHashConnection {
   const apiKey = env.NICEHASH_API_KEY;
@@ -97,6 +103,7 @@ export function buildControllerConfig(
     refill_amount_btc: num(env, 'NICEHASH_REFILL_AMOUNT_BTC', 0),
     refill_when_runway_hours: num(env, 'NICEHASH_REFILL_RUNWAY_HOURS', 6),
     min_order_amount_btc: minOrder,
+    anchor_next_filled_tier: bool(env, 'NICEHASH_ANCHOR_NEXT_FILLED_TIER', true),
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     cheap_threshold_pct: num(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),

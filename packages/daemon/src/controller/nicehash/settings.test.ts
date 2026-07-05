@@ -33,6 +33,7 @@ describe('settingsFromEnv', () => {
     // parity-expansion defaults
     expect(s.cheapModeEnabled).toBe(false);
     expect(s.maxPremiumOverHashpriceBtc).toBe(0);
+    expect(s.anchorNextFilledTier).toBe(true);
     expect(s.bootMode).toBe('RESUME');
     expect(s.hashpriceSource).toBe('none');
     expect(s.retentionDays).toBe(30);

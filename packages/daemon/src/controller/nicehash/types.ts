@@ -133,6 +133,17 @@ export interface NiceHashControllerConfig {
   /** NiceHash minimum order amount (BTC), from algorithm metadata. */
   readonly min_order_amount_btc: number;
   /**
+   * Anchor on the *next filled tier* (the second rung of the fill ladder,
+   * `MarketAnchor.filled_prices[1]`) instead of the marginal (cheapest filled,
+   * `filled_prices[0]`). The marginal is the theoretical price to beat, but on a
+   * thin/lumpy market bidding a hair above it often wins nothing - the market is
+   * actually allocating hashrate one tier up. Tracking that tier + overpay places
+   * the bid where fills really happen (still clamped by the cap). Falls back to
+   * the marginal when there is no second tier. Default off (undefined) in the
+   * pure controller; the daemon defaults it on. #tracks NiceHash cyan line.
+   */
+  readonly anchor_next_filled_tier?: boolean;
+  /**
    * Track-to-fill: treat the order as "filled" once delivered speed reaches this
    * percent of the (effective) target. Below it, the bidder walks the price up.
    * Default 80.

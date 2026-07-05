@@ -48,6 +48,13 @@ export interface NiceHashSettings {
   /** Dynamic ceiling = hashprice + this (BTC/unit/day); 0 disables. */
   readonly maxPremiumOverHashpriceBtc: number;
   // --- Track-to-fill ---
+  /**
+   * Anchor on the next filled tier (second rung of the fill ladder) instead of
+   * the marginal (cheapest filled). Places the bid where the market is actually
+   * allocating hashrate on a thin/lumpy book. Falls back to the marginal when
+   * there is no distinct second tier. Default true.
+   */
+  readonly anchorNextFilledTier: boolean;
   /** Treat the order as filled once delivered ≥ this % of target. Default 80. */
   readonly minFillPct: number;
   /**
@@ -156,6 +163,7 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     cheapModeTargetUnits: n(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
+    anchorNextFilledTier: b(env, 'NICEHASH_ANCHOR_NEXT_FILLED_TIER', true),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     walkUpGraceSeconds: n(env, 'NICEHASH_WALK_UP_GRACE_SECONDS', 180),
@@ -211,6 +219,7 @@ export function toControllerConfig(
     refill_amount_btc: settings.refillAmountBtc,
     refill_when_runway_hours: settings.refillWhenRunwayHours,
     min_order_amount_btc: parseDecimal(algo.minimalOrderAmount, 0.001),
+    anchor_next_filled_tier: settings.anchorNextFilledTier,
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
@@ -288,6 +297,7 @@ export function mergeSettings(
     cheapModeTargetUnits: num('cheapModeTargetUnits'),
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
+    anchorNextFilledTier: bool('anchorNextFilledTier'),
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
     walkUpGraceSeconds: num('walkUpGraceSeconds'),
