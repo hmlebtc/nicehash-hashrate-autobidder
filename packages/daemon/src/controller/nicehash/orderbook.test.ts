@@ -166,6 +166,36 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.4533, 0.4553]);
   });
 
+  it('collapses a far gap-jump onto the cap (contiguous low book overshoots)', () => {
+    // The overshoot: the low book is momentarily contiguous (no >= 2-empty gap)
+    // from the marginal up through a wide range, so the first real gap - and the
+    // block above it - sits far up the book (0.498). We never bid above the cap, so
+    // the reported next filled tier must collapse onto the cap (0.4554), not chart
+    // 0.498. (0.4600 -> 0.498 = 380 empty levels >= 2 => the jump lands at 0.498.)
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 }, // marginal
+      { price_btc: 0.4534, limit_units: 5, rigs_count: 5000 }, // contiguous cluster...
+      { price_btc: 0.4535, limit_units: 5, rigs_count: 4000 },
+      { price_btc: 0.46, limit_units: 5, rigs_count: 3000 }, // ...still < 2-empty steps apart
+      { price_btc: 0.498, limit_units: 5, rigs_count: 2000 }, // block above the wide gap
+    ];
+    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001, 0.4554);
+    expect(a.anchor_price_btc).toBe(0.4533);
+    // 0.498 is out of reach (> cap), so it collapses onto the cap
+    expect(a.filled_prices).toEqual([0.4533, 0.4554]);
+  });
+
+  it('does not clamp a next filled tier that is already below the cap', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
+      { price_btc: 0.4553, limit_units: 5, rigs_count: 5868 }, // next block, below cap
+      { price_btc: 0.4555, limit_units: 5, rigs_count: 14810 }, // above cap -> clamps to cap
+    ];
+    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001, 0.4554);
+    // next filled tier 0.4553 is untouched; the 0.4555 straggler collapses onto the cap
+    expect(a.filled_prices).toEqual([0.4533, 0.4553, 0.4554]);
+  });
+
   it('ignores malformed entries (non-positive price, NaN)', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0, limit_units: 5, rigs_count: 5 },
