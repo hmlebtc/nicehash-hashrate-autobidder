@@ -116,6 +116,56 @@ describe('computeMarketAnchor', () => {
     expect(a.thin).toBe(false);
   });
 
+  it('de-dupes the marginal and jumps a wide empty gap to the next block', () => {
+    // Live shape: the marginal 0.4533 is shared by many individual orders; a run of
+    // 0-miner price levels sits above it; then a real block at 0.4553. The next
+    // filled tier must jump the empty gap to 0.4553, not report a duplicate 0.4533.
+    // (price step 0.0001; 0.4533->0.4553 = 20 steps = 19 empty levels >= 2.)
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 22831 }, // dup marginal
+      { price_btc: 0.4553, limit_units: 5, rigs_count: 5868 }, // next block above the empty gap
+      { price_btc: 0.4555, limit_units: 5, rigs_count: 14810 },
+    ];
+    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001);
+    expect(a.anchor_price_btc).toBe(0.4533);
+    expect(a.filled_prices).toEqual([0.4533, 0.4553, 0.4555]);
+  });
+
+  it('walks through a straggler hugging the marginal (< 2 empty levels) to the gap', () => {
+    // A lone tier one level above the marginal (0.4534 empty between 0.4533 and
+    // 0.4535 = 1 empty level) is part of the marginal's cluster, not the next tier.
+    // The next filled tier is the block above the wide gap (0.4553).
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 60000 },
+      { price_btc: 0.4535, limit_units: 5, rigs_count: 8 }, // straggler, 1 empty level below
+      { price_btc: 0.4553, limit_units: 5, rigs_count: 3632 }, // real block, wide gap below
+    ];
+    const a = computeMarketAnchor(competitors, 17.4, 1, 0.0001);
+    // 0.4535 is dropped (hugs the marginal); next filled tier is 0.4553
+    expect(a.filled_prices).toEqual([0.4533, 0.4553]);
+  });
+
+  it('falls back to the next distinct price on a contiguous book (no wide gap)', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.45, limit_units: 5, rigs_count: 5000 },
+      { price_btc: 0.4501, limit_units: 5, rigs_count: 3000 }, // adjacent, 0 empty levels
+      { price_btc: 0.4502, limit_units: 5, rigs_count: 2000 },
+    ];
+    const a = computeMarketAnchor(competitors, 10, 1, 0.0001);
+    expect(a.filled_prices).toEqual([0.45, 0.4501, 0.4502]);
+  });
+
+  it('without a price step, de-dupes only (no gap jumping)', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 60000 },
+      { price_btc: 0.4533, limit_units: 5, rigs_count: 8 }, // dup
+      { price_btc: 0.4553, limit_units: 5, rigs_count: 3632 },
+    ];
+    const a = computeMarketAnchor(competitors, 17.4, 1); // no step
+    expect(a.filled_prices).toEqual([0.4533, 0.4553]);
+  });
+
   it('ignores malformed entries (non-positive price, NaN)', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0, limit_units: 5, rigs_count: 5 },

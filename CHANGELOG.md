@@ -2,6 +2,19 @@
 
 ## 2026-07-05
 
+### `[Fix]` Next filled tier: de-dupe the marginal and jump the empty gap
+
+The "next filled tier" (the cyan line, and the tier the bidder anchors on when
+"Anchor on next filled tier" is on) could read the *same* price as the marginal.
+NiceHash returns competitors as individual orders, so the marginal price is
+shared by many — and the old logic took the second element of that list, which
+was usually just another order at the marginal price. It now collapses filled
+orders into distinct price tiers and, using the market's price step, jumps any
+run of ≥2 empty (0-miner) price levels to land on the next real block — the gap
+you read straight off the order book — instead of a duplicate of the marginal or
+a lone straggler hugging it. Falls back to the next distinct tier on a fully
+contiguous book.
+
 ### `[Fix]` Price chart: a single bad tick no longer blows out the axis
 
 A one-off tick that recorded a price near 0 (a transient order-book / oracle

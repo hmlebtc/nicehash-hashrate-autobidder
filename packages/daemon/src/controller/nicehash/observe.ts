@@ -110,7 +110,13 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   let marketError: string | null = null;
   try {
     const book = await service.getOrderBook(config.algorithm, deps.currency);
-    market = marketAnchorFromBook(book, config.target_speed_units, ownedIds, deps.currency);
+    market = marketAnchorFromBook(
+      book,
+      config.target_speed_units,
+      ownedIds,
+      deps.currency,
+      config.price_down_step_btc,
+    );
 
     // The myOrders LIST and per-order detail both under-report delivered speed
     // (often 0 even while filling). Our order's own row in the order book carries
