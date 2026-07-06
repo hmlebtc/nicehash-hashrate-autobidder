@@ -157,10 +157,13 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     tick_seconds: tickSeconds,
     build: deps.buildNumber,
     config: configView,
-    // Only the fields the dashboard needs - omit the full filled-price ladder.
+    // Only the fields the dashboard needs: the marginal (purple) + the next
+    // filled tier (cyan, `filled_prices[1]`, already bounded at the cap) for the
+    // tiles and chart; the rest of the ladder is omitted.
     market: s.market
       ? {
           anchor_price_btc: s.market.anchor_price_btc,
+          next_filled_price_btc: s.market.filled_prices?.[1] ?? null,
           total_speed_units: s.market.total_speed_units,
           thin: s.market.thin,
         }

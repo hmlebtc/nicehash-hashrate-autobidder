@@ -181,6 +181,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <div class="card"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
       <div class="card"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
       <div class="card"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
+      <div class="card"><h2>Next tier</h2><div class="big" id="nextTier" style="color:#38bdf8">—</div><div class="muted" id="nextTierUnit">next filled tier (cyan)</div></div>
       <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
     </div>
 
@@ -817,6 +818,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       : 'no active order';
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
     $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
+    var nextTier = s.market && s.market.next_filled_price_btc != null ? s.market.next_filled_price_btc : null;
+    $('nextTier').textContent = nextTier != null ? fmtPrice(nextTier) : '—';
+    $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
     $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
     $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
 
