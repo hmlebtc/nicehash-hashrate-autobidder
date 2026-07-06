@@ -34,13 +34,24 @@
 
 import type { CompetingOrder, MarketAnchor } from './types.js';
 
+/**
+ * Two miner-bearing tiers belong to the same "solid block" when they sit within
+ * this many empty price levels of each other (empty levels between two tiers =
+ * round(gap / step) - 1). A miner tier isolated from every other miner tier by a
+ * WIDER gap than this - on both sides - is a lone straggler, not a real block: by
+ * NiceHash's price priority everything above the marginal is being filled, but the
+ * API under-reports miners on many tiers, so an isolated miner tier sitting below a
+ * run of 0-miner tiers is noise. We anchor the next filled tier on the first solid
+ * block above the marginal, skipping such stragglers.
+ */
+const SOLID_BLOCK_MAX_GAP_LEVELS = 2;
+
 export function computeMarketAnchor(
   competitors: readonly CompetingOrder[],
   totalSpeedUnits: number,
   targetUnits: number,
-  // Retained for call-site compatibility; the ladder is now a literal read of the
-  // book (no gap-jumping, no cap-clamp), so neither is used here.
-  _priceStepBtc = 0,
+  priceStepBtc = 0,
+  // Retained for call-site compatibility; the ladder no longer clamps to the cap.
   _capBtc = 0,
 ): MarketAnchor {
   const valid = competitors.filter(
@@ -98,26 +109,44 @@ export function computeMarketAnchor(
   // between the filled and unfilled book, which price alone can't locate.
   const marginal = Math.min(...filled.map((o) => o.price_btc)); // cheapest filled = purple
 
-  // The fill ladder: the marginal, then every DISTINCT higher price that carries
-  // REAL activity - an order that wins miners, delivers speed, or rests a volume
-  // (limit). These are the next filled tiers a human reads straight off the order
-  // book, ascending. `filled_prices[1]` is the next filled tier (the cyan line, and
-  // the bid anchor when "anchor on next filled tier" is on).
-  //
-  // We take the LITERAL next tier: no gap-jumping past nearby tiers, and no clamping
-  // to the bidding cap. A real tier is never skipped, however close to the marginal
-  // it sits; only empty 0-volume phantom slots (cancelled orders that still appear
-  // in the book) are dropped. Earlier heuristics (skip straggler clusters, collapse
-  // an out-of-reach tier onto the cap) made the reported next tier drift away from
-  // what the book actually shows - e.g. reading the cap 0.4562 when the real next
-  // tier was 0.4557 - so they've been removed. The bid is capped independently in
-  // decide(); this stays a faithful read of the book.
-  const hasActivity = (o: CompetingOrder): boolean =>
-    o.limit_units > 0 || (o.rigs_count ?? 0) > 0 || (o.accepted_speed_units ?? 0) > 0;
-  const higherRealTiers = [
-    ...new Set(valid.filter((o) => o.price_btc > marginal && hasActivity(o)).map((o) => o.price_btc)),
-  ].sort((a, b) => a - b);
-  const filledPrices = [marginal, ...higherRealTiers];
+  // Distinct MINER-bearing prices, ascending (`filled` is already miner-preferred,
+  // or speed-fallback when no order reports miners anywhere). These are the tiers
+  // actually winning hashrate; `minerTiers[0]` is the marginal.
+  const minerTiers = [...new Set(filled.map((o) => o.price_btc))].sort((a, b) => a - b);
+
+  // The next filled tier = the cheapest miner tier above the marginal that STARTS A
+  // SOLID BLOCK - one with another miner tier within SOLID_BLOCK_MAX_GAP_LEVELS on
+  // at least one side (below, which may be the marginal, or above). A lone straggler
+  // - a miner tier isolated by a wide 0-miner gap on BOTH sides - is skipped: the
+  // API under-reports miners on tiers that are in fact filled, so an isolated miner
+  // tier below a run of 0-miner tiers is noise, not the block the market is filling
+  // into. `filled_prices[1]` is this tier (the cyan line, and the bid anchor when
+  // "anchor on next filled tier" is on). Empty phantom slots and speed-only-no-miner
+  // rows never appear here at all - they're not in `filled`. Without a known price
+  // step we can't measure gaps, so we fall back to the literal next miner tier.
+  let nextTier: number | null = null;
+  for (let i = 1; i < minerTiers.length; i++) {
+    const tier = minerTiers[i]!;
+    if (priceStepBtc <= 0) {
+      nextTier = tier; // no gap info: take the literal next miner tier
+      break;
+    }
+    const emptyBelow = Math.round((tier - minerTiers[i - 1]!) / priceStepBtc) - 1;
+    const upper = minerTiers[i + 1];
+    const emptyAbove =
+      upper !== undefined ? Math.round((upper - tier) / priceStepBtc) - 1 : Number.POSITIVE_INFINITY;
+    if (emptyBelow <= SOLID_BLOCK_MAX_GAP_LEVELS || emptyAbove <= SOLID_BLOCK_MAX_GAP_LEVELS) {
+      nextTier = tier; // has a miner tier close by -> starts a solid block
+      break;
+    }
+    // else: lone straggler (wide gap on both sides) -> skip it
+  }
+
+  // Expose the marginal + the ladder from the chosen next tier up. No cap-clamp:
+  // filled_prices is a faithful read of the miner-bearing book; the bid is capped
+  // independently in decide().
+  const filledPrices =
+    nextTier !== null ? [marginal, ...minerTiers.filter((p) => p >= nextTier!)] : [marginal];
 
   return {
     anchor_price_btc: marginal,
