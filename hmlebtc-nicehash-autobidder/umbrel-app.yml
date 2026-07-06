@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.34"
+version: "0.6.35"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,99 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.35 - Umbrel release notes backfilled.
+
+  These notes had stopped updating at v0.6.20 while the app kept shipping. This
+  release backfills everything since (v0.6.21-v0.6.34); there is no code change.
+
+  v0.6.34 - new Market chart.
+
+  A Market chart below the Price chart tracks the wider market rather than your
+  bid: the hashprice, the next filled tier (same cyan), the median filled-order
+  price, and the speed-weighted average filled-order price - the effective price
+  per delivered EH, the closest match to NiceHash's "Paying" rate. Purely
+  additive: the existing charts, their data, and the tick cadence are unchanged.
+
+  v0.6.33 - the marginal matches NiceHash's purple.
+
+  The market anchor read a tier or two high and flickered because the order-book
+  API reports each order's miners and delivered speed sparsely, and the old rule
+  counted an order as filled by miners only. An order now counts as filled if it
+  reports miners OR delivered speed, so the cheapest order actually receiving
+  hashrate is the anchor.
+
+  v0.6.32 - the next filled tier stays visible above the cap.
+
+  When the whole filled book is priced above your dynamic cap (the market has
+  moved past break-even), the Next tier tile went blank. It now keeps the real
+  tiers, so the tile and chart still show where the market is filling. Display
+  only - the bid is capped independently, so bidding is unchanged.
+
+  v0.6.31 - four more tiles at 4 decimals.
+
+  Hashprice, Order balance, Dynamic cap and Avg price now round to 4 decimals to
+  match the order book. Margin to cap keeps its finer precision.
+
+  v0.6.30 - live tiles moved to the top row.
+
+  Hashprice, Dynamic cap and Margin to cap moved up next to Price / Market anchor
+  / Next tier: they are current-tick values, not range averages, so they belong
+  with the live tiles. Still draggable.
+
+  v0.6.29 - drag to rearrange tiles + 4-decimal prices.
+
+  Every Status tile can be dragged to reorder; the layout persists per row in your
+  browser and a "reset tile layout" button restores the default. Order-book prices
+  (bid, market anchor, next tier, orders table) and the BTC/EH/day config fields
+  now display / step at 4 decimals to match NiceHash.
+
+  v0.6.28 - "Next tier" tile.
+
+  A Next tier tile (cyan) now sits beside the Market anchor tile (purple), so the
+  marginal price to beat and the next filled tier read side by side.
+
+  v0.6.27 - the next filled tier can't overshoot the cap.
+
+  On a momentarily contiguous low book the "next filled tier" could spike far
+  above the price you'd ever bid. Since you never bid above the effective ceiling,
+  anything above it now collapses onto the cap, so the tile and chart stay sane.
+  The bid was already capped there, so bidding is unchanged.
+
+  v0.6.26 - the next filled tier jumps the empty gap.
+
+  The next filled tier could read the same price as the marginal (NiceHash returns
+  individual orders). It now collapses filled orders into distinct tiers and,
+  using the market's price step, jumps any run of 2+ empty (0-miner) levels to the
+  next real block - the gap you read straight off the order book.
+
+  v0.6.25 - price chart shrugs off a single bad tick.
+
+  A one-off tick recording a price near 0 (a transient glitch, common right after
+  a restart) dragged the shared Y axis down. The chart now drops non-positive
+  prices and single-tick outliers via a median band, so a genuine move still shows
+  but a lone spike can't distort the view. (v0.6.24 was skipped.)
+
+  v0.6.23 - anchor on the next filled tier.
+
+  The bidder now anchors on the next filled tier (cyan - the second rung of the
+  fill ladder) instead of the marginal (purple) by default, placing the bid where
+  fills actually land on a thin/lumpy market and giving the walk-up/down a target
+  that moves. Falls back to the marginal when there's no distinct second tier; a
+  new "Anchor on next filled tier" toggle (Config -> Track-to-fill) switches back.
+
+  v0.6.22 - remove the legacy edit-price deadband.
+
+  Retired the inherited "only re-price when the drift exceeds 20% of the overpay"
+  hysteresis (this was never the overpay itself). The bid now re-prices on any
+  move of at least one NiceHash price step, hugging the marginal tightly in both
+  directions. The NICEHASH_DEADBAND_PCT / editPriceDeadbandPct setting is gone.
+
+  v0.6.21 - walk a bid parked above the cap back down.
+
+  When the dynamic cap fell below the current bid but the over-cap gap was smaller
+  than the old deadband, the bid never walked down - it sat above break-even for
+  hours. An over-cap bid now steps back toward the cap regardless of the deadband.
+
   v0.6.20 - dynamic cap now matches the P&L break-even.
 
   The dynamic cap subtracted fees as a percent of the hashprice (hashprice x
