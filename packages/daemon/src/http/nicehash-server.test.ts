@@ -46,7 +46,7 @@ function tickResult(): NiceHashTickResult {
       tick_at: 1_700_000_000_000,
       run_mode: 'DRY_RUN',
       config: config(),
-      market: { anchor_price_btc: 0.0102, total_speed_units: 537, thin: false },
+      market: { anchor_price_btc: 0.0102, total_speed_units: 537, thin: false, filled_prices: [0.0102, 0.0105] },
       balance_btc: 0.001,
       owned_orders: [],
       unknown_orders: [],
@@ -139,6 +139,7 @@ describe('NiceHash HTTP server', () => {
     const res = await app.inject({ method: 'GET', url: '/api/nicehash/status' });
     const body = res.json();
     expect(body.market.anchor_price_btc).toBe(0.0102);
+    expect(body.market.next_filled_price_btc).toBe(0.0105);
     expect(body.balance_btc).toBe(0.001);
     expect(body.proposals[0]).toEqual({ kind: 'CREATE_ORDER', reason: 'create' });
     expect(body.outcomes[0]).toEqual({ kind: 'CREATE_ORDER', outcome: 'BLOCKED', detail: 'RUN_MODE_NOT_LIVE' });

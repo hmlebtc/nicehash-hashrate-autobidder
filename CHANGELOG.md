@@ -2,6 +2,14 @@
 
 ## 2026-07-06
 
+### `[UI]` Add a "Next tier" tile next to Market anchor
+
+The Status summary now shows a **Next tier** tile (cyan) alongside the **Market
+anchor** tile (purple), so the marginal price to beat and the next filled tier
+sit side by side as numbers — matching the purple and cyan lines on the price
+chart. The value is the same cap-bounded next filled tier the bidder anchors on,
+so the tile, the chart, and the bid logic all read the one number.
+
 ### `[Fix]` Next filled tier: cap the gap-jump so it can't overshoot the ceiling
 
 The "next filled tier" (cyan line, and the anchor when "Anchor on next filled
