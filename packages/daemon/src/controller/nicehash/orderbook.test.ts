@@ -59,9 +59,10 @@ describe('computeMarketAnchor', () => {
     expect(a.thin).toBe(false);
   });
 
-  it('uses rig counts over accepted-speed when both are present (acceptedSpeed under-reports)', () => {
+  it('counts an order filled by miners even when its accepted-speed reads 0', () => {
     // The cheap order has miners but the orderbook reports its acceptedSpeed as
-    // 0 (the field under-reports). rigs_count must still anchor us at the floor.
+    // 0 (the field under-reports). It must still count as filled (via rigs_count)
+    // and anchor us at the floor.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.0006, limit_units: 5, rigs_count: 3, accepted_speed_units: 2 },
       { price_btc: 0.0004, limit_units: 5, rigs_count: 5000, accepted_speed_units: 0 },
@@ -70,7 +71,21 @@ describe('computeMarketAnchor', () => {
     expect(a.anchor_price_btc).toBe(0.0004);
   });
 
-  it('falls back to accepted-speed when no rig counts are reported', () => {
+  it('counts a speed-only order (miners not reported) as filled — the marginal', () => {
+    // The order-book API can report delivered speed but 0 miners for the marginal
+    // order (sparse per-order data), while a pricier order reports miners. The
+    // marginal must be the cheapest order receiving hashrate by EITHER signal
+    // (the union) - matching NiceHash's purple - not the cheapest with miners.
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.46, limit_units: 5, rigs_count: 90013, accepted_speed_units: 4.6 },
+      { price_btc: 0.458, limit_units: 5, rigs_count: 0, accepted_speed_units: 0.0111 },
+    ];
+    const a = computeMarketAnchor(competitors, 18, 1);
+    expect(a.anchor_price_btc).toBe(0.458); // speed-only order, not skipped
+    expect(a.filled_prices).toEqual([0.458, 0.46]);
+  });
+
+  it('counts orders by accepted-speed when no rig counts are reported anywhere', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0.1, limit_units: 0, accepted_speed_units: 0 },
       { price_btc: 0.0102, limit_units: 5, accepted_speed_units: 5 },

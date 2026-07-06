@@ -61,11 +61,16 @@ export function computeMarketAnchor(
   const prices = valid.map((o) => o.price_btc);
   const lowest = prices.length > 0 ? Math.min(...prices) : null;
 
-  // Orders currently receiving hashrate. Prefer the "Miners" count (`rigs_count`);
-  // fall back to `accepted_speed_units` only when no rig counts are reported.
-  const byRigs = valid.filter((o) => (o.rigs_count ?? 0) > 0);
-  const bySpeed = valid.filter((o) => (o.accepted_speed_units ?? 0) > 0);
-  const filled = byRigs.length > 0 ? byRigs : bySpeed;
+  // Orders currently receiving hashrate. An order counts as filled if it reports
+  // miners (`rigs_count`) OR delivered speed (`accepted_speed_units`): the order
+  // book API reports both per-order signals sparsely, so a marginal order can show
+  // speed but no miner count on a given tick (or vice versa). Taking the union of
+  // the two catches those speed-only fills - the cheapest of which is often
+  // NiceHash's true marginal (purple) - instead of skipping them (as an earlier
+  // rigs-only-preferred rule did) and reading the marginal a tier or two too high.
+  const filled = valid.filter(
+    (o) => (o.rigs_count ?? 0) > 0 || (o.accepted_speed_units ?? 0) > 0,
+  );
 
   if (filled.length === 0) {
     // Nothing is being delivered to any competitor: no live competition to

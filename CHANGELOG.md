@@ -2,6 +2,18 @@
 
 ## 2026-07-06
 
+### `[Fix]` Marginal counts speed-only orders (matches NiceHash's purple better)
+
+The market anchor (marginal) read a tier or two above NiceHash's own marginal and
+flickered tick-to-tick. The order-book API reports each order's miner count and
+delivered speed sparsely, and the old rule counted an order as "filled" only by
+its miner count (falling back to speed only when *no* order reported miners) — so
+a marginal order showing delivered speed but 0 miners was skipped, pushing the
+anchor up to the next order that did report miners. The marginal now counts an
+order as filled if it reports miners **or** delivered speed (the union), so the
+cheapest order actually receiving hashrate — NiceHash's purple — is the anchor.
+This feeds the bid anchor and the next-filled-tier ladder.
+
 ### `[Fix]` Next filled tier no longer blanks when the whole book is above the cap
 
 When the entire filled order book is priced above your dynamic cap (the market
