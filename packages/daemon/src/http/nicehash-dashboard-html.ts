@@ -109,6 +109,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   canvas { width: 100%; height: 220px; display: block; margin-top: 8px; }
   .btn-reset { margin-left: auto; font-size: 11px; padding: 2px 9px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; }
   .btn-reset:hover { color: var(--text); border-color: var(--muted); }
+  /* Rearrangeable tiles: any card in a .grid[data-tilegrid] can be dragged to
+     reorder; the order persists per-grid in localStorage. */
+  .card.draggable { cursor: grab; }
+  .card.draggable:active { cursor: grabbing; }
+  .card.dragging { opacity: .45; outline: 1px dashed var(--border2); }
+  .tiles-toolbar { display: flex; justify-content: flex-end; margin: 0 0 8px; }
   .chart-hint { font-size: 10px; color: var(--muted); margin: 2px 0 0 2px; }
   .rangebar { display: flex; gap: 4px; margin: 6px 0 2px; flex-wrap: wrap; }
   .rangebar button { font: inherit; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--border2); background: var(--panel); color: var(--muted); cursor: pointer; }
@@ -175,14 +181,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       </div>
     </div>
 
-    <div class="grid">
-      <div class="card"><h2>Price (current bid)</h2><div class="big" id="curPrice" style="color:#fb923c">—</div><div class="muted" id="curPriceUnit"></div></div>
-      <div class="card"><h2>Delivered</h2><div class="big" id="curDelivered" style="color:#fb923c">—</div><div class="muted" id="curDeliveredUnit"></div></div>
-      <div class="card"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
-      <div class="card"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
-      <div class="card"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
-      <div class="card"><h2>Next tier</h2><div class="big" id="nextTier" style="color:#38bdf8">—</div><div class="muted" id="nextTierUnit">next filled tier (cyan)</div></div>
-      <div class="card"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
+    <div class="tiles-toolbar"><button class="btn-reset" id="resetTiles" title="Restore the default tile order">⤢ reset tile layout</button></div>
+
+    <div class="grid" data-tilegrid="market">
+      <div class="card" data-tile="curPrice"><h2>Price (current bid)</h2><div class="big" id="curPrice" style="color:#fb923c">—</div><div class="muted" id="curPriceUnit"></div></div>
+      <div class="card" data-tile="curDelivered"><h2>Delivered</h2><div class="big" id="curDelivered" style="color:#fb923c">—</div><div class="muted" id="curDeliveredUnit"></div></div>
+      <div class="card" data-tile="orderBalance"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
+      <div class="card" data-tile="orderRunway"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
+      <div class="card" data-tile="anchor"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
+      <div class="card" data-tile="nextTier"><h2>Next tier</h2><div class="big" id="nextTier" style="color:#38bdf8">—</div><div class="muted" id="nextTierUnit">next filled tier (cyan)</div></div>
+      <div class="card" data-tile="supply"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
     </div>
 
     <div class="rangebar" id="rangebar">
@@ -196,7 +204,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <button data-range="all">All</button>
     </div>
 
-    <div class="grid" id="tiles"></div>
+    <div class="grid" id="tiles" data-tilegrid="stats"></div>
 
     <div class="chartcard">
       <div class="head"><h3>Hashrate</h3>
@@ -239,7 +247,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </table>
 
     <h2 class="section">Profit &amp; loss <span class="muted" style="text-transform:none">(income/net are estimates from the hashprice oracle)</span></h2>
-    <div class="grid" id="pnl"></div>
+    <div class="grid" id="pnl" data-tilegrid="pnl"></div>
 
     <h2 class="section">Next action detail</h2>
     <table>
@@ -351,7 +359,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (av < 1) return v.toFixed(4);
     return v.toFixed(2);
   }
-  function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 8 : d); }
+  // Prices default to 4 decimals to match the NiceHash order book's granularity
+  // (the price step is 0.0001 BTC/EH/day). Callers that need more precision for a
+  // derived/aggregate value (dynamic cap, hashprice, margin, averages, reprice
+  // deltas) pass an explicit d.
+  function fmtPrice(btc, d) { var v = cvPrice(btc); if (v == null) return '—'; return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(d == null ? 4 : d); }
   function fmtBtc(v, d) { return v == null ? '—' : Number(v).toFixed(d == null ? 8 : d); }
   // Adaptive Y-axis tick formatter: keeps small values (e.g. a 0.0005 EH/s fill on
   // the delivered axis) legible instead of rounding them all to "0.00".
@@ -710,9 +722,10 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     hashprice: '#94a3b8', dyncap: '#34d399', hardcap: '#f87171', limit: '#3b82f6',
   };
 
+  function tileKey(label) { return label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
   function tile(label, value, sub, cls, color) {
     var style = color ? ' style="color:' + color + '"' : '';
-    return '<div class="card"><h2>' + esc(label) + '</h2><div class="big ' + (cls || '') + '"' + style + '>' + value + '</div><div class="muted">' + esc(sub || '') + '</div></div>';
+    return '<div class="card" data-tile="' + tileKey(label) + '"><h2>' + esc(label) + '</h2><div class="big ' + (cls || '') + '"' + style + '>' + value + '</div><div class="muted">' + esc(sub || '') + '</div></div>';
   }
 
   function renderTiles() {
@@ -746,6 +759,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? 'no active bid' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
+    applyTileOrder($('tiles'));
   }
 
   function renderPnl() {
@@ -768,6 +782,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     html += tile('Est. net / day', net == null ? '—' : (net >= 0 ? '+' : '') + fmtBtc(net, 6), 'BTC/day', net == null ? '' : (net >= 0 ? 'pos' : 'neg'));
     html += tile('Est. return', ret == null ? '—' : (ret >= 0 ? '+' : '') + ret.toFixed(1) + '%', 'net / cost', ret == null ? '' : (ret >= 0 ? 'pos' : 'neg'));
     $('pnl').innerHTML = html;
+    applyTileOrder($('pnl'));
   }
 
   function runwayHours(o) {
@@ -987,6 +1002,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['retentionDays', 'History retention (days)', 'number', 'How many days of per-tick metrics and order history to keep before pruning.'],
       ['logRetentionDays', 'Log retention (days)', 'select:15,30,60,90', 'How many days of decision + error logs (the Logs tab) to keep before pruning.'] ] }
   ];
+  // A config field is a BTC/EH/day *price* field (Overpay, Max price, Profit
+  // buffer). These are capped to the order book's 0.0001 granularity: the input
+  // steps by 0.0001 and the value is rounded to 4 decimals on load + save.
+  function isCfgPrice(it) { return it[2] === 'number' && /BTC\/\w+\/day/.test(it[1]); }
+  function round4(v) { var n = parseFloat(v); return Number.isFinite(n) ? Math.round(n * 1e4) / 1e4 : v; }
   function buildConfigForm() {
     var html = '';
     CFG.forEach(function (g) {
@@ -1002,7 +1022,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
           var opts = type.slice(7).split(',').map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
           html += '<label>' + esc(label) + '<select id="' + id + '">' + opts + '</select>' + help + '</label>';
         } else {
-          var extra = type === 'number' ? ' step="any"' : type === 'password' ? ' autocomplete="off"' : '';
+          // Price fields step by the order-book granularity (0.0001); other numbers
+          // stay free-form.
+          var extra = type === 'number' ? (isCfgPrice(it) ? ' step="0.0001" min="0"' : ' step="any"') : type === 'password' ? ' autocomplete="off"' : '';
           html += '<label>' + esc(label) + '<input id="' + id + '" type="' + type + '"' + extra + ' />' + help + '</label>';
         }
       });
@@ -1025,15 +1047,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function fillConfig(cfg) {
     CFG.forEach(function (g) { g.items.forEach(function (it) {
       var el = $('cfg_' + it[0]); if (!el) return;
-      if (it[2] === 'checkbox') el.checked = !!cfg[it[0]];
-      else el.value = (cfg[it[0]] === null || cfg[it[0]] === undefined) ? '' : cfg[it[0]];
+      var v = cfg[it[0]];
+      if (it[2] === 'checkbox') el.checked = !!v;
+      else if (v === null || v === undefined || v === '') el.value = '';
+      // Price fields display at the order book's 4-decimal granularity.
+      else el.value = isCfgPrice(it) ? round4(v) : v;
     }); });
   }
   function collectConfig() {
     var out = {};
     CFG.forEach(function (g) { g.items.forEach(function (it) {
       var el = $('cfg_' + it[0]); if (!el) return;
-      out[it[0]] = it[2] === 'checkbox' ? el.checked : el.value;
+      if (it[2] === 'checkbox') { out[it[0]] = el.checked; return; }
+      // Persist price fields rounded to the order book's 0.0001 granularity.
+      out[it[0]] = (isCfgPrice(it) && el.value !== '') ? round4(el.value) : el.value;
     }); });
     return out;
   }
@@ -1071,6 +1098,85 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   buildConfigForm();
   syncToggles();
   Array.prototype.forEach.call(document.querySelectorAll('#rangebar button'), function (b) { b.classList.toggle('active', b.getAttribute('data-range') === UI.range); });
+  // ---- rearrangeable tiles -------------------------------------------------
+  // Each .grid[data-tilegrid] is a drag container: any card can be dragged to a
+  // new slot and the order persists per-grid in localStorage (keyed by each
+  // card's data-tile). Tiles are updated by id / rebuilt in place, so reordering
+  // the DOM is safe; the dynamic grids (#tiles, #pnl) re-run applyTileOrder after
+  // each innerHTML rebuild to restore the saved order.
+  function tileOrderKey(id) { return 'nh.tileorder.' + id; }
+  function gridCards(grid) { return Array.prototype.filter.call(grid.children, function (c) { return c.classList && c.classList.contains('card'); }); }
+  function readTileOrder(id) {
+    try { var v = JSON.parse(localStorage.getItem(tileOrderKey(id)) || 'null'); return Array.isArray(v) ? v : null; } catch (e) { return null; }
+  }
+  function saveTileOrder(grid) {
+    var id = grid.getAttribute('data-tilegrid'); if (!id) return;
+    var order = gridCards(grid).map(function (c) { return c.getAttribute('data-tile'); }).filter(Boolean);
+    localStorage.setItem(tileOrderKey(id), JSON.stringify(order));
+  }
+  function markDraggable(grid) {
+    gridCards(grid).forEach(function (c) {
+      if (c.getAttribute('data-tile')) { c.setAttribute('draggable', 'true'); c.classList.add('draggable'); }
+    });
+  }
+  function applyTileOrder(grid) {
+    if (!grid || !grid.getAttribute('data-tilegrid')) return;
+    var order = readTileOrder(grid.getAttribute('data-tilegrid'));
+    if (order) {
+      var byKey = {};
+      gridCards(grid).forEach(function (c) { var k = c.getAttribute('data-tile'); if (k) byKey[k] = c; });
+      // Re-append known cards in saved order; unknown/new cards keep their spot at the end.
+      order.forEach(function (k) { if (byKey[k]) { grid.appendChild(byKey[k]); delete byKey[k]; } });
+    }
+    markDraggable(grid);
+  }
+  function tileAfterElement(grid, x, y) {
+    var best = null, bestDist = Infinity, before = true;
+    gridCards(grid).forEach(function (c) {
+      if (c.classList.contains('dragging')) return;
+      var b = c.getBoundingClientRect();
+      var cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      var dx = x - cx, dy = y - cy, dist = dx * dx + dy * dy;
+      if (dist < bestDist) { bestDist = dist; best = c; before = (y < cy - b.height / 2) || (Math.abs(y - cy) <= b.height / 2 && x < cx); }
+    });
+    if (!best) return null;
+    return before ? best : best.nextElementSibling;
+  }
+  function enableTileDrag(grid) {
+    var dragged = null;
+    grid.addEventListener('dragstart', function (e) {
+      var c = e.target && e.target.closest ? e.target.closest('.card') : null;
+      if (!c || c.parentNode !== grid || !c.getAttribute('data-tile')) return;
+      dragged = c; c.classList.add('dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', c.getAttribute('data-tile')); } catch (err) {} }
+    });
+    grid.addEventListener('dragover', function (e) {
+      if (!dragged) return;
+      e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      var after = tileAfterElement(grid, e.clientX, e.clientY);
+      if (after === dragged) return;
+      if (after == null) grid.appendChild(dragged); else grid.insertBefore(dragged, after);
+    });
+    grid.addEventListener('drop', function (e) { if (dragged) e.preventDefault(); });
+    grid.addEventListener('dragend', function () {
+      if (!dragged) return;
+      dragged.classList.remove('dragging'); saveTileOrder(grid); dragged = null;
+    });
+  }
+  function initTiles() {
+    Array.prototype.forEach.call(document.querySelectorAll('.grid[data-tilegrid]'), function (grid) {
+      enableTileDrag(grid); applyTileOrder(grid);
+    });
+    var reset = $('resetTiles');
+    if (reset) reset.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.grid[data-tilegrid]'), function (grid) {
+        localStorage.removeItem(tileOrderKey(grid.getAttribute('data-tilegrid')));
+      });
+      location.reload();
+    });
+  }
+  initTiles();
+
   refreshStatus(); loadMetrics(); loadSummary();
   // Poll cadence. The underlying data only changes once per control-loop tick
   // (the "Tick seconds" setting), so these mainly bound how soon a finished tick
