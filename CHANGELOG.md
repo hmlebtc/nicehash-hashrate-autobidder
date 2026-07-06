@@ -2,6 +2,17 @@
 
 ## 2026-07-06
 
+### `[Fix]` Next filled tier no longer blanks when the whole book is above the cap
+
+When the entire filled order book is priced above your dynamic cap (the market
+has moved past your break-even), the Next tier tile went blank. The v0.6.27
+cap-clamp on the fill ladder was collapsing every tier onto the cap and then
+dropping them all (they sit below the marginal), leaving no next tier. The clamp
+now only applies when the cap is within the book (above the marginal); when the
+whole book is above the cap it keeps the real tiers, so the Next tier tile and
+the price chart still show where the market is filling. Display-only — the bid is
+capped independently, so bidding is unchanged.
+
 ### `[UI]` Show hashprice / order balance / dynamic cap / avg price at 4 decimals
 
 Four more tiles now round to 4 decimal places to match the order book: Hashprice

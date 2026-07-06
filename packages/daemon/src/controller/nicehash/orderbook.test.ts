@@ -185,6 +185,22 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.4533, 0.4554]);
   });
 
+  it('keeps the real next tier when the whole book is above the cap (no blank tier)', () => {
+    // Live regression: the entire filled book is priced above our break-even cap
+    // (marginal 0.4580 > cap 0.4559). The cap-clamp must NOT drop every tier and
+    // blank filled_prices[1] - we still expose the real next filled tier so the
+    // dashboard shows where the market is. (The bid is capped separately.)
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.458, limit_units: 5, rigs_count: 106 }, // marginal, above the cap
+      { price_btc: 0.46, limit_units: 5, rigs_count: 90013 }, // next block
+      { price_btc: 0.4602, limit_units: 5, rigs_count: 5695 },
+    ];
+    const a = computeMarketAnchor(competitors, 18.3, 1, 0.0001, 0.4559);
+    expect(a.anchor_price_btc).toBe(0.458);
+    // next tier is populated (0.46), not blanked by the clamp
+    expect(a.filled_prices).toEqual([0.458, 0.46, 0.4602]);
+  });
+
   it('does not clamp a next filled tier that is already below the cap', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
