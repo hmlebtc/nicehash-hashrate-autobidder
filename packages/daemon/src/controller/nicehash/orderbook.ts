@@ -114,7 +114,14 @@ export function computeMarketAnchor(
   // reported next filled tier - and the bid it anchors - stays pinned at the cap
   // instead of charting an absurd price we could never actually pay.
   let ladder = nextTier !== null ? tiers.filter((p) => p >= nextTier!) : [];
-  if (capBtc > 0) {
+  // Only clamp the ladder when the cap sits *within* the book (above the
+  // marginal): then an out-of-reach next tier collapses onto the cap. When the
+  // WHOLE filled book is above the cap (marginal >= cap - the market is priced
+  // past our break-even), clamping would drop every tier onto the cap and then
+  // the `p > marginal` filter removes them all, blanking the next tier. In that
+  // case we keep the real tiers so the dashboard still shows where the market is
+  // filling (the bid is capped independently in decide(), so this is display-only).
+  if (capBtc > 0 && capBtc > marginal) {
     ladder = ladder.map((p) => Math.min(p, capBtc)).filter((p) => p > marginal);
   }
   const filledPrices = [marginal, ...ladder].filter((p, i, a) => i === 0 || p !== a[i - 1]!);
