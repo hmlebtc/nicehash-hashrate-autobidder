@@ -75,18 +75,39 @@ describe('computeMarketAnchor', () => {
     expect(a.anchor_price_btc).toBe(0.0004);
   });
 
-  it('counts a speed-only order (miners not reported) as filled — the marginal', () => {
-    // The order-book API can report delivered speed but 0 miners for the marginal
-    // order (sparse per-order data), while a pricier order reports miners. The
-    // marginal must be the cheapest order receiving hashrate by EITHER signal
-    // (the union) - matching NiceHash's purple - not the cheapest with miners.
+  it('treats a speed-only order below the miner-bearing block as noise, not the marginal', () => {
+    // The order-book API routinely reports a small residual delivered-speed on an
+    // order sitting BELOW the fill line (0 miners) - a stale/boundary artifact. When
+    // a pricier order reports miners, the marginal is the cheapest MINER-bearing
+    // order (NiceHash's purple), not the cheaper speed-only straggler. (Reverses an
+    // earlier speed-union rule that let this residual noise drag the marginal far
+    // below NiceHash's purple - see the 0.4556-vs-0.4606 live case, 2026-07-06.)
     const competitors: CompetingOrder[] = [
       { price_btc: 0.46, limit_units: 5, rigs_count: 90013, accepted_speed_units: 4.6 },
-      { price_btc: 0.458, limit_units: 5, rigs_count: 0, accepted_speed_units: 0.0111 },
+      { price_btc: 0.458, limit_units: 5, rigs_count: 0, accepted_speed_units: 0.0111 }, // residual noise below
     ];
     const a = computeMarketAnchor(competitors, 18, 1);
-    expect(a.anchor_price_btc).toBe(0.458); // speed-only order, not skipped
-    expect(a.filled_prices).toEqual([0.458, 0.46]);
+    expect(a.anchor_price_btc).toBe(0.46); // the miner-bearing block, not the speed-only 0.458
+    expect(a.filled_prices).toEqual([0.46]);
+  });
+
+  it('anchors on the miner-bearing block, ignoring residual-speed stragglers below a wide gap', () => {
+    // Operator's live book (2026-07-06): NiceHash's purple marginal is the big block
+    // at 0.4606 (41,850 miners). Below it sit residual-speed stragglers (0 miners,
+    // tiny accepted_speed) and a wide run of empty 0-volume slots. The marginal must
+    // be 0.4606 - NOT dragged down to the 0.4556 speed-straggler. With the cap below
+    // the whole block, the next tier reins to the nearest real block above (0.4607).
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4556, limit_units: 0.00013852, rigs_count: 0, accepted_speed_units: 0.0073 }, // noise
+      { price_btc: 0.4559, limit_units: 0.0000172, rigs_count: 0, accepted_speed_units: 0.0009 }, // noise
+      { price_btc: 0.4605, limit_units: 0.00001039, rigs_count: 0, accepted_speed_units: 0.0005 }, // noise
+      { price_btc: 0.4606, limit_units: 0.00459248, rigs_count: 41850, accepted_speed_units: 0.2393 }, // purple
+      { price_btc: 0.4607, limit_units: 0.00389315, rigs_count: 3314, accepted_speed_units: 0.2028 },
+      { price_btc: 0.462, limit_units: 0.00066185, rigs_count: 1245, accepted_speed_units: 0.0344 },
+    ];
+    const a = computeMarketAnchor(competitors, 13, 1, 0.0001, 0.45594);
+    expect(a.anchor_price_btc).toBe(0.4606); // NiceHash purple, not the 0.4556 straggler
+    expect(a.filled_prices[1]).toBe(0.4607); // nearest real block above the marginal
   });
 
   it('counts orders by accepted-speed when no rig counts are reported anywhere', () => {

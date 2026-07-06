@@ -61,16 +61,22 @@ export function computeMarketAnchor(
   const prices = valid.map((o) => o.price_btc);
   const lowest = prices.length > 0 ? Math.min(...prices) : null;
 
-  // Orders currently receiving hashrate. An order counts as filled if it reports
-  // miners (`rigs_count`) OR delivered speed (`accepted_speed_units`): the order
-  // book API reports both per-order signals sparsely, so a marginal order can show
-  // speed but no miner count on a given tick (or vice versa). Taking the union of
-  // the two catches those speed-only fills - the cheapest of which is often
-  // NiceHash's true marginal (purple) - instead of skipping them (as an earlier
-  // rigs-only-preferred rule did) and reading the marginal a tier or two too high.
-  const filled = valid.filter(
-    (o) => (o.rigs_count ?? 0) > 0 || (o.accepted_speed_units ?? 0) > 0,
-  );
+  // Orders currently receiving hashrate. Miners (`rigs_count`) is the RELIABLE
+  // per-order fill signal; delivered speed (`accepted_speed_units`) is noisy - the
+  // book routinely reports a small residual speed on orders sitting *below* the
+  // fill line (0 miners), a stale/boundary artifact. Trusting that residual speed
+  // (an earlier speed-union rule did) drags the marginal far below NiceHash's
+  // purple: e.g. a 0.4556 order showing 0.007 EH/s and 0 miners was read as the
+  // marginal while the real block (41,850 miners) sat at 0.4606. So we PREFER
+  // miners: when any order reports a miner count, the filled set is the
+  // miner-bearing orders and speed-only stragglers are treated as noise. Only when
+  // NO order reports miners anywhere (some ticks/markets omit the column) do we
+  // fall back to delivered speed so a miner-less book still finds a floor.
+  const filledByRigs = valid.filter((o) => (o.rigs_count ?? 0) > 0);
+  const filled =
+    filledByRigs.length > 0
+      ? filledByRigs
+      : valid.filter((o) => (o.accepted_speed_units ?? 0) > 0);
 
   if (filled.length === 0) {
     // Nothing is being delivered to any competitor: no live competition to
@@ -93,10 +99,10 @@ export function computeMarketAnchor(
   // when no delivered speed is reported.
   const stats = marketPriceStats(filled);
 
-  // The marginal (NiceHash purple) = the cheapest order we can *detect* receiving
-  // hashrate (rigs or speed). This is the one tier that genuinely needs the
-  // per-order signal: it's the boundary between the filled and unfilled book,
-  // which price alone can't locate.
+  // The marginal (NiceHash purple) = the cheapest order in the filled set (miner-
+  // bearing, or speed-bearing only when no miners are reported anywhere). This is
+  // the one tier that genuinely needs the per-order signal: it's the boundary
+  // between the filled and unfilled book, which price alone can't locate.
   const marginal = Math.min(...filled.map((o) => o.price_btc)); // cheapest filled = purple
 
   // The fill ladder ABOVE the marginal, built from price position - every valid

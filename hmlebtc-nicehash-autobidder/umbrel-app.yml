@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.37"
+version: "0.6.38"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,15 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.38 - market anchor no longer dragged below NiceHash's purple.
+
+  The order book reports a tiny residual delivered-speed on some orders that sit
+  BELOW the fill line (0 miners) - stale noise. That noise was being treated as a
+  live fill, so the market anchor (and the next tier above it) could read far below
+  NiceHash's purple marginal - e.g. 0.4556 when the real block (41,850 miners) was
+  at 0.4606. The anchor now trusts miner counts (the reliable signal) and treats
+  speed-only stragglers as noise, so it tracks NiceHash's purple.
+
   v0.6.37 - next tier no longer spikes when the market is above your cap.
 
   When the whole order book sits above your dynamic cap, the "next filled tier"

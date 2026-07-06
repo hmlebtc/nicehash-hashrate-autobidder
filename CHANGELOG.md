@@ -2,6 +2,22 @@
 
 ## 2026-07-06
 
+### `[Fix]` Market anchor no longer dragged below NiceHash's purple by speed noise
+
+The order-book API routinely reports a small residual delivered-speed on orders
+that sit *below* the fill line (0 miners) — a stale/boundary artifact. The earlier
+"count speed-filled orders too" rule (a union of miners **or** speed) treated that
+residual as a live fill, so the market anchor — and the next tier anchored above
+it — could read far below NiceHash's purple marginal. Live case: the anchor showed
+`0.4556` (an order with 0 miners and ~0.007 EH/s of residual speed) while the real
+block of 41,850 miners sat at `0.4606`, leaving the next tier stuck near the cap
+instead of tracking the real market. The anchor now **prefers miner counts** (the
+reliable per-order signal): when any order reports miners, speed-only stragglers
+are treated as noise; delivered speed is used only as a fallback when no order
+reports miners anywhere. This reads the anchor at (or, in the rare thin-boundary
+case, one tier above) NiceHash's purple — never dragged below it, so the bid never
+under-shoots the real market.
+
 ### `[Fix]` Next filled tier no longer spikes when the market is above the cap
 
 Follow-up to the tier fix below. When the entire order book sits above your
