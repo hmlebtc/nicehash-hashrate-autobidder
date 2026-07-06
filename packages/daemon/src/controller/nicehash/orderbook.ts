@@ -93,10 +93,27 @@ export function computeMarketAnchor(
   // when no delivered speed is reported.
   const stats = marketPriceStats(filled);
 
-  // NiceHash returns *individual* orders, so the marginal (and every other) price
-  // is usually shared by many orders. Collapse into distinct price tiers.
-  const tiers = [...new Set(filled.map((o) => o.price_btc))].sort((a, b) => a - b);
-  const marginal = tiers[0]!; // cheapest filled tier = the marginal (NiceHash purple)
+  // The marginal (NiceHash purple) = the cheapest order we can *detect* receiving
+  // hashrate (rigs or speed). This is the one tier that genuinely needs the
+  // per-order signal: it's the boundary between the filled and unfilled book,
+  // which price alone can't locate.
+  const marginal = Math.min(...filled.map((o) => o.price_btc)); // cheapest filled = purple
+
+  // The fill ladder ABOVE the marginal, built from price position - every valid
+  // order priced at/above the marginal, not just the ones the API tagged with
+  // rigs/speed. NiceHash delivers hashrate in strict *descending* price order, so
+  // any live order priced above the marginal is itself being filled (it sits
+  // ahead of the marginal in the delivery queue). We can't rely on the per-order
+  // rigs/speed signal up here: the order-book API reports it too sparsely, so a
+  // large, obviously-filled block (e.g. NiceHash's UI shows ~9,800 miners) can
+  // come back with 0/undefined rigs AND speed. A rigs/speed-only ladder drops
+  // that block, skips the real next tier, and reports the next *detectable* tier
+  // further up - which then clamps onto the cap and reads as a phantom next tier.
+  // Price position never drops a real block. (The marginal above is still found
+  // via rigs/speed - only the tiers above it switch to price position.)
+  const tiers = [...new Set(valid.filter((o) => o.price_btc >= marginal).map((o) => o.price_btc))].sort(
+    (a, b) => a - b,
+  );
 
   // The "next filled tier" we anchor on. By default the next distinct tier (a
   // simple de-dupe of the marginal). When we know the price step, we instead jump

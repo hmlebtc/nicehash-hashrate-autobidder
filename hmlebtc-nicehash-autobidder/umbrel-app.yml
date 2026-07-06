@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.35"
+version: "0.6.36"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,16 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.36 - next filled tier tracks the real block.
+
+  The "next filled tier" tile (cyan) read the per-order miner/speed counts to
+  decide which tiers were filled, but the order-book API reports those sparsely -
+  so a large, obviously-filled block could come back with both zeroed out, get
+  dropped, and the tile would show the dynamic cap instead of the real block. The
+  tier above the marginal is now read by price position (NiceHash fills orders in
+  strict descending-price order, so anything above the marginal is being filled).
+  With "anchor on next filled tier" on, the bid tracks the real block, not the cap.
+
   v0.6.35 - Umbrel release notes backfilled.
 
   These notes had stopped updating at v0.6.20 while the app kept shipping. This
