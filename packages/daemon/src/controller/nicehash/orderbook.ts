@@ -81,8 +81,17 @@ export function computeMarketAnchor(
       total_speed_units: totalSpeedUnits,
       thin: !(totalSpeedUnits > 0),
       filled_prices: [],
+      median_price_btc: null,
+      avg_price_btc: null,
     };
   }
+
+  // Market price stats over the filled orders (for the MARKET chart). Median =
+  // the middle filled-order price (a robust "typical" market price); avg =
+  // speed-weighted, sum(price x speed) / sum(speed) - the effective price per
+  // delivered EH (~ NiceHash's "Paying"), falling back to the unweighted mean
+  // when no delivered speed is reported.
+  const stats = marketPriceStats(filled);
 
   // NiceHash returns *individual* orders, so the marginal (and every other) price
   // is usually shared by many orders. Collapse into distinct price tiers.
@@ -138,5 +147,32 @@ export function computeMarketAnchor(
     // a best-effort flag; we still anchor at the floor and grab what we can.
     thin: totalSpeedUnits > 0 && targetUnits >= totalSpeedUnits,
     filled_prices: filledPrices,
+    median_price_btc: stats.median,
+    avg_price_btc: stats.avg,
   };
+}
+
+/**
+ * Median + speed-weighted-average price over a set of filled orders. Median is
+ * the middle order's price; avg = sum(price x speed) / sum(speed), falling back
+ * to the unweighted mean when no order reports delivered speed.
+ */
+function marketPriceStats(
+  orders: readonly CompetingOrder[],
+): { median: number | null; avg: number | null } {
+  if (orders.length === 0) return { median: null, avg: null };
+  const prices = orders.map((o) => o.price_btc).sort((a, b) => a - b);
+  const mid = Math.floor(prices.length / 2);
+  const median = prices.length % 2 === 1 ? prices[mid]! : (prices[mid - 1]! + prices[mid]!) / 2;
+  let weighted = 0;
+  let weight = 0;
+  for (const o of orders) {
+    const s = o.accepted_speed_units ?? 0;
+    if (s > 0) {
+      weighted += o.price_btc * s;
+      weight += s;
+    }
+  }
+  const avg = weight > 0 ? weighted / weight : prices.reduce((a, b) => a + b, 0) / prices.length;
+  return { median, avg };
 }

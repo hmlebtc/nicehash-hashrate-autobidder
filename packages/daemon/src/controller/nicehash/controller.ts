@@ -223,6 +223,9 @@ function buildMetricsRow(
     anchor_price_btc: state.market?.anchor_price_btc ?? null,
     // The next filled tier above the marginal (2nd-cheapest order with miners).
     next_filled_price_btc: state.market?.filled_prices?.[1] ?? null,
+    // Market price stats over the filled orders (MARKET chart).
+    market_median_price_btc: state.market?.median_price_btc ?? null,
+    market_avg_price_btc: state.market?.avg_price_btc ?? null,
     our_price_btc: primary?.price_btc ?? null,
     total_speed_units: state.market?.total_speed_units ?? null,
     accepted_speed_units: sum(owned, (o) => o.accepted_speed_units),

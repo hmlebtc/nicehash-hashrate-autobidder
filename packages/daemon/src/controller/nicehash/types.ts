@@ -55,6 +55,18 @@ export interface MarketAnchor {
    * rather than a fixed step. Empty when nothing is being filled.
    */
   readonly filled_prices?: readonly number[];
+  /**
+   * Median price among the filled orders (the middle order receiving hashrate) -
+   * a robust "typical" market price. Null when nothing is filled. Display only.
+   */
+  readonly median_price_btc?: number | null;
+  /**
+   * Speed-weighted average filled-order price: sum(price x speed) / sum(speed)
+   * over the filled orders - the effective price per delivered EH, the closest
+   * proxy to NiceHash's "Paying" rate. Falls back to the unweighted mean when no
+   * delivered speed is reported. Null when nothing is filled. Display only.
+   */
+  readonly avg_price_btc?: number | null;
 }
 
 /** An order we consider our own, reconciled from `myOrders` against the ledger. */

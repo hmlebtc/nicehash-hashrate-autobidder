@@ -2,7 +2,16 @@
 
 ## 2026-07-06
 
-### `[Fix]` Marginal counts speed-only orders (matches NiceHash's purple better)
+### `[Feature]` New Market chart (hashprice / next tier / median / average)
+
+Added a Market chart below the Price chart, tracking the wider market context
+rather than our own bid: the hashprice, the next filled tier (same cyan as the
+price chart), the median filled-order price, and the speed-weighted average
+filled-order price — the last of which is the effective price per delivered EH,
+the closest proxy to NiceHash's "Paying" rate. Two new per-tick market-price
+metrics are recorded and back the chart; it uses the same time-range selector,
+polling, and robust axis filter as the charts above it. Purely additive — the
+existing charts, their data, and the tick cadence are unchanged.
 
 The market anchor (marginal) read a tier or two above NiceHash's own marginal and
 flickered tick-to-tick. The order-book API reports each order's miner count and

@@ -252,6 +252,10 @@ export interface NiceHashTickMetricsTable {
   anchor_price_btc: number | null;
   /** Next filled tier above the marginal (2nd-cheapest order with miners). */
   next_filled_price_btc: number | null;
+  /** Median price among filled orders (the middle order receiving hashrate). */
+  market_median_price_btc: number | null;
+  /** Speed-weighted average filled-order price (~ NiceHash's "Paying" rate). */
+  market_avg_price_btc: number | null;
   our_price_btc: number | null;
   total_speed_units: number | null;
   accepted_speed_units: number | null;

@@ -243,6 +243,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · drag the ⇕ handle to stretch taller/shorter</div>
     </div>
 
+    <div class="chartcard">
+      <div class="head"><h3>Market</h3>
+        <div class="legend">
+          <span><i class="swatch" style="background:#94a3b8"></i>hashprice</span>
+          <span><i class="swatch" style="background:#38bdf8"></i>next filled tier</span>
+          <span><i class="swatch" style="background:#fbbf24"></i>median price</span>
+          <span><i class="swatch" style="background:#f472b6"></i>avg price (≈ paying)</span>
+        </div>
+        <button class="btn-reset" data-chart="marketChart">⟲ reset zoom &amp; size</button>
+      </div>
+      <div class="chartwrap"><canvas id="marketChart"></canvas></div>
+      <div class="chart-resize" title="drag up/down to stretch the chart">⇕</div>
+      <div class="chart-hint">scroll = zoom · shift-scroll = vertical · alt-scroll = horizontal · drag = pan · drag the ⇕ handle to stretch taller/shorter</div>
+    </div>
+
     <h2 class="section">Our orders</h2>
     <table>
       <thead><tr><th>Order</th><th>Price</th><th>Limit</th><th>Delivered</th><th>Miners</th><th>Escrow left</th><th>Runway</th><th>Status</th></tr></thead>
@@ -716,6 +731,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       { color: '#f87171', dashed: true, noscale: true, points: m.map(function (r) { return { x: r.ts, y: pp(hardcap) }; }) }
     ];
     drawChart($('priceChart'), price, { markers: markers, rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
+
+    // Market chart: the wider market context (not our bid). Hashprice, the next
+    // filled tier (same cyan as the price chart), and the median + speed-weighted
+    // average of the filled orders (the avg ≈ NiceHash's "Paying"). Same robust
+    // band filter (ppb) as the price chart so a bad tick can't blow out the axis.
+    var market = [
+      { color: '#94a3b8', points: m.map(function (r) { return { x: r.ts, y: ppb(r.hashprice_btc_per_unit_day) }; }) },
+      { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: ppb(r.next_filled_price_btc) }; }) },
+      { color: '#fbbf24', points: m.map(function (r) { return { x: r.ts, y: ppb(r.market_median_price_btc) }; }) },
+      { color: '#f472b6', points: m.map(function (r) { return { x: r.ts, y: ppb(r.market_avg_price_btc) }; }) }
+    ];
+    drawChart($('marketChart'), market, { rightLabels: true, fmtY: function (v) { return UI.price === 'sat' ? Math.round(v).toLocaleString() : v.toFixed(5); } });
   }
 
   // Chart line colours, reused to colour the matching tile values so a tile and
