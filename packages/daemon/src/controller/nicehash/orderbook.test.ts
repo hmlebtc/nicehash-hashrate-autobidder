@@ -244,6 +244,29 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.458, 0.46, 0.4602]);
   });
 
+  it('reins the above-cap next tier to the nearest real block, not a far gap-jump straggler', () => {
+    // Live regression (2026-07-06): the whole filled book sits above the cap
+    // (marginal 0.4561 > cap 0.4559), so the cap-clamp is off. The low book is
+    // momentarily contiguous (a run of empty 0-volume slots hugging the marginal),
+    // then a wide empty gap, so the gap-jump lands on a far straggler (0.496) -
+    // the "blue line shoots to 0.49xx" artifact. The bid is pinned at the cap
+    // regardless (display-only), but the tile must track the nearest REAL block
+    // (0.4566), not the far straggler.
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4561, limit_units: 0.0002, rigs_count: 10563 }, // marginal (above cap)
+      { price_btc: 0.4562, limit_units: 0, rigs_count: 0 }, // empty phantom slot
+      { price_btc: 0.4563, limit_units: 0, rigs_count: 0 },
+      { price_btc: 0.4564, limit_units: 0, rigs_count: 0 },
+      { price_btc: 0.4565, limit_units: 0, rigs_count: 0 },
+      { price_btc: 0.4566, limit_units: 0.0004, rigs_count: 606 }, // nearest real block
+      { price_btc: 0.496, limit_units: 0.0001, rigs_count: 5 }, // far straggler above a wide gap
+    ];
+    const a = computeMarketAnchor(competitors, 18, 1, 0.0001, 0.4559);
+    expect(a.anchor_price_btc).toBe(0.4561);
+    // next tier is the nearest real block (0.4566), not the far 0.496 gap-jump
+    expect(a.filled_prices[1]).toBe(0.4566);
+  });
+
   it('does not clamp a next filled tier that is already below the cap', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
