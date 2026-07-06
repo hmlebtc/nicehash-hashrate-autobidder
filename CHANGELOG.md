@@ -2,6 +2,23 @@
 
 ## 2026-07-06
 
+### `[Feature]` Drag to rearrange the Status tiles
+
+Every tile on the Status page — the market row, the stats row, and the P&L row —
+can now be dragged into whatever order you like. Grab a tile and drop it in a new
+slot; the layout persists per-row in your browser (localStorage), so it survives
+reloads. A "reset tile layout" button restores the default order.
+
+### `[UI]` Show prices at 4 decimals to match the order book
+
+Order-book prices on the dashboard (current bid, market anchor, next tier, the
+orders table) now display at 4 decimal places — the NiceHash order book's price
+granularity (the 0.0001 BTC/EH/day step) — instead of 8, so e.g. the bid reads
+`0.4553` like NiceHash shows it. The BTC/EH/day price fields in Config (overpay,
+max price, profit buffer) likewise step by 0.0001 and round to 4 decimals on save.
+Derived/aggregate values that need finer precision (dynamic cap, hashprice, margin
+to cap, averages, reprice deltas) keep their extra decimals.
+
 ### `[UI]` Add a "Next tier" tile next to Market anchor
 
 The Status summary now shows a **Next tier** tile (cyan) alongside the **Market
