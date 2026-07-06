@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.38"
+version: "0.6.39"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,17 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.39 - bid now sits at the cap when the market is above it.
+
+  When the whole order book is priced above your dynamic cap, your bid can't win
+  hashrate at any price you'd pay - it should just sit at the cap. But the walk-up
+  to the cap was gated by the fill-chasing rules (walk-up grace + fill checks),
+  which kept resetting as the market whipsawed in and out of your bid, so the bid
+  got stuck a step below the cap. The climb to the cap is now unconditional when
+  the market is above it (it can never overpay - you can't be filled in that
+  state). Note: the cap is a precise break-even price, so the bid sits at the
+  nearest whole tick BELOW it (bidding the next tick up would breach break-even).
+
   v0.6.38 - market anchor no longer dragged below NiceHash's purple.
 
   The order book reports a tiny residual delivered-speed on some orders that sit

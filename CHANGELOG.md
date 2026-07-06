@@ -2,6 +2,21 @@
 
 ## 2026-07-06
 
+### `[Fix]` Bid climbs to the cap when the whole market is above it
+
+When the entire order book is priced above the dynamic cap (the marginal sits
+above break-even), the bid can't win hashrate at any price we'd pay, so it should
+sit at the cap — ready if the market dips to it. But the walk-up to the cap was
+gated by the fill-chasing pacing (`walk_up` grace + under-filled checks), and with
+the fill whipsawing in and out that gate kept resetting, so the bid got stuck one
+price step below its own ceiling. The climb to the cap is now unconditional when
+the marginal is above the cap: that state is not fill-chasing (there's no
+reachable marginal to chase) and can never overpay — a bid at or below the cap
+wins nothing when the marginal is above it, so forcing the climb is always safe.
+Below the cap (a reachable marginal) the fill-chase pacing is unchanged. Note the
+bid lands at the nearest whole price tick *below* the (often fractional) cap, so a
+break-even cap of e.g. 0.455997 parks the bid at 0.4559, not 0.4560.
+
 ### `[Fix]` Market anchor no longer dragged below NiceHash's purple by speed noise
 
 The order-book API routinely reports a small residual delivered-speed on orders
