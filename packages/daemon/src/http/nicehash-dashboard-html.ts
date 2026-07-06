@@ -191,6 +191,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <div class="card" data-tile="anchor"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
       <div class="card" data-tile="nextTier"><h2>Next tier</h2><div class="big" id="nextTier" style="color:#38bdf8">—</div><div class="muted" id="nextTierUnit">next filled tier (cyan)</div></div>
       <div class="card" data-tile="supply"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
+      <div class="card" data-tile="hashprice"><h2>Hashprice (now)</h2><div class="big" id="hashpriceNow" style="color:#94a3b8">—</div><div class="muted" id="hashpriceNowUnit"></div></div>
+      <div class="card" data-tile="dynCap"><h2>Dynamic cap</h2><div class="big" id="dynCap" style="color:#34d399">—</div><div class="muted" id="dynCapUnit"></div></div>
+      <div class="card" data-tile="marginCap"><h2>Margin to cap</h2><div class="big" id="marginCap">—</div><div class="muted" id="marginCapUnit"></div></div>
     </div>
 
     <div class="rangebar" id="rangebar">
@@ -731,20 +734,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function renderTiles() {
     var s = lastSummary && lastSummary.summary;
     if (!s) { $('tiles').innerHTML = ''; return; }
-    // Dynamic cap + margin must reflect the CURRENT tick, not the range average:
-    // the cap tracks the live hashprice (the same value decide() bids against),
-    // and the margin compares it to our live bid. Using the range-average made
-    // the cap read low and the margin show "OVER cap" when the live bid was
-    // actually under the live cap.
-    var hpNow = (lastSummary && lastSummary.hashprice_now != null)
-      ? lastSummary.hashprice_now : s.avg_hashprice_btc_per_unit_day;
-    var cap = dynamicCapBtc(hpNow);
-    var liveBid = null;
-    if (lastStatus && lastStatus.owned_orders) {
-      var lo = lastStatus.owned_orders.filter(function (o) { return isLiveOrderStatus(o.status); })[0];
-      if (lo) liveBid = lo.price_btc;
-    }
-    var margin = (cap != null && liveBid != null) ? (cap - liveBid) : null;
+    // This row holds the range-averaged stats. Hashprice / dynamic cap / margin
+    // are current-tick values and live in the top row (see renderStatus).
     var html = '';
     // Fill uptime = % of ticks an order was filled (delivering ≥ the fill
     // threshold) out of the ticks an order was active. This is the "is my order
@@ -754,9 +745,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       '', C.delivered);
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit(), '', C.delivered);
     html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit(), '', C.bid);
-    html += tile('Hashprice (now)', fmtPrice(hpNow, 6), priceUnit(), '', C.hashprice);
-    html += tile('Dynamic cap', fmtPrice(cap, 6), dynamicCapOn() ? (priceUnit() + ' · hashprice ÷ (1 + ' + totalFeePct() + '% fees) − buffer') : 'dynamic cap off', '', C.dyncap);
-    html += tile('Margin to cap', margin == null ? '—' : (margin >= 0 ? '+' : '') + fmtPrice(margin, 6), margin == null ? 'no active bid' : (margin >= 0 ? 'under cap' : 'OVER cap'), margin == null ? '' : (margin >= 0 ? 'pos' : 'neg'));
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
     applyTileOrder($('tiles'));
@@ -838,6 +826,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
     $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
     $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
+
+    // Hashprice / dynamic cap / margin-to-cap are CURRENT-tick values (not range
+    // averages), so they live in this live row and update on the status cadence.
+    var hpNow = s.hashprice_btc_per_unit_day != null ? s.hashprice_btc_per_unit_day
+      : (lastSummary && lastSummary.hashprice_now != null ? lastSummary.hashprice_now : null);
+    var dynCap = dynamicCapBtc(hpNow);
+    var marginToCap = (dynCap != null && primary) ? (dynCap - primary.price_btc) : null;
+    $('hashpriceNow').textContent = fmtPrice(hpNow, 6);
+    $('hashpriceNowUnit').textContent = priceUnit();
+    $('dynCap').textContent = fmtPrice(dynCap, 6);
+    $('dynCapUnit').textContent = dynamicCapOn() ? (priceUnit() + ' · hashprice ÷ (1 + ' + totalFeePct() + '% fees) − buffer') : 'dynamic cap off';
+    var mEl = $('marginCap');
+    mEl.textContent = marginToCap == null ? '—' : (marginToCap >= 0 ? '+' : '') + fmtPrice(marginToCap, 6);
+    mEl.className = 'big' + (marginToCap == null ? '' : (marginToCap >= 0 ? ' pos' : ' neg'));
+    $('marginCapUnit').textContent = marginToCap == null ? 'no active bid' : (marginToCap >= 0 ? 'under cap' : 'OVER cap');
 
     var props = s.proposals || [];
     var outs = s.outcomes || [];

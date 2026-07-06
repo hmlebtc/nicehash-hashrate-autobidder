@@ -2,6 +2,14 @@
 
 ## 2026-07-06
 
+### `[UI]` Move hashprice / dynamic cap / margin to the live tile row
+
+Hashprice (now), Dynamic cap, and Margin to cap now sit in the top tile row
+(next to Price, Market anchor, Next tier) instead of the range-averaged stats
+row below the time-range selector. They are current-tick values — the cap tracks
+the live hashprice the bidder actually bids against — so they belong with the
+live tiles, not the range averages. (You can still drag any tile anywhere.)
+
 ### `[Feature]` Drag to rearrange the Status tiles
 
 Every tile on the Status page — the market row, the stats row, and the P&L row —
