@@ -227,6 +227,35 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.4533, 0.4553, 0.4554]);
   });
 
+  it('computes the median and speed-weighted average of the filled orders', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.45, limit_units: 5, rigs_count: 10, accepted_speed_units: 1 },
+      { price_btc: 0.46, limit_units: 5, rigs_count: 10, accepted_speed_units: 3 },
+      { price_btc: 0.47, limit_units: 5, rigs_count: 10, accepted_speed_units: 0 }, // filled by rigs, 0 speed
+    ];
+    const a = computeMarketAnchor(competitors, 100, 1);
+    expect(a.median_price_btc).toBeCloseTo(0.46, 9); // middle of [0.45, 0.46, 0.47]
+    // speed-weighted: (0.45*1 + 0.46*3) / 4 = 0.4575 (0.47 has 0 speed, excluded)
+    expect(a.avg_price_btc).toBeCloseTo(0.4575, 9);
+  });
+
+  it('falls back to the unweighted mean for avg when no filled order reports speed', () => {
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.45, limit_units: 5, rigs_count: 10 },
+      { price_btc: 0.47, limit_units: 5, rigs_count: 10 },
+    ];
+    const a = computeMarketAnchor(competitors, 100, 1);
+    expect(a.median_price_btc).toBeCloseTo(0.46, 9); // (0.45 + 0.47) / 2
+    expect(a.avg_price_btc).toBeCloseTo(0.46, 9); // unweighted mean
+  });
+
+  it('reports null market stats when nothing is filled', () => {
+    const competitors: CompetingOrder[] = [{ price_btc: 0.45, limit_units: 5, rigs_count: 0 }];
+    const a = computeMarketAnchor(competitors, 100, 1);
+    expect(a.median_price_btc).toBeNull();
+    expect(a.avg_price_btc).toBeNull();
+  });
+
   it('ignores malformed entries (non-positive price, NaN)', () => {
     const competitors: CompetingOrder[] = [
       { price_btc: 0, limit_units: 5, rigs_count: 5 },

@@ -144,6 +144,7 @@ describe('openDatabase - migrations', () => {
       '0116_nicehash_decision_log.sql',
       '0117_nicehash_orders_last_price_change.sql',
       '0118_nicehash_tick_metrics_next_filled.sql',
+      '0119_nicehash_tick_metrics_market_prices.sql',
     ]);
     expect(handle.migrations.skipped).toEqual([]);
   });
