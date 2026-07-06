@@ -744,7 +744,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       s.fill_uptime_pct == null ? 'no active order in range' : ('% filled · ' + (s.active_samples || 0) + ' active ticks'),
       '', C.delivered);
     html += tile('Avg delivered', fmtSpeed(s.avg_accepted_units), speedUnit(), '', C.delivered);
-    html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 6), priceUnit(), '', C.bid);
+    html += tile('Avg price', fmtPrice(s.avg_our_price_btc, 4), priceUnit(), '', C.bid);
     html += tile('Samples', String(s.samples || 0), 'ticks in range');
     $('tiles').innerHTML = html;
     applyTileOrder($('tiles'));
@@ -813,7 +813,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('curDeliveredUnit').textContent = speedUnit() + (liveRigs ? (' · ' + liveRigs + ' miner' + (liveRigs === 1 ? '' : 's')) : '');
     // Order balance = escrow remaining in the live order (not the wallet); the
     // wallet balance still shows in the P&L panel.
-    $('orderBalance').textContent = primary ? fmtBtc(primary.available_amount_btc) : '—';
+    $('orderBalance').textContent = primary ? fmtBtc(primary.available_amount_btc, 4) : '—';
     $('orderBalanceSub').textContent = primary ? 'escrow left in order' : 'no active order';
     $('orderRunway').textContent = primary ? runwayHours(primary) : '—';
     $('orderRunwaySub').textContent = primary
@@ -833,9 +833,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       : (lastSummary && lastSummary.hashprice_now != null ? lastSummary.hashprice_now : null);
     var dynCap = dynamicCapBtc(hpNow);
     var marginToCap = (dynCap != null && primary) ? (dynCap - primary.price_btc) : null;
-    $('hashpriceNow').textContent = fmtPrice(hpNow, 6);
+    $('hashpriceNow').textContent = fmtPrice(hpNow, 4);
     $('hashpriceNowUnit').textContent = priceUnit();
-    $('dynCap').textContent = fmtPrice(dynCap, 6);
+    $('dynCap').textContent = fmtPrice(dynCap, 4);
     $('dynCapUnit').textContent = dynamicCapOn() ? (priceUnit() + ' · hashprice ÷ (1 + ' + totalFeePct() + '% fees) − buffer') : 'dynamic cap off';
     var mEl = $('marginCap');
     mEl.textContent = marginToCap == null ? '—' : (marginToCap >= 0 ? '+' : '') + fmtPrice(marginToCap, 6);

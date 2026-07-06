@@ -2,6 +2,12 @@
 
 ## 2026-07-06
 
+### `[UI]` Show hashprice / order balance / dynamic cap / avg price at 4 decimals
+
+Four more tiles now round to 4 decimal places to match the order book: Hashprice
+(now), Order balance, Dynamic cap, and Avg price. Margin to cap keeps its finer
+precision (a 4-decimal round would collapse a sub-tier margin to `+0.0000`).
+
 ### `[UI]` Move hashprice / dynamic cap / margin to the live tile row
 
 Hashprice (now), Dynamic cap, and Margin to cap now sit in the top tile row
