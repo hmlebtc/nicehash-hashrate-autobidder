@@ -34,10 +34,20 @@
 
 import type { CompetingOrder, MarketAnchor } from './types.js';
 
+/**
+ * "Multiple consecutive orders of 0 miners" = a run of at least this many empty
+ * price levels between two filled tiers. Prices are quantized to the market's
+ * price step, so the empty levels between two filled tiers = round(gap / step) - 1.
+ * A run this long marks a real gap in the book (the boundary between the marginal's
+ * block and the next block); a shorter gap is just the marginal's own cluster.
+ */
+const EMPTY_GAP_LEVELS = 2;
+
 export function computeMarketAnchor(
   competitors: readonly CompetingOrder[],
   totalSpeedUnits: number,
   targetUnits: number,
+  priceStepBtc = 0,
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -50,33 +60,59 @@ export function computeMarketAnchor(
   const prices = valid.map((o) => o.price_btc);
   const lowest = prices.length > 0 ? Math.min(...prices) : null;
 
-  // The marginal price = the cheapest order currently receiving hashrate
-  // (NiceHash's purple). Prefer the "Miners" count (`rigs_count`); fall back to
-  // `accepted_speed_units` only when no rig counts are reported at all.
+  // Orders currently receiving hashrate. Prefer the "Miners" count (`rigs_count`);
+  // fall back to `accepted_speed_units` only when no rig counts are reported.
   const byRigs = valid.filter((o) => (o.rigs_count ?? 0) > 0);
   const bySpeed = valid.filter((o) => (o.accepted_speed_units ?? 0) > 0);
   const filled = byRigs.length > 0 ? byRigs : bySpeed;
-  // The fill ladder: ascending prices of every order currently winning hashrate.
-  const filledPrices = filled.map((o) => o.price_btc).sort((a, b) => a - b);
 
-  if (filledPrices.length > 0) {
+  if (filled.length === 0) {
+    // Nothing is being delivered to any competitor: no live competition to
+    // outbid. With deliverable supply we can sit at the bottom of the book (or
+    // the floor when the book is empty); with none, flag the market as thin.
     return {
-      anchor_price_btc: filledPrices[0]!, // cheapest filled = marginal (purple)
+      anchor_price_btc: lowest,
       total_speed_units: totalSpeedUnits,
-      // "Thin" only when the target plainly exceeds the whole market's supply -
-      // a best-effort flag; we still anchor at the floor and grab what we can.
-      thin: totalSpeedUnits > 0 && targetUnits >= totalSpeedUnits,
-      filled_prices: filledPrices,
+      thin: !(totalSpeedUnits > 0),
+      filled_prices: [],
     };
   }
 
-  // Nothing is being delivered to any competitor: no live competition to
-  // outbid. With deliverable supply we can sit at the bottom of the book (or
-  // the floor when the book is empty); with none, flag the market as thin.
+  // NiceHash returns *individual* orders, so the marginal (and every other) price
+  // is usually shared by many orders. Collapse into distinct price tiers.
+  const tiers = [...new Set(filled.map((o) => o.price_btc))].sort((a, b) => a - b);
+  const marginal = tiers[0]!; // cheapest filled tier = the marginal (NiceHash purple)
+
+  // The "next filled tier" we anchor on. By default the next distinct tier (a
+  // simple de-dupe of the marginal). When we know the price step, we instead jump
+  // any gap of >= EMPTY_GAP_LEVELS empty price levels: walk up through the tiers
+  // that hug the marginal (small gaps) and stop at the first tier sitting above a
+  // real gap - the next block a human reads off the order book, past the run of
+  // 0-miner levels. Falls back to the next distinct tier on a contiguous book.
+  let nextTier: number | null = tiers.length > 1 ? tiers[1]! : null;
+  if (priceStepBtc > 0 && tiers.length > 1) {
+    let jumped: number | null = null;
+    for (let i = 1; i < tiers.length; i++) {
+      const emptyLevels = Math.round((tiers[i]! - tiers[i - 1]!) / priceStepBtc) - 1;
+      if (emptyLevels >= EMPTY_GAP_LEVELS) {
+        jumped = tiers[i]!;
+        break;
+      }
+    }
+    nextTier = jumped ?? tiers[1]!;
+  }
+
+  // Expose the marginal + the ladder from the chosen next tier up (tiers between
+  // the marginal and next tier are the marginal's own cluster - not "the next
+  // tier" - so they're dropped from the ladder). `filled_prices[1]` = next tier.
+  const filledPrices = nextTier !== null ? [marginal, ...tiers.filter((p) => p >= nextTier!)] : [marginal];
+
   return {
-    anchor_price_btc: lowest,
+    anchor_price_btc: marginal,
     total_speed_units: totalSpeedUnits,
-    thin: !(totalSpeedUnits > 0),
-    filled_prices: [],
+    // "Thin" only when the target plainly exceeds the whole market's supply -
+    // a best-effort flag; we still anchor at the floor and grab what we can.
+    thin: totalSpeedUnits > 0 && targetUnits >= totalSpeedUnits,
+    filled_prices: filledPrices,
   };
 }
