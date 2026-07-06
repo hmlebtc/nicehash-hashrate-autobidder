@@ -228,7 +228,19 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const gracePassed =
     graceMs === 0 ||
     (primary.under_filled_since != null && state.tick_at - primary.under_filled_since >= graceMs);
-  const wantWalkUp = walkUpEnabled ? underFilled && gracePassed : true;
+
+  // When the whole market is priced above our affordability cap (the marginal -
+  // the cheapest order actually winning hashrate - sits above the effective cap),
+  // we cannot win any hashrate at a price we'd pay. The bid should then simply sit
+  // AT the cap, ready if the market dips to it. That climb is NOT fill-chasing -
+  // there is no reachable marginal to chase - so it must bypass the walk-up grace
+  // and under-filled pacing (which exist to pace chasing a *reachable* rising
+  // marginal). Without this, an order whose fill whipsaws in and out keeps
+  // resetting the grace timer and never climbs the final step to the cap, sitting
+  // one step below its own ceiling. (We can't be over-filled in this state anyway:
+  // a bid <= cap < marginal wins nothing, so forcing the climb never overpays.)
+  const marketAboveCap = marginal > effectiveCap;
+  const wantWalkUp = marketAboveCap || (walkUpEnabled ? underFilled && gracePassed : true);
 
   const cur = primary.price_btc;
   const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);

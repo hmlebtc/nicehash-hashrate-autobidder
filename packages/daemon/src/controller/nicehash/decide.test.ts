@@ -589,6 +589,44 @@ describe('decide - anchor on the next filled tier', () => {
     expect(e.new_price_btc).toBeCloseTo(0.00071 - 0.0000001, 10); // one step down toward 0.00061
   });
 
+  it('walks up to the cap when the whole market is above it, even with the grace unelapsed', () => {
+    // Live case (2026-07-06): marginal 0.4620 sits far above the affordability cap
+    // (0.4560), so the bid can't win hashrate at any price we'd pay - it should just
+    // sit at the cap. But with walk-up-to-fill on and a grace period that keeps
+    // resetting as the fill whipsaws in and out, the bid was stuck a step below the
+    // cap. The cap is a ceiling, not a fill-chase target, so the climb to it is not
+    // grace-gated when the market is above the cap.
+    const out = decide(
+      state({
+        tick_at: 1700000000000,
+        market: {
+          anchor_price_btc: 0.462,
+          total_speed_units: 100,
+          thin: false,
+          filled_prices: [0.462, 0.4621],
+        },
+        owned_orders: [
+          ownedOrder({
+            price_btc: 0.4558,
+            accepted_speed_units: 0,
+            under_filled_since: 1700000000000 - 1000, // just under-filled; grace not elapsed
+          }),
+        ],
+        config: config({
+          anchor_next_filled_tier: true,
+          walk_up_enabled: true,
+          min_fill_pct: 80,
+          walk_up_grace_seconds: 600, // 10-min grace that has NOT elapsed
+          max_price_btc_per_unit_day: 0.456, // affordability cap, below the market
+          price_down_step_btc: 0.0001,
+        }),
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.456, 9); // climbed to the cap despite the grace
+  });
+
   it('anchors on the marginal when the toggle is off (default in the pure controller)', () => {
     const out = decide(
       state({
