@@ -2,6 +2,20 @@
 
 ## 2026-07-06
 
+### `[Fix]` Next filled tier tracks the real block above the marginal
+
+The "next filled tier" (cyan) is built by reading each competing order's per-order
+miner count and delivered speed — but the order-book API reports those fields so
+sparsely that a large, obviously-filled block (NiceHash's UI showing thousands of
+miners) can come back with both zeroed out. That block was dropped, and the next
+*detectable* tier further up the book — above the dynamic cap — collapsed onto the
+cap, so the tile read the cap price (e.g. 0.45592) instead of the real block
+(0.4555). The tier above the marginal is now built from price position: NiceHash
+delivers hashrate in strict descending-price order, so every live order priced
+above the marginal is being filled regardless of what its per-order counts report.
+The marginal itself still uses the miner/speed signal. With "anchor on next filled
+tier" on, the bid now tracks the real block instead of sitting pinned at the cap.
+
 ### `[Docs]` Backfill the Umbrel store release notes
 
 The `releaseNotes` in `umbrel-app.yml` (shown on the Umbrel "update available"

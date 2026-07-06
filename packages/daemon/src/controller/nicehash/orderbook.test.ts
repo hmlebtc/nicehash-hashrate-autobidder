@@ -19,22 +19,26 @@ describe('computeMarketAnchor', () => {
   });
 
   it('anchors at the GLOBAL cheapest order with miners even when zero-miner orders sit above it', () => {
-    // Real-book shape: a band of higher-priced orders with NO miners interleaved
-    // above the true marginal. The anchor must be the global lowest-priced order
-    // with miners (0.4482), not the cheapest within the contiguous top block.
+    // Real-book shape: a band of higher-priced orders that report NO miners sits
+    // above the true marginal. The anchor must still be the global lowest-priced
+    // order with miners (0.4482) - the 0-miner orders must not drag it up. But
+    // those 0-miner orders are ABOVE the marginal, so by NiceHash's strict
+    // descending-price delivery they are themselves filled (the API just didn't
+    // report their counts) and belong in the fill ladder by price position. Only
+    // 0.448 (below the marginal) is excluded.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.466, limit_units: 5, rigs_count: 21792 },
       { price_btc: 0.4526, limit_units: 5, rigs_count: 2141 },
-      { price_btc: 0.4525, limit_units: 5, rigs_count: 0 }, // gap begins
+      { price_btc: 0.4525, limit_units: 5, rigs_count: 0 }, // above marginal -> filled by price
       { price_btc: 0.45, limit_units: 5, rigs_count: 0 },
       { price_btc: 0.449, limit_units: 5, rigs_count: 0 },
-      { price_btc: 0.4488, limit_units: 5, rigs_count: 7279 }, // filled below the gap
+      { price_btc: 0.4488, limit_units: 5, rigs_count: 7279 }, // filled
       { price_btc: 0.4482, limit_units: 5, rigs_count: 2463 }, // the marginal (purple)
-      { price_btc: 0.448, limit_units: 5, rigs_count: 0 },
+      { price_btc: 0.448, limit_units: 5, rigs_count: 0 }, // below marginal -> excluded
     ];
     const a = computeMarketAnchor(competitors, 16, 2);
     expect(a.anchor_price_btc).toBe(0.4482);
-    expect(a.filled_prices).toEqual([0.4482, 0.4488, 0.4526, 0.466]);
+    expect(a.filled_prices).toEqual([0.4482, 0.4488, 0.449, 0.45, 0.4525, 0.4526, 0.466]);
   });
 
   it('does not walk up the book for a larger target (still anchors at the floor)', () => {
@@ -129,6 +133,30 @@ describe('computeMarketAnchor', () => {
     const a = computeMarketAnchor([], 100, 4);
     expect(a.anchor_price_btc).toBeNull();
     expect(a.thin).toBe(false);
+  });
+
+  it('anchors the next tier on the real block when the API drops its miner/speed counts', () => {
+    // Operator's live book (2026-07-06): marginal 0.4535 (purple, ~40k miners)
+    // plus a small 0.4536 cluster, then a wide 0-count gap, then the real next
+    // block at 0.4555 (the order book shows ~9,814 miners) with 0.4556/0.4557
+    // above it, and a detectable 0.4560 tier further up. The order-book API
+    // returned 0/undefined rigs AND speed for the whole 0.4555-0.4557 block even
+    // though it is plainly filled. A rigs/speed-only ladder dropped that block and
+    // jumped to the next *detectable* tier (0.4560), which - being above the cap -
+    // clamped onto the cap (0.45592) and read as a phantom next tier. By price
+    // position the next filled tier is the real 0.4555 block.
+    const competitors: CompetingOrder[] = [
+      { price_btc: 0.4535, limit_units: 5, rigs_count: 40501 }, // marginal (purple)
+      { price_btc: 0.4536, limit_units: 5, rigs_count: 57 }, // marginal cluster
+      { price_btc: 0.4555, limit_units: 5, rigs_count: 0, accepted_speed_units: 0 }, // real block, counts dropped
+      { price_btc: 0.4556, limit_units: 5, rigs_count: 0, accepted_speed_units: 0 },
+      { price_btc: 0.4557, limit_units: 5, rigs_count: 0, accepted_speed_units: 0 },
+      { price_btc: 0.456, limit_units: 5, rigs_count: 174 }, // detectable tier above
+    ];
+    const a = computeMarketAnchor(competitors, 18, 1, 0.0001, 0.45592);
+    expect(a.anchor_price_btc).toBe(0.4535);
+    // next filled tier is the real 0.4555 block, not 0.4560 clamped to the cap
+    expect(a.filled_prices[1]).toBe(0.4555);
   });
 
   it('de-dupes the marginal and jumps a wide empty gap to the next block', () => {
