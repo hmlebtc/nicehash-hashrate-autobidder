@@ -2,6 +2,19 @@
 
 ## 2026-07-06
 
+### `[Fix]` Next filled tier no longer spikes when the market is above the cap
+
+Follow-up to the tier fix below. When the entire order book sits above your
+dynamic cap (the market is priced past your break-even), the cap-clamp that
+normally reins in an out-of-reach next tier is deliberately skipped — otherwise
+it would blank the tile. That left a transient gap-jump free to land on a far
+straggler when the low book was momentarily contiguous below a wide empty gap,
+so the "next filled tier" (cyan) line would shoot up to ~0.49xx for a tick. The
+bid was never affected (it stays pinned at the cap in this state — display only),
+but the line was misleading. The tile now reins to the nearest order above the
+marginal that carries real activity (volume, miners, or delivered speed), so it
+tracks the market's next real step instead of a far phantom.
+
 ### `[Fix]` Next filled tier tracks the real block above the marginal
 
 The "next filled tier" (cyan) is built by reading each competing order's per-order
