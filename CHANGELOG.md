@@ -2,6 +2,14 @@
 
 ## 2026-07-06
 
+### `[Docs]` Backfill the Umbrel store release notes
+
+The `releaseNotes` in `umbrel-app.yml` (shown on the Umbrel "update available"
+screen) had frozen at v0.6.20 while the app kept shipping — so the update prompt
+showed stale notes. Backfilled every release since (v0.6.21 → v0.6.34) and fixed
+a dropped changelog heading. No code change; going forward the release notes are
+updated with each version.
+
 ### `[Feature]` New Market chart (hashprice / next tier / median / average)
 
 Added a Market chart below the Price chart, tracking the wider market context
@@ -12,6 +20,8 @@ the closest proxy to NiceHash's "Paying" rate. Two new per-tick market-price
 metrics are recorded and back the chart; it uses the same time-range selector,
 polling, and robust axis filter as the charts above it. Purely additive — the
 existing charts, their data, and the tick cadence are unchanged.
+
+### `[Fix]` Marginal counts speed-only orders (matches NiceHash's purple better)
 
 The market anchor (marginal) read a tier or two above NiceHash's own marginal and
 flickered tick-to-tick. The order-book API reports each order's miner count and
