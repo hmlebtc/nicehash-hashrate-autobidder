@@ -2,6 +2,23 @@
 
 ## 2026-07-06
 
+### `[Fix]` Next filled tier anchors on the next solid miner block
+
+Refines the next filled tier (`filled_prices[1]`, the cyan line and the anchor when
+"anchor on next filled tier" is on) to match how the order book actually reads. The
+ladder is now built from **miner-bearing** tiers only — a row with speed but zero
+miners isn't really being filled (a stale/artifact reading), so it's dropped, same
+signal the marginal already uses. On top of that, the next tier skips **lone
+stragglers**: a single miner tier isolated from the miners above it by a wide run of
+zero-miner tiers is noise (under NiceHash's price priority everything above the
+marginal is filled, but the API under-reports miners on many tiers, leaving isolated
+miner rows below zero-miner runs). The next tier is the cheapest miner tier above the
+marginal that *starts a solid block* — one with another miner tier within a couple of
+ticks. Live example: marginal `0.4545`, a lone `0.4554` (79 miners) below a zero-miner
+run, then a solid block at `0.4565` — the next tier is `0.4565`, not the `0.4554`
+straggler nor a speed-only row. This replaces v0.6.40's literal-next-tier, which
+would have anchored on the straggler.
+
 ### `[Fix]` Next tier is the literal book tier; bid re-prices on one-tick moves
 
 Two linked fixes to how the bid follows the market, from a live session where the
