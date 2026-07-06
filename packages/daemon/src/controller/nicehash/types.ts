@@ -222,6 +222,37 @@ export function dynamicCapPrice(
   return hashprice / (1 + totalFee / 100) - (bufferBtc || 0);
 }
 
+/**
+ * The effective price ceiling for a given tick: the most we will ever bid,
+ * `min(fixed hard cap, premium cap, dynamic break-even cap)`. This is the single
+ * definition of "our ceiling"; `decide()` reprises the same math inline (it also
+ * needs to know *which* bound is binding, for its log label), and `observe()`
+ * uses this to bound the reported "next filled tier" so a distant book jump never
+ * charts or anchors a price we could never actually bid. Returns at least the
+ * fixed cap; a null/absent hashprice simply drops the hashprice-derived bounds.
+ */
+export function effectiveCapBtc(
+  config: NiceHashControllerConfig,
+  hashprice: number | null,
+): number {
+  const fixedCap = config.max_price_btc_per_unit_day;
+  const premiumCap =
+    config.max_overpay_vs_hashprice_btc_per_unit_day !== null && hashprice !== null
+      ? hashprice + config.max_overpay_vs_hashprice_btc_per_unit_day
+      : null;
+  let cap = premiumCap !== null ? Math.min(fixedCap, premiumCap) : fixedCap;
+  const dynamicCap = config.dynamic_cap_enabled
+    ? dynamicCapPrice(
+        hashprice,
+        config.nicehash_fee_pct,
+        config.pool_fee_pct,
+        config.dynamic_cap_buffer_btc,
+      )
+    : null;
+  if (dynamicCap !== null && dynamicCap < cap) cap = dynamicCap;
+  return cap;
+}
+
 export interface NiceHashState {
   readonly tick_at: number;
   readonly run_mode: RunMode;

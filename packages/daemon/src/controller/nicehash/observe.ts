@@ -12,6 +12,7 @@
 
 import { parseDecimal } from '@hashrate-autopilot/nicehash-client';
 
+import { effectiveCapBtc } from './types.js';
 import type { MarketAnchor, NiceHashControllerConfig, NiceHashState, RunMode } from './types.js';
 import {
   availableBtcFromBalance,
@@ -110,12 +111,17 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   let marketError: string | null = null;
   try {
     const book = await service.getOrderBook(config.algorithm, deps.currency);
+    // Bound the reported "next filled tier" at the same ceiling decide() will bid
+    // under, so a distant book jump above the cap never charts (or anchors) a price
+    // we could never actually pay - it collapses onto the cap instead.
+    const capBtc = effectiveCapBtc(config, deps.hashprice ?? null);
     market = marketAnchorFromBook(
       book,
       config.target_speed_units,
       ownedIds,
       deps.currency,
       config.price_down_step_btc,
+      capBtc,
     );
 
     // The myOrders LIST and per-order detail both under-report delivered speed

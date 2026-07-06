@@ -48,6 +48,7 @@ export function computeMarketAnchor(
   totalSpeedUnits: number,
   targetUnits: number,
   priceStepBtc = 0,
+  capBtc = 0,
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -105,7 +106,18 @@ export function computeMarketAnchor(
   // Expose the marginal + the ladder from the chosen next tier up (tiers between
   // the marginal and next tier are the marginal's own cluster - not "the next
   // tier" - so they're dropped from the ladder). `filled_prices[1]` = next tier.
-  const filledPrices = nextTier !== null ? [marginal, ...tiers.filter((p) => p >= nextTier!)] : [marginal];
+  //
+  // Bound the ladder at our bidding ceiling when one is supplied: we never bid
+  // above the cap, so a next tier sitting above it is out of reach. This collapses
+  // a far book jump (e.g. a momentarily contiguous low book whose first real
+  // >= EMPTY_GAP_LEVELS gap sits ~0.05 up the book) back onto the cap, so the
+  // reported next filled tier - and the bid it anchors - stays pinned at the cap
+  // instead of charting an absurd price we could never actually pay.
+  let ladder = nextTier !== null ? tiers.filter((p) => p >= nextTier!) : [];
+  if (capBtc > 0) {
+    ladder = ladder.map((p) => Math.min(p, capBtc)).filter((p) => p > marginal);
+  }
+  const filledPrices = [marginal, ...ladder].filter((p, i, a) => i === 0 || p !== a[i - 1]!);
 
   return {
     anchor_price_btc: marginal,

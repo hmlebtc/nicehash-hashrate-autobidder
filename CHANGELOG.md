@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-06
+
+### `[Fix]` Next filled tier: cap the gap-jump so it can't overshoot the ceiling
+
+The "next filled tier" (cyan line, and the anchor when "Anchor on next filled
+tier" is on) could shoot far above the price we'd ever bid — e.g. spiking to
+~0.4950 while the bid sat at the ~0.4554 cap. When the low book is momentarily
+contiguous (no run of ≥2 empty levels near the marginal), the gap-jump keeps
+scanning up and lands on the first real block above a *distant* gap, which can be
+hundreds of price steps up. Since we never bid above the effective ceiling
+(`min(hard cap, premium cap, dynamic break-even cap)`), any next tier above it is
+out of reach: it now collapses onto the cap. The bid is unaffected (it was
+already clamped to the cap, and still fills), but the reported tier — and the
+chart — now stay pinned at the ceiling instead of drawing an unreachable price.
+
 ## 2026-07-05
 
 ### `[Fix]` Next filled tier: de-dupe the marginal and jump the empty gap
