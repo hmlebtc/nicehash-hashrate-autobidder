@@ -34,21 +34,14 @@
 
 import type { CompetingOrder, MarketAnchor } from './types.js';
 
-/**
- * "Multiple consecutive orders of 0 miners" = a run of at least this many empty
- * price levels between two filled tiers. Prices are quantized to the market's
- * price step, so the empty levels between two filled tiers = round(gap / step) - 1.
- * A run this long marks a real gap in the book (the boundary between the marginal's
- * block and the next block); a shorter gap is just the marginal's own cluster.
- */
-const EMPTY_GAP_LEVELS = 2;
-
 export function computeMarketAnchor(
   competitors: readonly CompetingOrder[],
   totalSpeedUnits: number,
   targetUnits: number,
-  priceStepBtc = 0,
-  capBtc = 0,
+  // Retained for call-site compatibility; the ladder is now a literal read of the
+  // book (no gap-jumping, no cap-clamp), so neither is used here.
+  _priceStepBtc = 0,
+  _capBtc = 0,
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -105,80 +98,26 @@ export function computeMarketAnchor(
   // between the filled and unfilled book, which price alone can't locate.
   const marginal = Math.min(...filled.map((o) => o.price_btc)); // cheapest filled = purple
 
-  // The fill ladder ABOVE the marginal, built from price position - every valid
-  // order priced at/above the marginal, not just the ones the API tagged with
-  // rigs/speed. NiceHash delivers hashrate in strict *descending* price order, so
-  // any live order priced above the marginal is itself being filled (it sits
-  // ahead of the marginal in the delivery queue). We can't rely on the per-order
-  // rigs/speed signal up here: the order-book API reports it too sparsely, so a
-  // large, obviously-filled block (e.g. NiceHash's UI shows ~9,800 miners) can
-  // come back with 0/undefined rigs AND speed. A rigs/speed-only ladder drops
-  // that block, skips the real next tier, and reports the next *detectable* tier
-  // further up - which then clamps onto the cap and reads as a phantom next tier.
-  // Price position never drops a real block. (The marginal above is still found
-  // via rigs/speed - only the tiers above it switch to price position.)
-  const tiers = [...new Set(valid.filter((o) => o.price_btc >= marginal).map((o) => o.price_btc))].sort(
-    (a, b) => a - b,
-  );
-
-  // The "next filled tier" we anchor on. By default the next distinct tier (a
-  // simple de-dupe of the marginal). When we know the price step, we instead jump
-  // any gap of >= EMPTY_GAP_LEVELS empty price levels: walk up through the tiers
-  // that hug the marginal (small gaps) and stop at the first tier sitting above a
-  // real gap - the next block a human reads off the order book, past the run of
-  // 0-miner levels. Falls back to the next distinct tier on a contiguous book.
-  let nextTier: number | null = tiers.length > 1 ? tiers[1]! : null;
-  if (priceStepBtc > 0 && tiers.length > 1) {
-    let jumped: number | null = null;
-    for (let i = 1; i < tiers.length; i++) {
-      const emptyLevels = Math.round((tiers[i]! - tiers[i - 1]!) / priceStepBtc) - 1;
-      if (emptyLevels >= EMPTY_GAP_LEVELS) {
-        jumped = tiers[i]!;
-        break;
-      }
-    }
-    nextTier = jumped ?? tiers[1]!;
-  }
-
-  // Expose the marginal + the ladder from the chosen next tier up (tiers between
-  // the marginal and next tier are the marginal's own cluster - not "the next
-  // tier" - so they're dropped from the ladder). `filled_prices[1]` = next tier.
+  // The fill ladder: the marginal, then every DISTINCT higher price that carries
+  // REAL activity - an order that wins miners, delivers speed, or rests a volume
+  // (limit). These are the next filled tiers a human reads straight off the order
+  // book, ascending. `filled_prices[1]` is the next filled tier (the cyan line, and
+  // the bid anchor when "anchor on next filled tier" is on).
   //
-  // Bound the ladder at our bidding ceiling when one is supplied: we never bid
-  // above the cap, so a next tier sitting above it is out of reach. This collapses
-  // a far book jump (e.g. a momentarily contiguous low book whose first real
-  // >= EMPTY_GAP_LEVELS gap sits ~0.05 up the book) back onto the cap, so the
-  // reported next filled tier - and the bid it anchors - stays pinned at the cap
-  // instead of charting an absurd price we could never actually pay.
-  // Prices carrying real activity (an order that rests volume, wins miners, or
-  // delivers speed) - as opposed to an empty/cancelled 0-volume slot that still
-  // shows up in the book. Used only to rein the above-cap next tier below.
-  const realTierPrices = new Set(
-    valid
-      .filter((o) => o.limit_units > 0 || (o.rigs_count ?? 0) > 0 || (o.accepted_speed_units ?? 0) > 0)
-      .map((o) => o.price_btc),
-  );
-
-  let ladder = nextTier !== null ? tiers.filter((p) => p >= nextTier!) : [];
-  if (capBtc > 0 && capBtc > marginal) {
-    // Cap sits *within* the book (above the marginal): an out-of-reach next tier
-    // collapses onto the cap so the reported tier - and the bid it anchors - stays
-    // pinned at the cap instead of charting an absurd price we could never pay.
-    ladder = ladder.map((p) => Math.min(p, capBtc)).filter((p) => p > marginal);
-  } else if (capBtc > 0 && marginal >= capBtc && nextTier !== null) {
-    // The WHOLE filled book is above the cap (the market is priced past our
-    // break-even). We can't clamp to the cap - it sits below the marginal, so the
-    // clamp above would drop every tier and blank the next tier. But we also must
-    // not let the gap-jump overshoot onto a far straggler: when the low book is
-    // momentarily contiguous below a wide empty gap, the jump lands ~0.05 up the
-    // book (the "blue line shoots to 0.49xx" artifact). Rein the next tier to the
-    // nearest order above the marginal that has *real activity* (volume, miners,
-    // or delivered speed) so the tile tracks the market's next real step, not a
-    // phantom far tier. The bid is capped in decide() regardless - display-only.
-    const nearestReal = tiers.find((p) => p > marginal && realTierPrices.has(p));
-    ladder = nearestReal !== undefined ? tiers.filter((p) => p >= nearestReal) : [];
-  }
-  const filledPrices = [marginal, ...ladder].filter((p, i, a) => i === 0 || p !== a[i - 1]!);
+  // We take the LITERAL next tier: no gap-jumping past nearby tiers, and no clamping
+  // to the bidding cap. A real tier is never skipped, however close to the marginal
+  // it sits; only empty 0-volume phantom slots (cancelled orders that still appear
+  // in the book) are dropped. Earlier heuristics (skip straggler clusters, collapse
+  // an out-of-reach tier onto the cap) made the reported next tier drift away from
+  // what the book actually shows - e.g. reading the cap 0.4562 when the real next
+  // tier was 0.4557 - so they've been removed. The bid is capped independently in
+  // decide(); this stays a faithful read of the book.
+  const hasActivity = (o: CompetingOrder): boolean =>
+    o.limit_units > 0 || (o.rigs_count ?? 0) > 0 || (o.accepted_speed_units ?? 0) > 0;
+  const higherRealTiers = [
+    ...new Set(valid.filter((o) => o.price_btc > marginal && hasActivity(o)).map((o) => o.price_btc)),
+  ].sort((a, b) => a - b);
+  const filledPrices = [marginal, ...higherRealTiers];
 
   return {
     anchor_price_btc: marginal,

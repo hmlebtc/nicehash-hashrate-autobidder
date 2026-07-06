@@ -22,6 +22,18 @@
 
 import { dynamicCapPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
 
+/**
+ * NiceHash BTC-market price grid: prices quote to 4 dp (the order book is all
+ * 0.4556, 0.4557, …) and `execute()` floors every bid to this precision. It is the
+ * smallest price change the API will actually execute, so it's the granularity at
+ * which we re-price. This is DISTINCT from `price_down_step_btc`, which is
+ * NiceHash's rate limit on how far a price may be *lowered* per move (often much
+ * coarser, e.g. 0.002) and is used only to bound the descent, not to decide when
+ * to re-price. Conflating the two made the bid ignore sub-`price_down_step` moves
+ * of the cap/floor and sit a step below its target.
+ */
+const PRICE_STEP_BTC = 0.0001;
+
 function fmtPrice(btcPerUnitDay: number): string {
   return `${btcPerUnitDay.toFixed(8)} BTC/unit/day`;
 }
@@ -121,13 +133,15 @@ export function decide(state: NiceHashState): readonly Proposal[] {
 
   // Re-price whenever the target moves by at least one NiceHash price step - the
   // smallest change the API will actually execute (sub-step edits quantize to a
-  // no-op or get rejected). This is the price granularity, NOT the old
-  // "% of overpay" deadband: that was a churn-damper inherited from the upstream
-  // Braiins controller (originally a hard-coded overpay/5, later the configurable
-  // `price_edit_deadband_pct`) and has been removed, so the bid now hugs the
-  // floor to within one price step instead of drifting up to a fraction of the
-  // overpay cushion above it.
-  const minRepriceStep = config.price_down_step_btc;
+  // no-op or get rejected). This is the price GRANULARITY (`PRICE_STEP_BTC`), NOT
+  // `price_down_step_btc`: that field is NiceHash's cap on how far a price may be
+  // *lowered* per move (often 0.002, far coarser than the 0.0001 grid) and is used
+  // below only to bound the descent. Using the coarse down-step as the reprice
+  // threshold made the bid ignore small moves of the cap/floor and sit a step below
+  // its target (e.g. parked at 0.4558 while the cap crept up to 0.45617). It is
+  // also NOT the old "% of overpay" deadband, which was removed, so the bid hugs
+  // the floor to within one price step.
+  const minRepriceStep = PRICE_STEP_BTC;
 
   const capLabel = cappedByDynamic ? 'dynamic cap' : 'cap';
   const priceSuffix = cappedByCeiling

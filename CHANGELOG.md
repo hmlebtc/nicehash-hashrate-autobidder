@@ -2,6 +2,29 @@
 
 ## 2026-07-06
 
+### `[Fix]` Next tier is the literal book tier; bid re-prices on one-tick moves
+
+Two linked fixes to how the bid follows the market, from a live session where the
+bid sat frozen at `0.4558` while the cap crept to `0.45617` and NEXT TIER read the
+cap instead of the real `0.4557`.
+
+- **Next filled tier** (`filled_prices[1]`, the cyan line and the anchor when
+  "anchor on next filled tier" is on) is now the *literal* next filled tier above
+  the marginal — exactly what the order book shows. The gap-jump (which skipped
+  real tiers hugging the marginal) and the cap-clamp (which pinned the tier onto
+  the cap when the real tier sat higher) are both removed; empty 0-volume phantom
+  slots are still skipped. This also retires the "spike to 0.49xx" workaround at
+  its source. Reverses the earlier gap-jump-to-the-next-block behavior by design.
+- **Reprice threshold** now uses the price grid (`0.0001`) instead of the coarse
+  `price_down_step` (often `0.002`, NiceHash's cap on how far a price may be
+  *lowered* per move). The down-step still bounds descents; it is no longer the
+  threshold for *whether* to re-price. Previously the bid ignored sub-`0.002` moves
+  of the cap/floor and sat a step below its target — most visibly, it never climbed
+  the last tick to the dynamic cap when the market was above break-even.
+
+Together: NEXT TIER matches the book, and the bid hugs its target (marginal+overpay,
+capped) to within one price tick both ways.
+
 ### `[Fix]` Bid climbs to the cap when the whole market is above it
 
 When the entire order book is priced above the dynamic cap (the marginal sits

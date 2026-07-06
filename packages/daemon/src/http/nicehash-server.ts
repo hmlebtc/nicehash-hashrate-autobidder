@@ -158,8 +158,8 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     build: deps.buildNumber,
     config: configView,
     // Only the fields the dashboard needs: the marginal (purple) + the next
-    // filled tier (cyan, `filled_prices[1]`, already bounded at the cap) for the
-    // tiles and chart; the rest of the ladder is omitted.
+    // filled tier (cyan, `filled_prices[1]`, the literal next tier from the book)
+    // for the tiles and chart; the rest of the ladder is omitted.
     market: s.market
       ? {
           anchor_price_btc: s.market.anchor_price_btc,
