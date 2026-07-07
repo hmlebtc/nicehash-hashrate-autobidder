@@ -231,7 +231,13 @@ export function dynamicCapPrice(
 ): number | null {
   if (hashprice === null || !Number.isFinite(hashprice)) return null;
   const totalFee = (niceHashFeePct || 0) + (poolFeePct || 0);
-  return hashprice / (1 + totalFee / 100) - (bufferBtc || 0);
+  const cap = hashprice / (1 + totalFee / 100) - (bufferBtc || 0);
+  // Round UP to the 4-dp price grid the market quotes on, so the bid can climb the
+  // final fraction of a tick to the cap (e.g. a 0.457259 break-even becomes 0.4573)
+  // instead of `execute()` flooring it a tick below (0.4572). The bid then sits at
+  // the grid tick at or just above break-even; use the profit buffer for margin
+  // below that. The epsilon keeps a value already on the grid from ticking up.
+  return Math.ceil(cap * 1e4 - 1e-6) / 1e4;
 }
 
 /**

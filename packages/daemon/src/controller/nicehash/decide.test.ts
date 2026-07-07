@@ -124,14 +124,14 @@ describe('decide - create', () => {
     expect(p.price_btc).toBe(0.001);
   });
 
-  it('caps the bid at the dynamic cap (hashprice / (1 + fees) − buffer) when enabled', () => {
-    // hashprice 0.0008, fees 3% + 1% = 4%, buffer 0 => cap = 0.0008 / 1.04 (fees are
-    // a markup on the bid, so cap × 1.04 = hashprice). anchor 0.0009 + overpay would
-    // be 0.00091, so the cap binds.
+  it('caps the bid at the dynamic cap (hashprice / (1 + fees) − buffer), rounded up to the grid', () => {
+    // hashprice 0.47, fees 3% + 1% = 4%, buffer 0 => break-even = 0.47 / 1.04 =
+    // 0.451923 (fees are a markup on the bid, so cap × 1.04 = hashprice), rounded UP
+    // to the 4-dp grid = 0.452. anchor 0.46 + overpay exceeds it, so the cap binds.
     const out = decide(
       state({
-        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
-        hashprice_btc_per_unit_day: 0.0008,
+        market: { anchor_price_btc: 0.46, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.47,
         config: config({
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
@@ -142,27 +142,27 @@ describe('decide - create', () => {
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04, 9);
+    expect(p.price_btc).toBeCloseTo(0.452, 9); // 0.451923 rounded up to the grid
   });
 
-  it('subtracts the absolute profit buffer from the dynamic cap', () => {
-    // cap = 0.0008 / 1.04 − 0.00005.
+  it('subtracts the absolute profit buffer from the dynamic cap (then rounds up)', () => {
+    // break-even 0.47/1.04 = 0.451923, minus 0.001 buffer = 0.450923, rounded up = 0.451.
     const out = decide(
       state({
-        market: { anchor_price_btc: 0.0009, total_speed_units: 100, thin: false },
-        hashprice_btc_per_unit_day: 0.0008,
+        market: { anchor_price_btc: 0.46, total_speed_units: 100, thin: false },
+        hashprice_btc_per_unit_day: 0.47,
         config: config({
           nicehash_fee_pct: 3,
           pool_fee_pct: 1,
           dynamic_cap_enabled: true,
-          dynamic_cap_buffer_btc: 0.00005,
+          dynamic_cap_buffer_btc: 0.001,
           max_price_btc_per_unit_day: 1,
         }),
       }),
     );
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    expect(p.price_btc).toBeCloseTo(0.0008 / 1.04 - 0.00005, 9);
+    expect(p.price_btc).toBeCloseTo(0.451, 9); // 0.450923 rounded up to the grid
   });
 
   it('does not apply the dynamic cap when disabled (anchor + overpay wins)', () => {
@@ -465,16 +465,16 @@ describe('decide - track to fill', () => {
           overpay_btc_per_unit_day: 0.0001,
           price_down_step_btc: 0.0001,
         }),
-        // cap = hashprice / (1 + 4%) = 0.472348 / 1.04 = 0.4541808; bid 0.45423 is
-        // ~0.0000492 over it - smaller than the 0.0001 price step, so the normal
-        // walk-down stays silent and only the over-cap bypass fires.
+        // break-even = 0.472348 / 1.04 = 0.4541808, rounded up to the grid = 0.4542;
+        // bid 0.45423 is ~0.00003 over that - smaller than the 0.0001 price step, so
+        // the normal walk-down stays silent and only the over-cap bypass fires.
         hashprice_btc_per_unit_day: 0.472348,
       }),
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    // walkDownTo clamps to the cap (target), so it lands exactly at break-even.
-    expect(e.new_price_btc).toBeCloseTo(0.472348 / 1.04, 8);
+    // walkDownTo clamps to the cap (target), so it lands exactly at the grid cap.
+    expect(e.new_price_btc).toBeCloseTo(0.4542, 9);
     expect(e.new_price_btc).toBeLessThan(0.45423);
   });
 
