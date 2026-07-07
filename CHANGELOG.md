@@ -2,6 +2,18 @@
 
 ## 2026-07-06
 
+### `[Fix]` Dynamic cap rounds up to the price grid so the bid reaches it
+
+The dynamic break-even cap is now rounded **up** to the 4-dp price grid the market
+quotes on, so the bid can climb the final fraction of a tick right to the cap
+instead of `execute()` flooring it one tick below. Example: a `0.457259` break-even
+now caps at `0.4573`, and the bid reaches `0.4573` (was stuck at `0.4572`). The
+dashboard's dynamic-cap tile and margin-to-cap round the same way, so the displayed
+cap equals the price the bid actually climbs to (margin-to-cap reads 0 at the cap,
+not a stray tick under it). The bid sits at the grid tick at or just above
+break-even (up to ~1 tick, i.e. ~0.02% at these prices); the profit buffer still
+holds back any margin you want below that.
+
 ### `[Fix]` Next filled tier anchors on the next solid miner block
 
 Refines the next filled tier (`filled_prices[1]`, the cyan line and the anchor when

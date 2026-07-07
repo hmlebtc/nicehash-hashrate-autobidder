@@ -396,7 +396,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   function dynamicCapOn() { var c = lastStatus && lastStatus.config; return !!(c && c.dynamic_cap_enabled); }
   function totalFeePct() { if (!dynamicCapOn()) return 0; var c = lastStatus && lastStatus.config; return c ? ((c.nicehash_fee_pct || 0) + (c.pool_fee_pct || 0)) : 0; }
   function capBufferBtc() { var c = lastStatus && lastStatus.config; return (c && c.dynamic_cap_buffer_btc) || 0; }
-  function dynamicCapBtc(hp) { return (hp == null || hp <= 0 || !dynamicCapOn()) ? null : hp / (1 + totalFeePct() / 100) - capBufferBtc(); }
+  // Match the daemon's dynamicCapPrice: round the fee-adjusted, buffered break-even
+  // UP to the 4-dp price grid, so the displayed cap = the price the bid actually
+  // climbs to (0.457259 -> 0.4573), and margin-to-cap reads 0 at the cap, not a
+  // stray tick under it.
+  function dynamicCapBtc(hp) { if (hp == null || hp <= 0 || !dynamicCapOn()) return null; var c = hp / (1 + totalFeePct() / 100) - capBufferBtc(); return Math.ceil(c * 1e4 - 1e-6) / 1e4; }
   function isLiveOrderStatus(st) { st = (st || '').toString().toUpperCase(); return !!st && ['CANCELLED', 'CANCELED', 'COMPLETED', 'COMPLETE', 'DEAD', 'STOPPED', 'EXPIRED', 'ERROR'].indexOf(st) < 0; }
 
   // ---- routing -------------------------------------------------------------
