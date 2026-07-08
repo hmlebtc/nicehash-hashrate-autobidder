@@ -188,6 +188,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <div class="card" data-tile="curDelivered"><h2>Delivered</h2><div class="big" id="curDelivered" style="color:#fb923c">—</div><div class="muted" id="curDeliveredUnit"></div></div>
       <div class="card" data-tile="orderBalance"><h2>Order balance</h2><div class="big" id="orderBalance">—</div><div class="muted" id="orderBalanceSub">escrow left in order</div></div>
       <div class="card" data-tile="orderRunway"><h2>Time remaining</h2><div class="big" id="orderRunway">—</div><div class="muted" id="orderRunwaySub">until escrow runs out</div></div>
+      <div class="card" data-tile="orderRunwayLimit"><h2>Time remaining (full limit)</h2><div class="big" id="orderRunwayLimit">—</div><div class="muted" id="orderRunwayLimitSub">if delivered at full limit</div></div>
       <div class="card" data-tile="anchor"><h2>Market anchor</h2><div class="big" id="anchor" style="color:#a855f7">—</div><div class="muted" id="anchorUnit">price to beat</div></div>
       <div class="card" data-tile="nextTier"><h2>Next tier</h2><div class="big" id="nextTier" style="color:#38bdf8">—</div><div class="muted" id="nextTierUnit">next filled tier (cyan)</div></div>
       <div class="card" data-tile="supply"><h2>Market supply</h2><div class="big" id="supply">—</div><div class="muted" id="supplyUnit"></div></div>
@@ -810,6 +811,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (rate <= 0) return '∞';
     return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
   }
+  // Hypothetical runway: always priced off the order's full limit speed,
+  // regardless of what it is actually delivering right now. Complements
+  // runwayHours (which reflects the real burn while filling) so the
+  // best-case completion time stays visible even while the order is filling.
+  function runwayHoursAtLimit(o) {
+    var rate = (o.price_btc || 0) * (o.limit_units || 0);
+    if (!(o.available_amount_btc > 0)) return '0h';
+    if (rate <= 0) return '∞';
+    return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
+  }
 
   // Live countdown + progress bar to the next decision. Driven both by
   // renderStatus (on each data refresh) and a 1s timer for smooth ticking.
@@ -850,6 +861,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('orderRunwaySub').textContent = primary
       ? (primary.accepted_speed_units > 0 ? 'until escrow runs out' : 'at full limit (not yet filled)')
       : 'no active order';
+    $('orderRunwayLimit').textContent = primary ? runwayHoursAtLimit(primary) : '—';
+    $('orderRunwayLimitSub').textContent = primary ? 'if delivered at full limit' : 'no active order';
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
     $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
     var nextTier = s.market && s.market.next_filled_price_btc != null ? s.market.next_filled_price_btc : null;

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-07-08
+
+### `[UI]` Second "Time remaining (full limit)" tile
+
+Adds a tile beside the existing Time remaining that always estimates completion
+time at the order's **full limit speed**, independent of what it is actually
+delivering. The original tile keeps reflecting the real burn while the order is
+filling; the new one keeps the best-case, full-limit estimate visible even
+mid-fill (previously that number only appeared in the single tile when the order
+was idle). When the order is stalled — delivering 0 — both tiles read the same
+full-limit figure.
+
 ## 2026-07-06
 
 ### `[Fix]` Dynamic cap rounds up to the price grid so the bid reaches it
