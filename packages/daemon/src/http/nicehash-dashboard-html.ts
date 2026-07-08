@@ -805,11 +805,16 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     applyTileOrder($('pnl'));
   }
 
+  // Runways of 48h+ read better in days ("3.2d") than unbounded hour strings.
+  function fmtRunwayHours(h) { return h >= 48 ? (h / 24).toFixed(1) + 'd' : h.toFixed(1) + 'h'; }
+  // Real runway: priced off what the order is actually delivering right now.
+  // Callers must handle accepted_speed_units == 0 themselves (stalled order);
+  // the full-limit hypothetical lives in runwayHoursAtLimit.
   function runwayHours(o) {
-    var rate = (o.price_btc || 0) * ((o.accepted_speed_units > 0 ? o.accepted_speed_units : o.limit_units) || 0);
+    var rate = (o.price_btc || 0) * (o.accepted_speed_units || 0);
     if (!(o.available_amount_btc > 0)) return '0h';
     if (rate <= 0) return '∞';
-    return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
+    return fmtRunwayHours((o.available_amount_btc / rate) * 24);
   }
   // Hypothetical runway: always priced off the order's full limit speed,
   // regardless of what it is actually delivering right now. Complements
@@ -819,7 +824,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var rate = (o.price_btc || 0) * (o.limit_units || 0);
     if (!(o.available_amount_btc > 0)) return '0h';
     if (rate <= 0) return '∞';
-    return ((o.available_amount_btc / rate) * 24).toFixed(1) + 'h';
+    return fmtRunwayHours((o.available_amount_btc / rate) * 24);
   }
 
   // Live countdown + progress bar to the next decision. Driven both by
@@ -857,9 +862,12 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // wallet balance still shows in the P&L panel.
     $('orderBalance').textContent = primary ? fmtBtc(primary.available_amount_btc, 4) : '—';
     $('orderBalanceSub').textContent = primary ? 'escrow left in order' : 'no active order';
-    $('orderRunway').textContent = primary ? runwayHours(primary) : '—';
+    // Real runway only makes sense while the order is actually filling; a
+    // stalled order reads "not filling" (the full-limit hypothetical stays
+    // on the orderRunwayLimit tile).
+    $('orderRunway').textContent = primary && primary.accepted_speed_units > 0 ? runwayHours(primary) : '—';
     $('orderRunwaySub').textContent = primary
-      ? (primary.accepted_speed_units > 0 ? 'until escrow runs out' : 'at full limit (not yet filled)')
+      ? (primary.accepted_speed_units > 0 ? 'until escrow runs out' : 'not filling')
       : 'no active order';
     $('orderRunwayLimit').textContent = primary ? runwayHoursAtLimit(primary) : '—';
     $('orderRunwayLimitSub').textContent = primary ? 'if delivered at full limit' : 'no active order';
@@ -909,7 +917,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('orders').innerHTML = orders.length ? orders.map(function (o) {
       return '<tr><td><code>' + esc((o.order_id || '').slice(0, 8)) + '</code></td><td>' + fmtPrice(o.price_btc) +
         '</td><td>' + fmtSpeed(o.limit_units) + ' ' + speedUnit() + '</td><td>' + fmtSpeed(o.accepted_speed_units) + ' ' + speedUnit() +
-        '</td><td>' + (o.rigs_count || 0) + '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + runwayHours(o) + '</td><td>' + esc(o.status) + '</td></tr>';
+        '</td><td>' + (o.rigs_count || 0) + '</td><td>' + fmtBtc(o.available_amount_btc) + '</td><td>' + (o.accepted_speed_units > 0 ? runwayHours(o) : runwayHoursAtLimit(o)) + '</td><td>' + esc(o.status) + '</td></tr>';
     }).join('') : '<tr><td colspan="8" class="muted">no order — ' + (s.market ? 'holding' : 'market unavailable') + '</td></tr>';
 
     var warns = [];
@@ -1170,10 +1178,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (!grid || !grid.getAttribute('data-tilegrid')) return;
     var order = readTileOrder(grid.getAttribute('data-tilegrid'));
     if (order) {
-      var byKey = {};
-      gridCards(grid).forEach(function (c) { var k = c.getAttribute('data-tile'); if (k) byKey[k] = c; });
-      // Re-append known cards in saved order; unknown/new cards keep their spot at the end.
-      order.forEach(function (k) { if (byKey[k]) { grid.appendChild(byKey[k]); delete byKey[k]; } });
+      var byKey = {}, placed = {}, defaultKeys = [];
+      gridCards(grid).forEach(function (c) { var k = c.getAttribute('data-tile'); if (k) { byKey[k] = c; defaultKeys.push(k); } });
+      order.forEach(function (k) { if (byKey[k]) { grid.appendChild(byKey[k]); placed[k] = true; } });
+      // Unknown/new cards (not in the saved order) slot in right after their nearest
+      // already-placed default-order predecessor, so a new tile appears beside the tile
+      // it shipped next to. Without this, appendChild would strand them at the front.
+      defaultKeys.forEach(function (k, i) {
+        if (placed[k]) return;
+        var anchorEl = null;
+        for (var j = i - 1; j >= 0; j--) { if (placed[defaultKeys[j]]) { anchorEl = byKey[defaultKeys[j]]; break; } }
+        if (anchorEl) grid.insertBefore(byKey[k], anchorEl.nextSibling);
+        else grid.insertBefore(byKey[k], grid.firstChild);
+        placed[k] = true;
+      });
     }
     markDraggable(grid);
   }
