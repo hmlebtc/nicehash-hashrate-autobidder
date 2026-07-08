@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.43"
+version: "0.6.44"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,14 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.44 - tile placement fix + runway display polish.
+
+  Fixes new tiles jumping to the front of the grid when you have a customized tile
+  layout - they now appear beside the tile they ship next to (the full-limit runway
+  tile lands beside Time remaining). Runways of 48h+ now display in days, and while
+  the order is delivering 0 the original Time remaining tile reads "not filling"
+  instead of duplicating the full-limit estimate.
+
   v0.6.43 - second "Time remaining (full limit)" tile.
 
   Adds a tile beside the existing Time remaining that always shows the best-case

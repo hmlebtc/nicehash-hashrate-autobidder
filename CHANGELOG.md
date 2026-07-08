@@ -2,6 +2,22 @@
 
 ## 2026-07-08
 
+### `[Fix]` New tiles no longer jump to the front of a customized layout
+
+When a saved tile layout existed, a newly shipped tile (like v0.6.43's full-limit
+runway tile) landed as the very first tile instead of beside the tile it ships
+next to — and one drag persisted that placement. New tiles now slot in right
+after their default neighbor ("Time remaining (full limit)" appears beside
+"Time remaining") even when the layout has been customized.
+
+### `[UI]` Runway tiles roll to days; stalled order reads "not filling"
+
+Runways of 48 hours or more now display in days (e.g. "3.2d") on both Time
+remaining tiles and the Orders table, instead of unbounded hour strings. While
+the order delivers 0 EH/s the original Time remaining tile now reads "not
+filling" instead of duplicating the full-limit estimate — the hypothetical best
+case lives exclusively in the "Time remaining (full limit)" tile.
+
 ### `[UI]` Second "Time remaining (full limit)" tile
 
 Adds a tile beside the existing Time remaining that always estimates completion
