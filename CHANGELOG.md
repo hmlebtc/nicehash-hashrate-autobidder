@@ -2,6 +2,18 @@
 
 ## 2026-07-09
 
+### `[Fix]` Escrow remaining bounded by funded-minus-spent
+
+The order balance sat frozen at 0.0487 through 33+ hours of continuous billing.
+NiceHash defines availableAmount as remaining escrow (it should fall as
+payedAmount accrues), but the served value can freeze upstream while the payed
+counter keeps moving. Remaining escrow is now clamped to
+max(0, min(availableAmount, amount − payedAmount)) — mathematically inert when
+the field behaves, tracking the true burn when it freezes. This also un-freezes
+the refill trigger, which reads the same figure and would otherwise never fire
+(the order would die at exhaustion, costing a fresh creation fee and the bid's
+price position).
+
 ### `[Fix]` Escrow balance uses the fresher per-order figure
 
 The Order balance tile (and both Time remaining runways computed from it) read

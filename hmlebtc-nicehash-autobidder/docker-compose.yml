@@ -30,7 +30,7 @@ services:
   web:
     # Pin the exact released version - never `:latest`, never `v`-prefixed.
     # Bump in lockstep with umbrel-app.yml `version:` on every release.
-    image: ghcr.io/hmlebtc/nicehash-hashrate-autobidder:0.6.45
+    image: ghcr.io/hmlebtc/nicehash-hashrate-autobidder:0.6.46
     restart: on-failure
     stop_grace_period: 1m
     volumes:

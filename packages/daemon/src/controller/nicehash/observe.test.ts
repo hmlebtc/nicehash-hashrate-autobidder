@@ -201,6 +201,8 @@ describe('observe', () => {
   it('adopts a lower detail availableAmount than the list (escrow allowed to fall)', async () => {
     // The list reports 0.01 (from BASE fixture); the detail endpoint shows a
     // lower figure because escrow has since been spent. observe should adopt it.
+    // payedAmount is consistent with the spend, so the funded-minus-spent
+    // bound (0.01 − 0.0068 = 0.0032) stays inert above the served 0.003.
     const svc = service({
       getOrder: vi.fn(async (id: string) => ({
         id,
@@ -209,11 +211,34 @@ describe('observe', () => {
         amount: '0.01',
         acceptedCurrentSpeed: '0',
         availableAmount: '0.003',
+        payedAmount: '0.0068',
       })) as unknown as NiceHashService['getOrder'],
     });
     const state = await observe({ service: svc, ...base });
     const mine = state.owned_orders.find((o) => o.order_id === 'mine');
     expect(mine?.available_amount_btc).toBe(0.003);
+  });
+
+  it('bounds the detail availableAmount by the detail funded-minus-spent when it freezes', async () => {
+    // The detail's availableAmount froze while payedAmount kept accruing
+    // (observed live for 33+ hours of continuous billing). The patched escrow
+    // must be the bounded amount − payed (0.05 − 0.012 = 0.038), not the
+    // frozen raw 0.0487 - otherwise preferring the detail would reintroduce
+    // the frozen figure over the corrected list one.
+    const svc = service({
+      getOrder: vi.fn(async (id: string) => ({
+        id,
+        price: '0.0102',
+        limit: '4',
+        amount: '0.05',
+        acceptedCurrentSpeed: '0',
+        availableAmount: '0.0487',
+        payedAmount: '0.012',
+      })) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.available_amount_btc).toBeCloseTo(0.038, 9);
   });
 
   it('adopts a higher detail availableAmount than the list (post-refill freshness)', async () => {
