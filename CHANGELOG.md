@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-07-09
+
+### `[Fix]` Escrow balance uses the fresher per-order figure
+
+The Order balance tile (and both Time remaining runways computed from it) read
+escrow from the NiceHash myOrders LIST, which lags actual billing. The daemon
+already fetches per-order detail every tick for delivered speed; it now also
+consumes the detail's availableAmount — the fresher figure — so escrow burn
+shows up on the dashboard as soon as NiceHash reports it, instead of waiting
+for the list to catch up. Note escrow still steps at NiceHash's own settlement
+cadence; this removes our side of the lag, not theirs.
+
+### `[Fix]` Tick interval can no longer be saved as 0
+
+Clearing the Config tab's Tick seconds field silently saved 0 (blank coerces to
+zero), which removed the pause between control-loop passes entirely - the daemon
+would hammer the NiceHash API back-to-back until rate-limited. The value is now
+clamped to a 5-second minimum and rounded to whole seconds on save.
+
 ## 2026-07-08
 
 ### `[Fix]` New tiles no longer jump to the front of a customized layout

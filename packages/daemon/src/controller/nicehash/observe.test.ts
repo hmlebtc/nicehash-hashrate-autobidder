@@ -198,6 +198,70 @@ describe('observe', () => {
     expect(state.orders_error == null).toBe(true);
   });
 
+  it('adopts a lower detail availableAmount than the list (escrow allowed to fall)', async () => {
+    // The list reports 0.01 (from BASE fixture); the detail endpoint shows a
+    // lower figure because escrow has since been spent. observe should adopt it.
+    const svc = service({
+      getOrder: vi.fn(async (id: string) => ({
+        id,
+        price: '0.0102',
+        limit: '4',
+        amount: '0.01',
+        acceptedCurrentSpeed: '0',
+        availableAmount: '0.003',
+      })) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.available_amount_btc).toBe(0.003);
+  });
+
+  it('adopts a higher detail availableAmount than the list (post-refill freshness)', async () => {
+    // The list reports 0.01 (from BASE fixture); the detail endpoint already
+    // shows a refill the list hasn't caught up to. observe should adopt it.
+    const svc = service({
+      getOrder: vi.fn(async (id: string) => ({
+        id,
+        price: '0.0102',
+        limit: '4',
+        amount: '0.02',
+        acceptedCurrentSpeed: '0',
+        availableAmount: '0.02',
+      })) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.available_amount_btc).toBe(0.02);
+  });
+
+  it('keeps the list-reported availableAmount when the detail omits it, speed logic unaffected', async () => {
+    const svc = service({
+      getOrder: vi.fn(async (id: string) => ({
+        id,
+        price: '0.0102',
+        limit: '4',
+        amount: '0.01',
+        acceptedCurrentSpeed: '0.0002',
+        // availableAmount omitted entirely
+      })) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.available_amount_btc).toBe(0.01);
+    expect(mine?.accepted_speed_units).toBe(0.0002);
+  });
+
+  it('keeps the list-reported availableAmount when the order-detail read fails', async () => {
+    const svc = service({
+      getOrder: vi.fn(async () => {
+        throw new Error('detail boom');
+      }) as unknown as NiceHashService['getOrder'],
+    });
+    const state = await observe({ service: svc, ...base });
+    const mine = state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.available_amount_btc).toBe(0.01);
+  });
+
   it('forces market=null and records the error when the my-orders read fails (refuse to act blind)', async () => {
     const svc = service({
       getMyOrders: vi.fn(async () => {
