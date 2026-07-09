@@ -80,13 +80,25 @@ export function ownedOrderFromWire(
   lastPriceDecreaseAt: number | null = null,
   lastPriceChangeAt: number | null = null,
 ): OwnedOrderSnapshot {
+  // Bound remaining escrow by funded-minus-spent: it can never exceed
+  // amount − payedAmount. Under normal semantics amount − payed ≥ available
+  // (fees also drain escrow), so the bound is inert; it binds only when
+  // NiceHash serves a frozen availableAmount while payedAmount keeps accruing
+  // (observed for 33+ hours of continuous billing) - then amount − payed
+  // tracks the true burn (± the creation fee). The amount > 0 guard: a
+  // missing/unparseable amount parses to 0 and would otherwise zero the
+  // balance and misfire refills, so fall back to the raw available then.
+  const amountBtc = parseDecimal(order.amount);
+  const availableBtc = parseDecimal(order.availableAmount);
+  const payedBtc = parseDecimal(order.payedAmount);
   return {
     order_id: order.id,
     price_btc: parseDecimal(order.price),
     limit_units: parseDecimal(order.limit),
-    amount_btc: parseDecimal(order.amount),
-    available_amount_btc: parseDecimal(order.availableAmount),
-    payed_amount_btc: parseDecimal(order.payedAmount),
+    amount_btc: amountBtc,
+    available_amount_btc:
+      amountBtc > 0 ? Math.max(0, Math.min(availableBtc, amountBtc - payedBtc)) : availableBtc,
+    payed_amount_btc: payedBtc,
     accepted_speed_units: parseDecimal(order.acceptedCurrentSpeed),
     rigs_count: typeof order.rigsCount === 'number' ? order.rigsCount : 0,
     status: codeOf(order.status),

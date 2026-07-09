@@ -82,7 +82,11 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     // list values. The two fields merge differently:
     //   - speed: take the larger same-tick reading (list under-reports, never lower it).
     //   - amount: prefer the detail value whenever present (escrow legitimately
-    //     falls, so a "never lower" rule would freeze it stale).
+    //     falls, so a "never lower" rule would freeze it stale), but bounded by
+    //     the detail's own funded-minus-spent (amount − payedAmount), mirroring
+    //     ownedOrderFromWire - the served availableAmount can freeze upstream
+    //     while billing continues, and preferring the raw detail figure would
+    //     reintroduce that frozen value over the corrected list figure.
     owned = await Promise.all(
       owned.map(async (o) => {
         try {
@@ -97,7 +101,12 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
           if (detail.availableAmount !== undefined) {
             const detailAvail = parseDecimal(detail.availableAmount);
             if (Number.isFinite(detailAvail) && detailAvail >= 0) {
-              patch.available_amount_btc = detailAvail;
+              const detailAmount = parseDecimal(detail.amount);
+              const detailPayed = parseDecimal(detail.payedAmount);
+              patch.available_amount_btc =
+                detailAmount > 0
+                  ? Math.max(0, Math.min(detailAvail, detailAmount - detailPayed))
+                  : detailAvail;
             }
           }
 

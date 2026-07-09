@@ -116,6 +116,57 @@ describe('ownedOrderFromWire / reconcileOrders', () => {
     expect(ownedOrderFromWire(withPool).pool_username).toBe('bc1qabc.autobidder');
   });
 
+  it('keeps availableAmount under normal semantics (funded-minus-spent bound is inert)', () => {
+    // Official docs example scale: available = amount − 0.0001 creation fee −
+    // payed×1.03, so amount − payed ≥ available and the bound must not bite.
+    const s = ownedOrderFromWire({
+      ...orderA,
+      amount: '0.01',
+      availableAmount: '0.00989409',
+      payedAmount: '0.00000573',
+    });
+    expect(s.available_amount_btc).toBeCloseTo(0.00989409, 9);
+  });
+
+  it('bounds a frozen availableAmount by funded-minus-spent (amount − payedAmount)', () => {
+    // Live incident: availableAmount froze at 0.0487 for 33+ hours while
+    // payedAmount kept accruing. amount − payed tracks the true burn.
+    const s = ownedOrderFromWire({
+      ...orderA,
+      amount: '0.05',
+      availableAmount: '0.0487',
+      payedAmount: '0.012',
+    });
+    expect(s.available_amount_btc).toBeCloseTo(0.038, 9);
+  });
+
+  it('keeps the raw availableAmount when payedAmount is absent (bound inert at payed=0)', () => {
+    const { payedAmount: _omit, ...noPayed } = { ...orderA, amount: '0.01', availableAmount: '0.008' };
+    const s = ownedOrderFromWire(noPayed as HashpowerOrder);
+    expect(s.available_amount_btc).toBe(0.008);
+  });
+
+  it('never reports negative escrow when payedAmount exceeds amount (exhausted/garbage)', () => {
+    const s = ownedOrderFromWire({
+      ...orderA,
+      amount: '0.01',
+      availableAmount: '0.005',
+      payedAmount: '0.02',
+    });
+    expect(s.available_amount_btc).toBe(0);
+  });
+
+  it('falls back to the raw availableAmount when amount is missing or zero', () => {
+    // A missing/unparseable amount parses to 0; applying the bound would zero
+    // the balance and misfire refills, so the raw available is kept.
+    const { amount: _omit, ...noAmount } = { ...orderA, availableAmount: '0.008', payedAmount: '0.002' };
+    expect(ownedOrderFromWire(noAmount as HashpowerOrder).available_amount_btc).toBe(0.008);
+    expect(
+      ownedOrderFromWire({ ...orderA, amount: '0', availableAmount: '0.008', payedAmount: '0.002' })
+        .available_amount_btc,
+    ).toBe(0.008);
+  });
+
   it('owns ledger orders and ignores foreign orders (no PAUSE)', () => {
     const { owned, unknown } = reconcileOrders([orderA, orderB], new Set(['mine']));
     expect(owned.map((o) => o.order_id)).toEqual(['mine']);
