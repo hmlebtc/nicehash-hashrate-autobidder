@@ -97,6 +97,21 @@ describe('mergeSettings', () => {
     expect(merged.targetSpeedUnits).toBe(1); // unchanged on non-numeric
   });
 
+  it('clamps tickSeconds to a 5-second floor (blank/0/negative would remove the loop pause)', () => {
+    expect(mergeSettings(base(), { tickSeconds: 0 }).tickSeconds).toBe(5);
+    expect(mergeSettings(base(), { tickSeconds: -10 }).tickSeconds).toBe(5);
+    expect(mergeSettings(base(), { tickSeconds: 30 }).tickSeconds).toBe(30); // unchanged above floor
+  });
+
+  it('rounds tickSeconds to whole seconds', () => {
+    expect(mergeSettings(base(), { tickSeconds: 30.4 }).tickSeconds).toBe(30);
+    expect(mergeSettings(base(), { tickSeconds: 30.6 }).tickSeconds).toBe(31);
+  });
+
+  it('keeps the existing tickSeconds when the patch omits it', () => {
+    expect(mergeSettings({ ...base(), tickSeconds: 60 }, {}).tickSeconds).toBe(60);
+  });
+
   it('validates run mode', () => {
     expect(mergeSettings(base(), { runMode: 'LIVE' }).runMode).toBe('LIVE');
     expect(mergeSettings(base(), { runMode: 'BOGUS' }).runMode).toBe('DRY_RUN');

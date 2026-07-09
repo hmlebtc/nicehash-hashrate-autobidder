@@ -76,20 +76,34 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     unknown = split.unknown;
 
     // The myOrders LIST under-reports delivered speed (it can read 0 even while
-    // the per-order detail shows a live draw), so refresh each of our orders'
-    // accepted speed from the order-detail endpoint. Best-effort: a failed
-    // detail read just keeps the list value, and we never lower a reading
-    // (take the larger of the two same-tick numbers).
+    // the per-order detail shows a live draw) and lags the escrow balance, so
+    // refresh each of our orders' accepted speed AND available amount from the
+    // order-detail endpoint. Best-effort: a failed detail read just keeps the
+    // list values. The two fields merge differently:
+    //   - speed: take the larger same-tick reading (list under-reports, never lower it).
+    //   - amount: prefer the detail value whenever present (escrow legitimately
+    //     falls, so a "never lower" rule would freeze it stale).
     owned = await Promise.all(
       owned.map(async (o) => {
         try {
           const detail = await service.getOrder(o.order_id);
+          const patch: { accepted_speed_units?: number; available_amount_btc?: number } = {};
+
           const detailSpeed = parseDecimal(detail.acceptedCurrentSpeed);
           if (Number.isFinite(detailSpeed) && detailSpeed > o.accepted_speed_units) {
-            return { ...o, accepted_speed_units: detailSpeed };
+            patch.accepted_speed_units = detailSpeed;
           }
+
+          if (detail.availableAmount !== undefined) {
+            const detailAvail = parseDecimal(detail.availableAmount);
+            if (Number.isFinite(detailAvail) && detailAvail >= 0) {
+              patch.available_amount_btc = detailAvail;
+            }
+          }
+
+          return { ...o, ...patch };
         } catch {
-          /* keep the list-reported speed on detail-read failure */
+          /* keep the list-reported values on detail-read failure */
         }
         return o;
       }),

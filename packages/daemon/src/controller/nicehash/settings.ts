@@ -282,7 +282,11 @@ export function mergeSettings(
     priceCurrency: str('priceCurrency'),
     balanceCurrency: str('balanceCurrency'),
     runMode: asRunMode(typeof patch.runMode === 'string' ? patch.runMode : existing.runMode),
-    tickSeconds: num('tickSeconds'),
+    // Clamp to a 5s floor and whole seconds: the dashboard posts the raw input
+    // string and Number('') === 0, so a cleared field (or a 0/negative value)
+    // would remove the per-second pause between control-loop passes entirely
+    // and hammer the NiceHash API back-to-back until rate-limited.
+    tickSeconds: Math.max(5, Math.round(num('tickSeconds'))),
     targetSpeedUnits: num('targetSpeedUnits'),
     overpayBtcPerUnitDay: num('overpayBtcPerUnitDay'),
     maxPriceBtcPerUnitDay: num('maxPriceBtcPerUnitDay'),

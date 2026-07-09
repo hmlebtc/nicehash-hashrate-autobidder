@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.44"
+version: "0.6.45"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,16 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.45 - escrow balance uses the fresher per-order figure.
+
+  The Order balance tile (and the Time remaining runways computed from it) now
+  read escrow from the per-order detail endpoint - the fresher figure - instead
+  of the slower myOrders list, so burn shows up on the dashboard as soon as
+  NiceHash reports it. Escrow still steps at NiceHash's own settlement cadence;
+  this removes our side of the lag, not theirs. Also clamps the Tick seconds
+  setting to a 5-second minimum so a cleared field can no longer save 0 and
+  hammer the API.
+
   v0.6.44 - tile placement fix + runway display polish.
 
   Fixes new tiles jumping to the front of the grid when you have a customized tile
