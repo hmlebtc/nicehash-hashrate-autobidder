@@ -2,6 +2,20 @@
 
 ## 2026-07-13
 
+### `[Fix]` Next filled tier = bottom of the contiguously filled top of the book
+
+The NEXT TIER (cyan) is now the lowest price with NO zero-miner orders above
+it - the bottom of the contiguous miner-bearing run at the top of the book,
+scanned row by row. Sellers fill strictly by price priority, so that run is
+the block the market provably clears into; zero-miner rows above the highest
+fill are ignored as dead noise. The old solid-block gap heuristic could track
+an isolated island fill (live case: tier 0.4791 under a wall of zero-miner
+rows while the real block filled at 0.4820). When the contiguous fill reaches
+the marginal itself there is no separate tier and the anchor falls back to
+the marginal. Strictness trade-off: a zero-miner row inside the real block
+(the API under-reports miners) pushes the tier up to the run above it - the
+price cap still bounds the worst case.
+
 ### `[Fix]` Honor NiceHash's change-settle rejection (5110)
 
 NiceHash refuses ANY further price/limit edit - raises included - for a few

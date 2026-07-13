@@ -222,7 +222,8 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     build: deps.buildNumber,
     config: configView,
     // Only the fields the dashboard needs: the marginal (purple) + the next
-    // filled tier (cyan, `filled_prices[1]`, the literal next tier from the book)
+    // filled tier (cyan, `filled_prices[1]` - the bottom of the contiguously
+    // miner-bearing top of the book; null when the fill reaches the marginal)
     // for the tiles and chart; the rest of the ladder is omitted.
     market: s.market
       ? {
