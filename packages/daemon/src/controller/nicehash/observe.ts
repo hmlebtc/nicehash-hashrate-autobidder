@@ -176,6 +176,15 @@ export interface NiceHashObserveDeps {
    */
   readonly decreaseAvailableAtByOrderId?: Map<string, number>;
   /**
+   * Mutable per-order change-SETTLE clock (epoch ms) - when NiceHash will next
+   * accept ANY price/limit edit (error 5110, seconds-scale, raises included).
+   * Armed by the controller purely from NiceHash's "Seconds till available"
+   * 5110 answers. observe() stamps it on each owned order's
+   * `edit_available_at` for the gate and the hold explainer, and prunes
+   * entries for orders that disappeared (successful reads only).
+   */
+  readonly editAvailableAtByOrderId?: Map<string, number>;
+  /**
    * Minimum time between price decreases on a single order (ms) - the SAME
    * value the tick pipeline hands the gate. The escalation ladder's decay
    * paces on max(escalation interval, this), so state decay never outruns the
@@ -427,6 +436,19 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     owned = owned.map((o) => ({
       ...o,
       decrease_available_at: availMap.get(o.order_id) ?? null,
+    }));
+  }
+
+  // Change-SETTLE clock (5110): stamp when NiceHash will next accept ANY
+  // price/limit edit on each owned order. Same lifecycle as the decrease
+  // clock above - pruned only on a successful orders read.
+  const editMap = deps.editAvailableAtByOrderId;
+  if (editMap && ordersOk) {
+    const editOwnedIds = new Set(owned.map((o) => o.order_id));
+    for (const id of [...editMap.keys()]) if (!editOwnedIds.has(id)) editMap.delete(id);
+    owned = owned.map((o) => ({
+      ...o,
+      edit_available_at: editMap.get(o.order_id) ?? null,
     }));
   }
 

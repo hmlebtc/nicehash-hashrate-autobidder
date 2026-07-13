@@ -130,6 +130,16 @@ export interface OwnedOrderSnapshot {
    * falls back to the persisted last-change stamps).
    */
   readonly decrease_available_at?: number | null;
+  /**
+   * Epoch ms when NiceHash will next accept ANY price/limit edit on this
+   * order - the change-SETTLE clock (error 5110: "Order price or limit cannot
+   * be changed yet"), a short seconds-scale window after an edit applies,
+   * distinct from the 10-minute decrease-only cooldown. Armed only from
+   * NiceHash's own "Seconds till available" 5110 answer (there is no local
+   * derivation - the window is too short to be worth modelling). Null when
+   * unknown.
+   */
+  readonly edit_available_at?: number | null;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */
@@ -353,6 +363,22 @@ export function effectiveDecreaseAvailableAt(
   if (order.decrease_available_at != null) return order.decrease_available_at;
   const lastMove = Math.max(order.last_price_decrease_at ?? 0, order.last_price_change_at ?? 0);
   return lastMove > 0 ? lastMove + cooldownMs : null;
+}
+
+/**
+ * THE single definition of "when will NiceHash next accept ANY price/limit
+ * edit on this order" - the change-SETTLE clock (error 5110), sibling of
+ * {@link effectiveDecreaseAvailableAt} for the decrease rule. Consulted by the
+ * gate (to hold ALL edits, raises included) and by the hold explainer /
+ * status countdown, so the wait shown is by construction the moment the gate
+ * opens. No ledger fallback: the window is seconds-scale and armed purely
+ * from NiceHash's own "Seconds till available" answer; when nothing is known
+ * an edit is not throttled (a rejection resyncs us at the cost of one call).
+ */
+export function effectiveEditAvailableAt(
+  order: Pick<OwnedOrderSnapshot, 'edit_available_at'>,
+): number | null {
+  return order.edit_available_at ?? null;
 }
 
 export interface NiceHashState {

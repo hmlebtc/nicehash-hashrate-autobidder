@@ -265,3 +265,29 @@ describe('formatHoldReason - live countdown', () => {
     expect(formatHoldReason(null, NOW)).toBeNull();
   });
 });
+
+describe('explainTick - change-settle hold (5110)', () => {
+  it('a settle-blocked RAISE surfaces the intended move with the gate clock, counting down per request', () => {
+    // Under-filled past grace, below the target -> a walk-up proposal exists;
+    // the settle clock holds it.
+    const s = state({
+      owned_orders: [
+        order({
+          price_btc: 0.478,
+          under_filled_since: NOW - 30 * 60_000,
+          edit_available_at: NOW + 8_000,
+        }),
+      ],
+    });
+    const { proposals, hold } = explain(s);
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(hold?.kind).toBe('EDIT_SETTLE_WAIT');
+    expect(hold?.until).toBe(NOW + 8_000); // the gate's own clock
+    expect(hold!.until!).toBeGreaterThan(NOW); // gate held => positive countdown
+    const at0 = formatHoldReason(hold, NOW);
+    const at5 = formatHoldReason(hold, NOW + 5_000);
+    expect(at0).toContain('waiting on NiceHash change settle, ~0:08 remaining');
+    expect(at5).toContain('waiting on NiceHash change settle, ~0:03 remaining');
+    expect(at0).toContain('0.4780 -> ');
+  });
+});

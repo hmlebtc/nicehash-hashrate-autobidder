@@ -250,6 +250,47 @@ describe('incident repro: blocked walk-down countdown must equal the gate', () =
     }
   });
 
+  it('5110 replay: a settle-rejected raise arms the edit clock; the gate holds ALL edits with a countdown; the retry succeeds', async () => {
+    const SETTLE_5110 =
+      'NiceHash API POST /main/api/v2/hashpower/order/mine/updatePriceAndLimit/ returned 400 - 5110: Order price or limit cannot be changed yet. Seconds till available: 10';
+    const updatePriceAndLimit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(SETTLE_5110)) // first raise: settle-rejected
+      .mockResolvedValue({}); // later attempts succeed
+    const cli = { updatePriceAndLimit } as unknown as NiceHashClient;
+    let t = T_RAISE;
+    const controller = make(() => t, cli, { ...config(), walk_up_enabled: false });
+
+    // Bid below the floor -> a raise fires and gets the 5110. (This usually
+    // means a previous "failed" edit actually applied - reconcile handles it.)
+    myOrder.price = '0.4820';
+    const r1 = await controller.tick();
+    expect(r1.outcomes.find((o) => o.proposal.kind === 'EDIT_PRICE')?.outcome).toBe('FAILED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(1);
+
+    // 5s later, inside NiceHash's 10s settle window: the raise is BLOCKED
+    // (the NEW case - raises were never gate-held before), no call burned,
+    // and the story counts down the gate's own clock.
+    t = T_RAISE + 5_000;
+    const r2 = await controller.tick();
+    const o2 = r2.outcomes.find((x) => x.proposal.kind === 'EDIT_PRICE');
+    expect(o2?.outcome).toBe('BLOCKED');
+    if (o2?.outcome === 'BLOCKED') expect(o2.reason).toBe('EDIT_SETTLE');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(1);
+    expect(r2.hold_reason?.kind).toBe('EDIT_SETTLE_WAIT');
+    expect(r2.hold_reason?.until).toBe(T_RAISE + 10_000);
+    const line = formatHoldReason(r2.hold_reason, T_RAISE + 5_000);
+    expect(line).toContain('waiting on NiceHash change settle');
+    expect(line).toContain('~0:05 remaining');
+
+    // Next regular tick, 32s after the rejection: the window expired - the
+    // retry fires and succeeds.
+    t = T_RAISE + 32_000;
+    const r3 = await controller.tick();
+    expect(r3.outcomes.find((x) => x.proposal.kind === 'EDIT_PRICE')?.outcome).toBe('EXECUTED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(2);
+  });
+
   it("devil's advocate: when the API clock contradicts the stamps, gate and story agree (both open)", () => {
     // NiceHash says available NOW despite a fresh raise stamp: the decrease
     // sails through and no cooldown story is told - never a mixed message.

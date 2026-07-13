@@ -180,3 +180,33 @@ describe('gate - decrease cooldown counts ANY price change (NiceHash rule)', () 
     expect(gate([editUp], s, { priceDecreaseCooldownMs: COOLDOWN })[0]?.allowed).toBe(true);
   });
 });
+
+describe('gate - change-settle lock (5110) holds ALL edits', () => {
+  it('blocks a RAISE while the settle clock runs and releases it after', () => {
+    const held = state('LIVE', [{ ...ownedAt(null), edit_available_at: 1_000_000 + 8_000 }]);
+    const h = gate([editUp], held, { priceDecreaseCooldownMs: COOLDOWN });
+    if (h[0]?.allowed === false) expect(h[0].reason).toBe('EDIT_SETTLE');
+    else throw new Error('expected settle denial');
+
+    const released = state('LIVE', [{ ...ownedAt(null), edit_available_at: 1_000_000 - 1 }]);
+    expect(gate([editUp], released, { priceDecreaseCooldownMs: COOLDOWN })[0]?.allowed).toBe(true);
+  });
+
+  it('a decrease is held by EITHER clock - the 10-min rule dominates when both apply', () => {
+    // Settle clock only (decrease window long expired) -> EDIT_SETTLE.
+    const settleOnly = state('LIVE', [
+      { ...ownedAt(1_000_000 - 20 * 60_000), edit_available_at: 1_000_000 + 5_000 },
+    ]);
+    const s = gate([editDown], settleOnly, { priceDecreaseCooldownMs: COOLDOWN });
+    if (s[0]?.allowed === false) expect(s[0].reason).toBe('EDIT_SETTLE');
+    else throw new Error('expected settle denial');
+
+    // Both clocks running -> the decrease cooldown (the longer rule) reports.
+    const both = state('LIVE', [
+      { ...ownedAt(1_000_000 - 60_000), edit_available_at: 1_000_000 + 5_000 },
+    ]);
+    const b = gate([editDown], both, { priceDecreaseCooldownMs: COOLDOWN });
+    if (b[0]?.allowed === false) expect(b[0].reason).toBe('PRICE_DECREASE_COOLDOWN');
+    else throw new Error('expected cooldown denial');
+  });
+});

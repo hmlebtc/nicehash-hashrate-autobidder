@@ -18,6 +18,7 @@ import { DEFAULT_PRICE_DECREASE_COOLDOWN_MS } from './observe.js';
 import {
   effectiveCapBtc,
   effectiveDecreaseAvailableAt,
+  effectiveEditAvailableAt,
   isActionableOrder,
   type NiceHashState,
   type Proposal,
@@ -29,6 +30,7 @@ const PRICE_STEP_BTC = 0.0001;
 
 export type HoldReasonKind =
   | 'DECREASE_COOLDOWN' // intended walk-down held by NiceHash's decrease cooldown
+  | 'EDIT_SETTLE_WAIT' // any edit held by NiceHash's change-settle lock (5110)
   | 'GRACE_WAIT' // under-filled; walk-up/escalation grace still running
   | 'ESCALATION_STEP_WAIT' // ladder engaged; next step waits on the interval
   | 'AT_CAP_UNDERFILLED' // bid at the cap, still under-filled - market clears above break-even
@@ -85,6 +87,23 @@ export function explainTick(args: {
         from_btc: p.old_price_btc,
         to_btc: p.new_price_btc,
         label: p.reason.split(':')[0] ?? 'walk down',
+      };
+    }
+    // An edit (either direction - blocked RAISES are the new case) held by
+    // NiceHash's change-settle lock (5110): seconds-scale, counted down from
+    // the gate's own clock so the story always matches the enforcement.
+    if (!g.allowed && g.reason === 'EDIT_SETTLE' && g.proposal.kind === 'EDIT_PRICE') {
+      const p = g.proposal;
+      const order = state.owned_orders.find((o) => o.order_id === p.order_id);
+      const until = order
+        ? (effectiveEditAvailableAt(order) ?? state.tick_at + 60_000)
+        : state.tick_at + 60_000;
+      return {
+        kind: 'EDIT_SETTLE_WAIT',
+        until,
+        from_btc: p.old_price_btc,
+        to_btc: p.new_price_btc,
+        label: p.reason.split(':')[0] ?? 'edit price',
       };
     }
   }
@@ -207,6 +226,11 @@ export function formatHoldReason(
       return (
         `${hold.label ?? 'walk down'} ${fmtGrid(hold.from_btc ?? 0)} -> ${fmtGrid(hold.to_btc ?? 0)}` +
         ` — waiting on NiceHash decrease cooldown, ~${rem ?? '?'} remaining`
+      );
+    case 'EDIT_SETTLE_WAIT':
+      return (
+        `${hold.label ?? 'edit price'} ${fmtGrid(hold.from_btc ?? 0)} -> ${fmtGrid(hold.to_btc ?? 0)}` +
+        ` — waiting on NiceHash change settle, ~${rem ?? '?'} remaining`
       );
     case 'GRACE_WAIT':
       return rem !== null
