@@ -17,6 +17,7 @@
 import { DEFAULT_PRICE_DECREASE_COOLDOWN_MS } from './observe.js';
 import {
   effectiveCapBtc,
+  effectiveDecreaseAvailableAt,
   isActionableOrder,
   type NiceHashState,
   type Proposal,
@@ -67,13 +68,17 @@ export function explainTick(args: {
     if (!g.allowed && g.reason === 'PRICE_DECREASE_COOLDOWN' && g.proposal.kind === 'EDIT_PRICE') {
       const p = g.proposal;
       const order = state.owned_orders.find((o) => o.order_id === p.order_id);
-      const lastMove = Math.max(
-        order?.last_price_decrease_at ?? 0,
-        order?.last_price_change_at ?? 0,
-      );
-      const until =
-        order?.decrease_available_at ??
-        (lastMove > 0 ? lastMove + cooldownMs : state.tick_at + cooldownMs);
+      // THE gate's own clock ({@link effectiveDecreaseAvailableAt}) - never a
+      // parallel computation. The gate blocked, so this is > tick_at by
+      // construction and the countdown can never read 0:00 while held (the
+      // 2026-07-13 incident: the gate blocked on the armed API-truth clock
+      // while this branch counted down an already-expired stamp). The
+      // conservative tail arm is unreachable in a consistent tick (a null
+      // clock cannot have blocked the gate) but keeps the story sane if the
+      // shapes ever drift.
+      const until = order
+        ? (effectiveDecreaseAvailableAt(order, cooldownMs) ?? state.tick_at + cooldownMs)
+        : state.tick_at + cooldownMs;
       return {
         kind: 'DECREASE_COOLDOWN',
         until,
@@ -167,9 +172,12 @@ export function explainTick(args: {
 
   if (!underFilled && escalationOffset > PRICE_STEP_BTC / 2) {
     // Filled at an escalated price: the next probe down lands when both the
-    // ladder decay AND NiceHash's decrease cooldown allow it.
+    // ladder decay AND NiceHash's decrease cooldown allow it - the cooldown
+    // side via the gate's own clock helper (map value or ledger-stamp
+    // fallback), so this ETA agrees with what the gate will actually let
+    // through.
     const decayAt = (lastStepAt ?? state.tick_at) + decayIntervalMs;
-    const until = Math.max(decayAt, primary.decrease_available_at ?? 0);
+    const until = Math.max(decayAt, effectiveDecreaseAvailableAt(primary, cooldownMs) ?? 0);
     return { kind: 'FILLED_ESCALATED', until };
   }
 
