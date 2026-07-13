@@ -104,6 +104,16 @@ export class NiceHashController {
    */
   private readonly decreaseAvailableAt = new Map<string, number>();
 
+  /**
+   * Per-order change-SETTLE clock: epoch ms when NiceHash will next accept ANY
+   * price/limit edit (error 5110, a seconds-scale window after an edit lands -
+   * distinct from the 10-minute decrease cooldown). Armed ONLY from NiceHash's
+   * own "Seconds till available" 5110 answers; no local derivation. In-memory:
+   * a restart loses it at the cost of at most one rejected call, which
+   * resyncs it.
+   */
+  private readonly editAvailableAt = new Map<string, number>();
+
   constructor(private readonly deps: NiceHashControllerDeps) {}
 
   async tick(): Promise<NiceHashTickResult> {
@@ -131,6 +141,7 @@ export class NiceHashController {
       underFilledSinceById: this.underFilledSince,
       escalationByOrderId: this.escalationByOrder,
       decreaseAvailableAtByOrderId: this.decreaseAvailableAt,
+      editAvailableAtByOrderId: this.editAvailableAt,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
@@ -196,16 +207,30 @@ export class NiceHashController {
     // it is the source of truth, so the daemon self-corrects even when the
     // rejection came from clock drift or a manual edit outside the daemon.
     // A malformed message falls back to the full window (conservative).
-    if (
-      outcome.outcome === 'FAILED' &&
-      p.kind === 'EDIT_PRICE' &&
-      p.new_price_btc < p.old_price_btc
-    ) {
-      const rejection = parseDecreaseCooldownRejection(outcome.error);
-      if (rejection) {
-        const waitMs =
-          rejection.secondsRemaining !== null ? rejection.secondsRemaining * 1000 : cooldownMs;
-        this.decreaseAvailableAt.set(p.order_id, now() + waitMs);
+    if (outcome.outcome === 'FAILED' && p.kind === 'EDIT_PRICE') {
+      if (p.new_price_btc < p.old_price_btc) {
+        const rejection = parseDecreaseCooldownRejection(outcome.error);
+        if (rejection) {
+          const waitMs =
+            rejection.secondsRemaining !== null ? rejection.secondsRemaining * 1000 : cooldownMs;
+          this.decreaseAvailableAt.set(p.order_id, now() + waitMs);
+          return;
+        }
+      }
+      // NiceHash's change-SETTLE rejection (5110, "Order price or limit cannot
+      // be changed yet. Seconds till available: N") applies to ANY edit,
+      // raises included - a short window after an edit lands. Arm the
+      // per-order edit clock from NiceHash's own answer so the gate holds
+      // instead of burning guaranteed-rejected calls. Note: receiving 5110
+      // usually means a previous "failed" edit actually APPLIED server-side
+      // (the 2026-07-13 failed-but-applied incident) - no extra handling
+      // needed here, the next reconcileFromApi self-corrects the ledger price.
+      // Malformed countdown -> a short 60s fallback (settle windows are
+      // seconds-scale; never the 10-minute decrease cooldown).
+      const settle = parseChangeSettleRejection(outcome.error);
+      if (settle) {
+        const waitMs = settle.secondsRemaining !== null ? settle.secondsRemaining * 1000 : 60_000;
+        this.editAvailableAt.set(p.order_id, now() + waitMs);
       }
       return;
     }
@@ -276,6 +301,26 @@ export function parseDecreaseCooldownRejection(
   error: string,
 ): { readonly secondsRemaining: number | null } | null {
   if (!/\b5061\b/.test(error) && !/decrease.*not allowed within/i.test(error)) return null;
+  const m = /seconds till available:\s*(\d+)/i.exec(error);
+  if (!m) return { secondsRemaining: null };
+  const n = Number(m[1]);
+  return { secondsRemaining: Number.isFinite(n) && n >= 0 ? n : null };
+}
+
+/**
+ * Recognise a NiceHash change-SETTLE rejection (error code 5110, message like
+ * "Order price or limit cannot be changed yet. Seconds till available: 10")
+ * and extract the remaining seconds. This is NiceHash's general
+ * edit-too-soon lock - it applies to raises as well as decreases, unlike the
+ * decrease-only 5061 rule. Returns null for unrelated errors;
+ * `secondsRemaining: null` when the rejection matched but the countdown could
+ * not be parsed (caller should fall back to a short seconds-scale window,
+ * never the 10-minute decrease cooldown).
+ */
+export function parseChangeSettleRejection(
+  error: string,
+): { readonly secondsRemaining: number | null } | null {
+  if (!/\b5110\b/.test(error) && !/cannot be changed yet/i.test(error)) return null;
   const m = /seconds till available:\s*(\d+)/i.exec(error);
   if (!m) return { secondsRemaining: null };
   const n = Number(m[1]);

@@ -166,15 +166,14 @@ function outcomeView(
         : 'note' in o
           ? (o.note ?? '')
           : '';
-  // A cooldown-blocked walk-down carries a live countdown instead of the bare
-  // reason code - computed per request so the dashboard's poll sees it tick.
-  if (
-    o.outcome === 'BLOCKED' &&
-    o.reason === 'PRICE_DECREASE_COOLDOWN' &&
-    hold?.kind === 'DECREASE_COOLDOWN' &&
-    hold.until !== null
-  ) {
-    detail = `waiting on NiceHash decrease cooldown, ~${formatRemaining(hold.until, nowMs)} remaining`;
+  // A gate-held edit carries a live countdown instead of the bare reason
+  // code - computed per request so the dashboard's poll sees it tick.
+  if (o.outcome === 'BLOCKED' && hold?.until != null) {
+    if (o.reason === 'PRICE_DECREASE_COOLDOWN' && hold.kind === 'DECREASE_COOLDOWN') {
+      detail = `waiting on NiceHash decrease cooldown, ~${formatRemaining(hold.until, nowMs)} remaining`;
+    } else if (o.reason === 'EDIT_SETTLE' && hold.kind === 'EDIT_SETTLE_WAIT') {
+      detail = `waiting on NiceHash change settle, ~${formatRemaining(hold.until, nowMs)} remaining`;
+    }
   }
   return { kind: o.proposal.kind, outcome: o.outcome, detail };
 }

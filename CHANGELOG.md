@@ -2,6 +2,19 @@
 
 ## 2026-07-13
 
+### `[Fix]` Honor NiceHash's change-settle rejection (5110)
+
+NiceHash refuses ANY further price/limit edit - raises included - for a few
+seconds after an edit lands ("5110: Order price or limit cannot be changed
+yet. Seconds till available: N"). The daemon now arms a per-order clock from
+NiceHash's own countdown whenever an edit is rejected with 5110, gates ALL
+edits until it expires, and shows the wait in What's Happening with a live
+countdown ("waiting on NiceHash change settle, ~0:08 remaining").
+Previously a raise fired right after an applied-but-500'd edit burned a
+guaranteed-rejected API call (seen in the 2026-07-13 incident). A 5110 also
+implies the previous "failed" edit actually applied server-side; the next
+reconcile self-corrects the ledger automatically.
+
 ### `[Fix]` The blocked-walk-down countdown always matches the gate
 
 During the 2026-07-13 NiceHash outage the dashboard showed "waiting on

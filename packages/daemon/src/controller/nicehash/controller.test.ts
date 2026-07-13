@@ -7,7 +7,7 @@ import { NiceHashOrdersRepo } from '../../state/repos/nicehash_orders.js';
 import { NiceHashMetricsRepo } from '../../state/repos/nicehash_tick_metrics.js';
 import { NiceHashEventsRepo } from '../../state/repos/nicehash_order_events.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
-import { NiceHashController, parseDecreaseCooldownRejection } from './controller.js';
+import { NiceHashController, parseChangeSettleRejection, parseDecreaseCooldownRejection } from './controller.js';
 import type { NiceHashControllerConfig, RunMode } from './types.js';
 
 function config(): NiceHashControllerConfig {
@@ -351,6 +351,42 @@ describe('parseDecreaseCooldownRejection', () => {
   it('returns null for unrelated errors', () => {
     expect(parseDecreaseCooldownRejection('500 internal error')).toBeNull();
     expect(parseDecreaseCooldownRejection('2997 Invalid input: PRICE_DATA_SCALE')).toBeNull();
+  });
+});
+
+describe('parseChangeSettleRejection', () => {
+  it('extracts the remaining seconds from a 5110 rejection (the incident message)', () => {
+    const msg =
+      'NiceHash API POST /main/api/v2/hashpower/order/x/updatePriceAndLimit/ returned 400 - 5110: Order price or limit cannot be changed yet. Seconds till available: 10';
+    expect(parseChangeSettleRejection(msg)).toEqual({ secondsRemaining: 10 });
+  });
+
+  it('matches on the message text even without the numeric code', () => {
+    expect(
+      parseChangeSettleRejection('Order price or limit cannot be changed yet. Seconds till available: 7'),
+    ).toEqual({ secondsRemaining: 7 });
+  });
+
+  it('returns secondsRemaining null when the countdown is missing/malformed', () => {
+    expect(parseChangeSettleRejection('400 - 5110: Order price or limit cannot be changed yet.')).toEqual({
+      secondsRemaining: null,
+    });
+  });
+
+  it('returns null for unrelated errors, and the two parsers stay disjoint', () => {
+    expect(parseChangeSettleRejection('500 - 2999: Generic Server Error')).toBeNull();
+    // A 5061 decrease-cooldown message is NOT a settle rejection...
+    expect(
+      parseChangeSettleRejection(
+        '400 - 5061: Order price decreased not allowed within 10 minutes of last price change. Seconds till available: 149',
+      ),
+    ).toBeNull();
+    // ...and a 5110 settle message is NOT a decrease-cooldown rejection.
+    expect(
+      parseDecreaseCooldownRejection(
+        '400 - 5110: Order price or limit cannot be changed yet. Seconds till available: 10',
+      ),
+    ).toBeNull();
   });
 });
 
