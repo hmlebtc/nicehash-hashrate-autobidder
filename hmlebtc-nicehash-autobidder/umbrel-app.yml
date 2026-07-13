@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.47"
+version: "0.6.48"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,23 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.48 - the escalation ladder now starts with a single step.
+
+  Per operator preference, the first escalation move is exactly one escalation
+  step above the floor - the bid no longer jumps toward the book's average
+  paying price on entry. Every step, including the first, paces on the
+  escalation interval, so the bid never pays more than the ladder has proven
+  necessary; the climb is therefore gradual (with the defaults, 0.0002 every
+  60 s, a 0.0037 floor-to-cap climb takes about 19 minutes - halve the interval
+  for about 10). Cap bound, decay, and all other escalation behavior unchanged.
+
+  Also in this release: the walk-up grace is now episode-based for the
+  escalation ladder. It gates entry into escalation and re-entry whenever fills
+  drop away again - each new underfilled episode waits out the full grace
+  before the ladder (re)starts climbing - but it never slows the climb within
+  an episode: steps pace purely on the escalation interval. Plain
+  floor-tracking walk-ups keep their existing grace-per-raise pacing.
+
   v0.6.47 - underfilled orders now escalate toward the dynamic cap.
 
   When your bid sits at its normal target (anchor + overpay) but the order stays

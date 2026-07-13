@@ -685,9 +685,9 @@ describe('decide - escalation ladder toward the cap', () => {
       ...over,
     });
 
-  it('screenshot scenario: first escalation fast-starts toward the paying price, clamped to the cap', () => {
-    // observe()-side ladder update: room = 0.4825 - 0.4788 = 0.0037; the avg
-    // paying price (0.4977) is above the cap, so the fast-start clamps to room.
+  it('screenshot scenario: first escalation is exactly one step above the floor (no market-hint jump)', () => {
+    // observe()-side ladder update: room = 0.4825 - 0.4788 = 0.0037. The avg
+    // paying price (0.4977) is irrelevant - the pure ladder starts one step up.
     const entry = nextEscalation({
       prev: undefined,
       now: NOW,
@@ -698,23 +698,26 @@ describe('decide - escalation ladder toward the cap', () => {
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
       room: 0.4825 - 0.4788,
-      avgAboveFloor: 0.4977 - 0.4788,
     });
-    expect(entry?.offsetBtc).toBeCloseTo(0.0037, 10);
+    expect(entry?.offsetBtc).toBeCloseTo(0.0002, 10);
 
+    // The market's avg paying price (0.4977 in the fixture) must NOT appear in
+    // the target or the reason - the operator asked for a pure ladder.
     const out = decide(
       escState({ owned_orders: [escOrder({ escalation_offset_btc: entry!.offsetBtc })] }),
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.4825, 9); // straight to the cap
-    expect(e.reason).toContain('escalating toward paying price');
+    expect(e.new_price_btc).toBeCloseTo(0.479, 9); // floor 0.4788 + one 0.0002 step
+    expect(e.reason).toContain('escalating +');
+    expect(e.reason).not.toContain('toward paying price');
   });
 
-  it('normal book: fast-start lands on the average paying price, then steps by +step, clamping at the cap', () => {
-    // avg 0.4800 (below the cap): fast-start offset = 0.4800 - 0.4788 = 0.0012.
-    const first = nextEscalation({
-      prev: undefined,
+  it('steps by +step per interval and clamps at the cap', () => {
+    // Second step: one interval after the first.
+    const first = { offsetBtc: 0.0002, lastStepAt: NOW - 60_000 };
+    const second = nextEscalation({
+      prev: first,
       now: NOW,
       walkUpEnabled: true,
       underFilled: true,
@@ -723,45 +726,33 @@ describe('decide - escalation ladder toward the cap', () => {
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
       room: 0.0037,
-      avgAboveFloor: 0.48 - 0.4788,
     });
-    expect(first?.offsetBtc).toBeCloseTo(0.0012, 10);
-    const out1 = decide(
+    expect(second?.offsetBtc).toBeCloseTo(0.0004, 10);
+    const out2 = decide(
       escState({
-        market: escMarket({ avg_price_btc: 0.48 }),
-        owned_orders: [escOrder({ escalation_offset_btc: first!.offsetBtc })],
+        owned_orders: [
+          escOrder({ price_btc: 0.479, escalation_offset_btc: second!.offsetBtc }),
+        ],
       }),
     );
-    const e1 = out1.find((p) => p.kind === 'EDIT_PRICE');
-    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e1.new_price_btc).toBeCloseTo(0.48, 9);
-    expect(e1.reason).toContain('walk up (escalating)');
+    const e2 = out2.find((p) => p.kind === 'EDIT_PRICE');
+    if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e2.new_price_btc).toBeCloseTo(0.4792, 9);
+    expect(e2.reason).toContain('walk up (escalating)');
 
-    // Next interval, still under-filled -> +0.0002.
-    const second = nextEscalation({
-      prev: first!,
-      now: NOW + 60_000,
+    // A first step into a room smaller than one step clamps to the room.
+    const clamped = nextEscalation({
+      prev: undefined,
+      now: NOW,
       walkUpEnabled: true,
       underFilled: true,
       gracePassed: true,
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
-      room: 0.0037,
-      avgAboveFloor: 0.48 - 0.4788,
+      room: 0.0001,
     });
-    expect(second?.offsetBtc).toBeCloseTo(0.0014, 10);
-    const out2 = decide(
-      escState({
-        market: escMarket({ avg_price_btc: 0.48 }),
-        owned_orders: [
-          escOrder({ price_btc: 0.48, escalation_offset_btc: second!.offsetBtc }),
-        ],
-      }),
-    );
-    const e2 = out2.find((p) => p.kind === 'EDIT_PRICE');
-    if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e2.new_price_btc).toBeCloseTo(0.4802, 9);
+    expect(clamped?.offsetBtc).toBeCloseTo(0.0001, 10);
 
     // A raw offset past the room clamps the target at the cap, never above.
     const out3 = decide(
@@ -770,31 +761,6 @@ describe('decide - escalation ladder toward the cap', () => {
     const e3 = out3.find((p) => p.kind === 'EDIT_PRICE');
     if (e3?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
     expect(e3.new_price_btc).toBeCloseTo(0.4825, 9);
-  });
-
-  it('fast-starts by exactly one step when the average paying price is unavailable', () => {
-    const entry = nextEscalation({
-      prev: undefined,
-      now: NOW,
-      walkUpEnabled: true,
-      underFilled: true,
-      gracePassed: true,
-      stepBtc: 0.0002,
-      intervalMs: 60_000,
-      decayIntervalMs: 600_000,
-      room: 0.0037,
-      avgAboveFloor: null,
-    });
-    expect(entry?.offsetBtc).toBeCloseTo(0.0002, 10);
-    const out = decide(
-      escState({
-        market: escMarket({ avg_price_btc: null }),
-        owned_orders: [escOrder({ escalation_offset_btc: entry!.offsetBtc })],
-      }),
-    );
-    const e = out.find((p) => p.kind === 'EDIT_PRICE');
-    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.4790, 9);
   });
 
   it('holds between intervals: the ladder does not move and the bid stays put', () => {
@@ -809,7 +775,6 @@ describe('decide - escalation ladder toward the cap', () => {
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
       room: 0.0037,
-      avgAboveFloor: null,
     });
     expect(next).toBe(prev); // unchanged entry
     // Bid already at the escalated target -> no proposal (hold).
@@ -838,7 +803,6 @@ describe('decide - escalation ladder toward the cap', () => {
         intervalMs: 60_000,
         decayIntervalMs: 600_000, // max(interval, decrease cooldown)
         room: 0.0037,
-        avgAboveFloor: null,
       }),
     ).toBe(early);
 
@@ -853,7 +817,6 @@ describe('decide - escalation ladder toward the cap', () => {
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
       room: 0.0037,
-      avgAboveFloor: null,
     });
     expect(next?.offsetBtc).toBeCloseTo(0.001, 10);
 
@@ -924,7 +887,6 @@ describe('decide - escalation ladder toward the cap', () => {
         intervalMs: 60_000,
         decayIntervalMs: 600_000,
         room: 0.0037,
-        avgAboveFloor: null,
       }),
     ).toBeNull();
     // ...and decide() ignores a stale stamped offset outright.
@@ -957,9 +919,9 @@ describe('decide - escalation ladder toward the cap', () => {
     expect(ee.new_price_btc).toBeCloseTo(0.4825, 9);
   });
 
-  it('grace gates only the entry: an engaged ladder steps and climbs on the interval alone', () => {
-    // The FIRST escalation waits for the walk-up grace (give the market the
-    // full grace to fill at the normal floor price before paying more)...
+  it('episode-based grace: gates entry AND re-entry after a filled spell, never steps within an episode', () => {
+    // Entry: the FIRST escalation waits for the walk-up grace (give the market
+    // the full grace to fill at the normal floor price before paying more).
     expect(
       nextEscalation({
         prev: undefined,
@@ -971,39 +933,67 @@ describe('decide - escalation ladder toward the cap', () => {
         intervalMs: 60_000,
         decayIntervalMs: 600_000,
         room: 0.0037,
-        avgAboveFloor: null,
       }),
     ).toBeNull();
 
-    // ...but an ENGAGED ladder paces on the interval alone. Each executed raise
-    // resets the grace (controller behavior), so requiring it per step would
-    // throttle the ladder to max(grace, interval) instead of the configured
-    // escalation interval.
-    const prev = { offsetBtc: 0.0012, lastStepAt: NOW - 60_000 };
+    // Re-entry: an ENGAGED ladder whose fills just dropped (under_filled_since
+    // re-stamped -> grace running) must NOT resume climbing, even with the
+    // interval elapsed - the new episode gets its own grace.
+    const engaged = { offsetBtc: 0.0012, lastStepAt: NOW - 60_000 };
+    expect(
+      nextEscalation({
+        prev: engaged,
+        now: NOW,
+        walkUpEnabled: true,
+        underFilled: true,
+        gracePassed: false, // fresh episode, grace not yet elapsed
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000,
+        room: 0.0037,
+      }),
+    ).toBe(engaged);
+
+    // Within a continuous episode the grace clock is never reset (the
+    // controller skips the reset on ladder raises), so gracePassed stays true
+    // and the interval alone paces the climb.
     const stepped = nextEscalation({
-      prev,
+      prev: engaged,
       now: NOW,
       walkUpEnabled: true,
       underFilled: true,
-      gracePassed: false, // grace reset by the previous raise, not re-elapsed
+      gracePassed: true, // episode clock untouched since episode start
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
       room: 0.0037,
-      avgAboveFloor: null,
     });
     expect(stepped?.offsetBtc).toBeCloseTo(0.0014, 10);
 
-    // And decide() climbs to the escalated target during the fresh grace
-    // window - the grace bypass applies to the walk-up too, or the bid would
-    // lag the ladder by a full grace period per step.
+    // decide() mirrors the same rule: with the grace running (fresh episode) a
+    // stamped offset does NOT climb...
+    const held = decide(
+      escState({
+        owned_orders: [
+          escOrder({
+            price_btc: 0.48,
+            escalation_offset_btc: 0.0014,
+            under_filled_since: NOW - 1000, // fresh episode, grace unelapsed
+          }),
+        ],
+      }),
+    );
+    expect(held.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+
+    // ...and once the episode grace elapses, the climb to the escalated
+    // target resumes.
     const out = decide(
       escState({
         owned_orders: [
           escOrder({
             price_btc: 0.48,
-            escalation_offset_btc: stepped!.offsetBtc,
-            under_filled_since: NOW - 1000, // fresh grace window (unelapsed)
+            escalation_offset_btc: 0.0014,
+            under_filled_since: NOW - 200_000, // grace (180s) elapsed
           }),
         ],
       }),
@@ -1011,16 +1001,20 @@ describe('decide - escalation ladder toward the cap', () => {
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
     expect(e.new_price_btc).toBeCloseTo(0.4788 + 0.0014, 9);
+  });
 
-    // Without an engaged ladder, the same fresh grace still holds the climb
-    // (the entry gate is unchanged).
-    const held = decide(
+  it('the final ladder rung reaches the cap despite FP grid noise (one-tick move fires)', () => {
+    // 0.4825 - 0.4824 is a hair UNDER 1e-4 in binary FP; without the deadband
+    // epsilon the last one-tick rung to the cap would never propose and the
+    // bid would park at cap - 0.0001 forever.
+    const out = decide(
       escState({
-        owned_orders: [
-          escOrder({ price_btc: 0.478, escalation_offset_btc: 0, under_filled_since: NOW - 1000 }),
-        ],
+        owned_orders: [escOrder({ price_btc: 0.4824, escalation_offset_btc: 0.0038 })],
       }),
     );
-    expect(held.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE (final rung must fire)');
+    expect(e.new_price_btc).toBeGreaterThan(0.4824);
+    expect(Math.abs(e.new_price_btc - 0.4825)).toBeLessThan(1e-9);
   });
 });

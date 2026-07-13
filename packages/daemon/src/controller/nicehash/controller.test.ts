@@ -191,10 +191,11 @@ describe('NiceHashController - escalation ladder across ticks', () => {
     await closeDatabase(handle);
   });
 
-  it('an executed escalation walk-up resets the grace but NOT the ladder (next step builds on the offset)', async () => {
-    // The under-filled-since grace map IS reset on each executed raise (fresh
-    // grace window); the escalation ladder must survive its own raises or every
-    // step would restart the climb from zero.
+  it('a ladder raise resets neither the ladder nor the episode grace clock (episode continuation)', async () => {
+    // Episode-based grace: the under-filled clock marks the START of the
+    // episode. The ladder's own executed raises must not reset it (or every
+    // step would wait out a fresh grace), and the ladder offset itself must
+    // survive its own raises (or every step would restart the climb from 0).
     await ledger.insert({
       order_id: 'mine',
       created_at: 1,
@@ -226,7 +227,7 @@ describe('NiceHashController - escalation ladder across ticks', () => {
       config: {
         ...config(),
         walk_up_enabled: true,
-        walk_up_grace_seconds: 0, // grace passes immediately (graceMs === 0)
+        walk_up_grace_seconds: 180, // a REAL grace - the episode clock matters
         escalation_step_btc: 0.0002,
         escalation_interval_seconds: 60,
       },
@@ -236,22 +237,95 @@ describe('NiceHashController - escalation ladder across ticks', () => {
       now: () => t,
     });
 
-    // Tick 1: under-filled at the floor (anchor 0.0102 + overpay 0.00001) ->
-    // fast-start one step (no paying-price stat in the book) -> walk up to
-    // floor + 0.0002. Executing the raise resets the grace map internally.
+    // Tick 1: first sighting stamps the episode clock; the grace (180s) has
+    // not elapsed, so no escalation and no climb yet.
     const r1 = await controller.tick();
-    const e1 = r1.proposals.find((p) => p.kind === 'EDIT_PRICE');
-    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 1');
-    expect(e1.new_price_btc).toBeCloseTo(0.01021 + 0.0002, 9);
-    expect(r1.outcomes.find((o) => o.proposal === e1)?.outcome).toBe('EXECUTED');
+    expect(r1.proposals.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
 
-    // Tick 2, one interval later, still under-filled: the ladder builds on the
-    // retained offset (0.0002 -> 0.0004). Had the raise reset it (like the
-    // grace), this tick would re-fast-start and propose floor + 0.0002 again.
-    t += 60_000;
+    // Tick 2, 180s later: the episode grace has elapsed -> the ladder starts
+    // one step up and the raise executes.
+    t += 180_000;
     const r2 = await controller.tick();
     const e2 = r2.proposals.find((p) => p.kind === 'EDIT_PRICE');
     if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 2');
-    expect(e2.new_price_btc).toBeCloseTo(0.01021 + 0.0004, 9);
+    expect(e2.new_price_btc).toBeCloseTo(0.01021 + 0.0002, 9);
+    expect(r2.outcomes.find((o) => o.proposal === e2)?.outcome).toBe('EXECUTED');
+
+    // Tick 3, one INTERVAL (60s < grace 180s) later, still under-filled: the
+    // episode clock must be untouched by tick 2's raise, so the ladder steps
+    // again (0.0002 -> 0.0004) and the climb proposes. Had the raise reset the
+    // clock, gracePassed would be false here - no step, no proposal.
+    t += 60_000;
+    const r3 = await controller.tick();
+    const e3 = r3.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e3?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 3');
+    expect(e3.new_price_btc).toBeCloseTo(0.01021 + 0.0004, 9);
+  });
+
+  it('a plain floor-tracking raise (ladder not engaged) still resets the grace clock', async () => {
+    // Regression guard on the pre-existing pacing: with walk-up disabled the
+    // ladder never engages, so an executed floor-tracking raise resets the
+    // under-filled-since clock - the next under-fill episode is dated from the
+    // raise, not from first sight.
+    await ledger.insert({
+      order_id: 'mine',
+      created_at: 1,
+      price_btc: 0.0099,
+      amount_btc: 0.01,
+      limit_units: 4,
+      pool_id: 'pool-1',
+    });
+    // Mutable myOrders row: filled at tick 1 (raise executes while filled),
+    // under-filled from tick 2 on.
+    const row: Record<string, unknown> = {
+      id: 'mine',
+      status: { code: 'ACTIVE' },
+      price: '0.0099', // parked below the floor (anchor 0.0102 + overpay)
+      limit: '4',
+      amount: '0.01',
+      availableAmount: '0.01',
+      acceptedCurrentSpeed: '4', // filled (>= threshold 3.2)
+    };
+    const svc = service([row]);
+    const cli = {
+      ...client(),
+      updatePriceAndLimit: vi.fn(async () => ({})),
+    } as unknown as NiceHashClient;
+    let t = 1_700_000_000_000;
+    const controller = new NiceHashController({
+      service: svc,
+      client: cli,
+      ledger,
+      config: {
+        ...config(),
+        walk_up_enabled: false, // pure floor-tracking: ladder never engages
+        walk_up_grace_seconds: 300,
+        escalation_step_btc: 0.0002,
+        escalation_interval_seconds: 60,
+      },
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'LIVE',
+      now: () => t,
+    });
+
+    // Tick 1: filled (no grace stamp from observe) and below the floor -> pure
+    // floor-tracking walk-up to 0.01021 executes -> persist resets the grace
+    // clock to t1 (ladder not engaged).
+    const t1 = t;
+    const r1 = await controller.tick();
+    const e1 = r1.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 1');
+    expect(e1.new_price_btc).toBeCloseTo(0.01021, 9);
+    expect(r1.outcomes.find((o) => o.proposal === e1)?.outcome).toBe('EXECUTED');
+
+    // Tick 2: fills drop. observe sees an existing grace entry from the raise
+    // (t1) and keeps it - under_filled_since dates from the raise. Without the
+    // reset-on-raise, the map would be empty and observe would stamp t2.
+    row.acceptedCurrentSpeed = '0';
+    t += 60_000;
+    const r2 = await controller.tick();
+    const mine = r2.state.owned_orders.find((o) => o.order_id === 'mine');
+    expect(mine?.under_filled_since).toBe(t1);
   });
 });

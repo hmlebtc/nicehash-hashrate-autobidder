@@ -72,9 +72,11 @@ export class NiceHashController {
   /**
    * Per-order "under-filled since" timestamps for the walk-up grace period, kept
    * in memory across ticks. observe() sets/clears entries from each tick's
-   * delivered speed; persist() resets an entry on a walk-up so each new price gets
-   * a fresh grace window. Resets on restart (a brief grace re-applies, which is
-   * the safe direction).
+   * delivered speed; persist() resets an entry on a plain floor-tracking walk-up
+   * so each new price gets a fresh grace window - but NOT on the escalation
+   * ladder's own raises (episode-based grace: the clock marks the start of the
+   * under-filled episode and re-arms only when fills drop again). Resets on
+   * restart (a brief grace re-applies, which is the safe direction).
    */
   private readonly underFilledSince = new Map<string, number>();
 
@@ -191,13 +193,22 @@ export class NiceHashController {
         if (p.new_price_btc < p.old_price_btc) {
           await this.deps.ledger.setLastPriceDecrease(p.order_id, now(), p.new_price_btc);
         } else if (p.new_price_btc > p.old_price_btc) {
-          // Upward move: no decrease cooldown, but reset the walk-up grace window
-          // so the new (higher) price gets the full grace to attract miners before
-          // we climb again. The escalation ladder (`escalationByOrder`) is
-          // deliberately NOT reset here: an escalation step is itself a raise,
-          // and resetting the ladder on its own move would restart it from zero.
+          // Upward move: no decrease cooldown. A plain floor-tracking raise
+          // resets the walk-up grace window so the new (higher) price gets the
+          // full grace to attract miners before we climb again. While the
+          // escalation ladder is ENGAGED (offset > 0 - observe advanced the map
+          // earlier this same tick, so even the first ladder raise sees its
+          // entry) the grace clock is deliberately left alone: grace is
+          // EPISODE-based, gating entry into escalation and re-entry after a
+          // filled spell (the clock re-stamps on the filled -> under-filled
+          // transition in observe), never the steps within a continuous
+          // under-filled episode - those pace on the escalation interval. The
+          // ladder state itself is also never reset here: an escalation step is
+          // its own raise, and resetting it on its own move would restart the
+          // climb from zero.
           await this.deps.ledger.setLastPriceChange(p.order_id, now(), p.new_price_btc);
-          this.underFilledSince.set(p.order_id, now());
+          const ladderEngaged = (this.escalationByOrder.get(p.order_id)?.offsetBtc ?? 0) > 0;
+          if (!ladderEngaged) this.underFilledSince.set(p.order_id, now());
         }
         return;
       case 'CANCEL_ORDER':
