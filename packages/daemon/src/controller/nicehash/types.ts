@@ -113,6 +113,23 @@ export interface OwnedOrderSnapshot {
    * walk-up - each raise must not restart the ladder.
    */
   readonly escalation_offset_btc?: number;
+  /**
+   * Epoch ms of the escalation ladder's last move (up or down) for this order,
+   * stamped by `observe()` from the controller-owned map. Drives the "next
+   * step / next probe down in m:ss" countdowns in the hold explainer. Null
+   * when the ladder is not engaged.
+   */
+  readonly escalation_last_step_at?: number | null;
+  /**
+   * Epoch ms when NiceHash will next accept a price DECREASE on this order -
+   * the API-truth cooldown clock. Armed by the controller on every executed
+   * price change (NiceHash's rule is 10 min since ANY price change, raises
+   * included) and OVERWRITTEN from NiceHash's own "Seconds till available"
+   * answer whenever a decrease is rejected with error 5061 - the API's answer
+   * always wins over anything we derive. Null when unknown (the gate then
+   * falls back to the persisted last-change stamps).
+   */
+  readonly decrease_available_at?: number | null;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */

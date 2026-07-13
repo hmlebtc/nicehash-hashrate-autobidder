@@ -2,6 +2,28 @@
 
 ## 2026-07-13
 
+### `[Fix]` Decrease gate matches NiceHash's 10-min-since-any-price-change rule
+
+The walk-down throttle only counted the last DECREASE, but NiceHash rejects a
+decrease within 10 minutes of ANY price change - raises included. A probe-down
+right after an escalation climb was therefore guaranteed a 400 rejection
+("5061: ... not allowed within 10 minutes of last price change"), wasting the
+decision and showing FAILED. The gate now holds decreases until NiceHash will
+actually accept them, and the cooldown clock resyncs from NiceHash's own
+"Seconds till available" answer whenever a 5061 does slip through - the API is
+the source of truth, so the daemon self-corrects across restarts, clock drift,
+or edits made outside the daemon (at most one probing call per disagreement).
+
+### `[UI]` What's Happening explains every hold with a live countdown
+
+When the bot isn't acting, the Next-action line (and the Next action detail
+panel) now says exactly why and, where a timer applies, counts down the wait
+live on every 3-second poll until the action fires or the decision changes: a
+held walk-down shows the intended move plus the NiceHash decrease-cooldown
+remainder; an under-filled order shows when the walk-up grace opens; an
+engaged escalation ladder shows when the next step lands; filled-at-escalated
+shows the next probe-down; at-cap and at-target states explain themselves.
+
 ### `[Fix]` Escalation ladder starts with a single step (no fast-start jump)
 
 Per operator preference, the first escalation move is now exactly one

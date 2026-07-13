@@ -67,6 +67,18 @@ function isInsidePriceDecreaseCooldown(
   cooldownMs: number,
 ): boolean {
   const order = state.owned_orders.find((o) => o.order_id === orderId);
-  if (!order || order.last_price_decrease_at === null) return false;
-  return state.tick_at - order.last_price_decrease_at < cooldownMs;
+  if (!order) return false;
+  // API-truth clock when available: the controller arms `decrease_available_at`
+  // on every executed price change and resyncs it from NiceHash's own "Seconds
+  // till available" answer on a 5061 rejection - always the best knowledge.
+  if (order.decrease_available_at != null) {
+    return state.tick_at < order.decrease_available_at;
+  }
+  // Fallback (fresh restart, or a pure-controller run without the clock map):
+  // NiceHash's rule is 10 minutes since ANY price change - raises included -
+  // not just since the last decrease. Gating on the decrease stamp alone let a
+  // probe-down right after a ladder climb through to a guaranteed 400/5061
+  // rejection, so use the later of the two persisted stamps.
+  const lastMove = Math.max(order.last_price_decrease_at ?? 0, order.last_price_change_at ?? 0);
+  return lastMove > 0 && state.tick_at - lastMove < cooldownMs;
 }

@@ -13,6 +13,7 @@
 
 import { decide } from './decide.js';
 import { executeProposal, type ExecutionResult, type NiceHashExecuteContext } from './execute.js';
+import { explainTick, type HoldReason } from './explain.js';
 import { gate, type NiceHashGateOutcome } from './gate.js';
 import {
   DEFAULT_PRICE_DECREASE_COOLDOWN_MS,
@@ -36,6 +37,13 @@ export interface NiceHashTickResult {
   readonly proposals: readonly Proposal[];
   readonly gated: readonly NiceHashGateOutcome[];
   readonly outcomes: readonly TickOutcome[];
+  /**
+   * Structured "why is the bot holding / what is it waiting on" for this tick,
+   * or null when a proposal already tells the story. Carries ABSOLUTE
+   * timestamps; the HTTP layer formats them against Date.now() per request so
+   * the dashboard's countdown ticks live between polls.
+   */
+  readonly hold_reason?: HoldReason | null;
 }
 
 export interface NiceHashTickDeps extends Omit<NiceHashObserveDeps, 'now'> {
@@ -81,5 +89,15 @@ export async function tick(deps: NiceHashTickDeps): Promise<NiceHashTickResult> 
     if (deps.onExecuted) await deps.onExecuted(outcome);
   }
 
-  return { state, proposals, gated, outcomes };
+  // Observability only - never influences the decisions above.
+  const hold_reason: HoldReason | null = explainTick({
+    state,
+    proposals,
+    gated,
+    ...(deps.priceDecreaseCooldownMs !== undefined
+      ? { priceDecreaseCooldownMs: deps.priceDecreaseCooldownMs }
+      : {}),
+  });
+
+  return { state, proposals, gated, outcomes, hold_reason };
 }

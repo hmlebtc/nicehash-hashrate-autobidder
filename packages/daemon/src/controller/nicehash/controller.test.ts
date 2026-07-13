@@ -7,7 +7,7 @@ import { NiceHashOrdersRepo } from '../../state/repos/nicehash_orders.js';
 import { NiceHashMetricsRepo } from '../../state/repos/nicehash_tick_metrics.js';
 import { NiceHashEventsRepo } from '../../state/repos/nicehash_order_events.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
-import { NiceHashController } from './controller.js';
+import { NiceHashController, parseDecreaseCooldownRejection } from './controller.js';
 import type { NiceHashControllerConfig, RunMode } from './types.js';
 
 function config(): NiceHashControllerConfig {
@@ -327,5 +327,179 @@ describe('NiceHashController - escalation ladder across ticks', () => {
     const r2 = await controller.tick();
     const mine = r2.state.owned_orders.find((o) => o.order_id === 'mine');
     expect(mine?.under_filled_since).toBe(t1);
+  });
+});
+
+describe('parseDecreaseCooldownRejection', () => {
+  it('extracts the remaining seconds from a 5061 rejection', () => {
+    const msg =
+      'POST /main/api/v2/hashpower/order/x/updatePriceAndLimit returned 400 - 5061: Order price decreased not allowed within 10 minutes of last price change. Seconds till available: 149';
+    expect(parseDecreaseCooldownRejection(msg)).toEqual({ secondsRemaining: 149 });
+  });
+
+  it('matches on the message text even without the numeric code', () => {
+    const msg = 'Order price decreased not allowed within 10 minutes of last price change. Seconds till available: 7';
+    expect(parseDecreaseCooldownRejection(msg)).toEqual({ secondsRemaining: 7 });
+  });
+
+  it('returns secondsRemaining null when the countdown is missing/malformed', () => {
+    expect(parseDecreaseCooldownRejection('400 - 5061: Order price decreased not allowed within 10 minutes of last price change.')).toEqual({
+      secondsRemaining: null,
+    });
+  });
+
+  it('returns null for unrelated errors', () => {
+    expect(parseDecreaseCooldownRejection('500 internal error')).toBeNull();
+    expect(parseDecreaseCooldownRejection('2997 Invalid input: PRICE_DATA_SCALE')).toBeNull();
+  });
+});
+
+describe('NiceHashController - API-truth decrease cooldown', () => {
+  let handle: DatabaseHandle;
+  let ledger: NiceHashOrdersRepo;
+
+  beforeEach(async () => {
+    handle = await openDatabase({ path: ':memory:' });
+    ledger = new NiceHashOrdersRepo(handle.db);
+  });
+  afterEach(async () => {
+    await closeDatabase(handle);
+  });
+
+  it('5061 lifecycle: rejection resyncs the clock, gate holds until NiceHash allows, then the retry succeeds', async () => {
+    // Bid parked above the floor -> a walk-down is proposed every tick.
+    await ledger.insert({
+      order_id: 'mine',
+      created_at: 1, // ancient stamps: the derived fallback says "allowed"
+      price_btc: 0.0106,
+      amount_btc: 0.01,
+      limit_units: 4,
+      pool_id: 'pool-1',
+    });
+    const svc = service([
+      {
+        id: 'mine',
+        status: { code: 'ACTIVE' },
+        price: '0.0106',
+        limit: '4',
+        amount: '0.01',
+        availableAmount: '0.01',
+        acceptedCurrentSpeed: '4',
+      },
+    ]);
+    const REJECTION =
+      'POST .../updatePriceAndLimit returned 400 - 5061: Order price decreased not allowed within 10 minutes of last price change. Seconds till available: 149';
+    const updatePriceAndLimit = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(REJECTION)) // tick 1: NiceHash says no
+      .mockResolvedValue({}); // later attempts succeed
+    const cli = { ...client(), updatePriceAndLimit } as unknown as NiceHashClient;
+    let t = 1_700_000_000_000;
+    const t0 = t;
+    const controller = new NiceHashController({
+      service: svc,
+      client: cli,
+      ledger,
+      config: { ...config(), walk_up_enabled: false, price_down_step_btc: 0.002 },
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'LIVE',
+      now: () => t,
+    });
+
+    // Tick 1: our knowledge says available -> ATTEMPT the decrease; NiceHash
+    // rejects with its own countdown (149s) -> the clock resyncs to the API.
+    const r1 = await controller.tick();
+    const o1 = r1.outcomes.find((o) => o.proposal.kind === 'EDIT_PRICE');
+    expect(o1?.outcome).toBe('FAILED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(1);
+
+    // Tick 2, 60s later: still inside NiceHash's window -> BLOCKED by the
+    // gate, no API call wasted.
+    t += 60_000;
+    const r2 = await controller.tick();
+    const o2 = r2.outcomes.find((o) => o.proposal.kind === 'EDIT_PRICE');
+    expect(o2?.outcome).toBe('BLOCKED');
+    if (o2?.outcome === 'BLOCKED') expect(o2.reason).toBe('PRICE_DECREASE_COOLDOWN');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(1);
+    // The hold story carries the API-derived deadline for the live countdown.
+    expect(r2.hold_reason?.kind).toBe('DECREASE_COOLDOWN');
+    expect(r2.hold_reason?.until).toBe(t0 + 149_000);
+
+    // Tick 3, past NiceHash's 149s: the retry fires and succeeds.
+    t = t0 + 150_000;
+    const r3 = await controller.tick();
+    const o3 = r3.outcomes.find((o) => o.proposal.kind === 'EDIT_PRICE');
+    expect(o3?.outcome).toBe('EXECUTED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(2);
+
+    // The executed decrease re-arms the clock: the next walk-down (the mock
+    // still reports the old price) is BLOCKED for the full window.
+    t += 60_000;
+    const r4 = await controller.tick();
+    const o4 = r4.outcomes.find((o) => o.proposal.kind === 'EDIT_PRICE');
+    expect(o4?.outcome).toBe('BLOCKED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(2);
+  });
+
+  it('an executed RAISE arms the decrease clock: a walk-down right after is gate-blocked, not API-rejected', async () => {
+    // The operator-reported bug: climb, then the floor drops, and the probe
+    // walk-down within 10 min of the climb went straight to a 400/5061.
+    await ledger.insert({
+      order_id: 'mine',
+      created_at: 1,
+      price_btc: 0.0099,
+      amount_btc: 0.01,
+      limit_units: 4,
+      pool_id: 'pool-1',
+    });
+    let rivalPrice = '0.0102';
+    const svc = service([
+      {
+        id: 'mine',
+        status: { code: 'ACTIVE' },
+        price: '0.0099',
+        limit: '4',
+        amount: '0.01',
+        availableAmount: '0.01',
+        acceptedCurrentSpeed: '4',
+      },
+    ]);
+    (svc.getOrderBook as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      stats: { BTC: { totalSpeed: '100', orders: [{ id: 'rival', price: rivalPrice, limit: '5', alive: true }] } },
+    }));
+    const updatePriceAndLimit = vi.fn(async () => ({}));
+    const cli = { ...client(), updatePriceAndLimit } as unknown as NiceHashClient;
+    let t = 1_700_000_000_000;
+    const controller = new NiceHashController({
+      service: svc,
+      client: cli,
+      ledger,
+      config: { ...config(), walk_up_enabled: false, price_down_step_btc: 0.002 },
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'LIVE',
+      now: () => t,
+    });
+
+    // Tick 1: bid below the floor -> raise executes (arms the clock).
+    const r1 = await controller.tick();
+    const e1 = r1.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected a raise in tick 1');
+    expect(e1.new_price_btc).toBeGreaterThan(e1.old_price_btc);
+    expect(r1.outcomes.find((o) => o.proposal === e1)?.outcome).toBe('EXECUTED');
+
+    // Tick 2, 60s later: the floor drops well below the bid -> walk-down
+    // proposed, but NiceHash would reject it (10 min since ANY change) - the
+    // gate now holds it instead of burning the API call.
+    rivalPrice = '0.0090';
+    t += 60_000;
+    const r2 = await controller.tick();
+    const e2 = r2.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected a walk-down in tick 2');
+    expect(e2.new_price_btc).toBeLessThan(e2.old_price_btc);
+    const o2 = r2.outcomes.find((o) => o.proposal === e2);
+    expect(o2?.outcome).toBe('BLOCKED');
+    expect(updatePriceAndLimit).toHaveBeenCalledTimes(1); // only the raise
   });
 });
