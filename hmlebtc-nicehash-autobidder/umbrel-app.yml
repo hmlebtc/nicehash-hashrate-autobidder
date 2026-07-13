@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.50"
+version: "0.6.51"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,16 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.51 - the cooldown countdown always tells the truth.
+
+  During a NiceHash outage the What's Happening panel could freeze at
+  "waiting on NiceHash decrease cooldown, ~0:00 remaining" while the bot was
+  in fact correctly holding a walk-down for another minute and a half - the
+  display was counting down a different (already expired) clock than the one
+  the safety gate enforces. Both now read the exact same clock, so the time
+  you see is by construction the moment the walk-down actually fires - even
+  right after a restart, and even when NiceHash's servers are erroring.
+
   v0.6.50 - export the Logs and History tabs to CSV.
 
   Both the Logs tab (decision + error log) and the History tab (order events)

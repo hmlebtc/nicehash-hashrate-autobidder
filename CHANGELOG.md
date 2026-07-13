@@ -2,6 +2,19 @@
 
 ## 2026-07-13
 
+### `[Fix]` The blocked-walk-down countdown always matches the gate
+
+During the 2026-07-13 NiceHash outage the dashboard showed "waiting on
+NiceHash decrease cooldown, ~0:00 remaining" frozen for minutes while the
+gate was (correctly) holding a walk-down - the display was counting down an
+already-expired last-decrease stamp while the gate enforced the
+any-price-change clock. The gate, the hold explainer, and the status
+countdown now all consult ONE shared helper
+(effectiveDecreaseAvailableAt: API-truth clock first, ledger stamps + 10 min
+fallback), so the countdown the operator sees is by construction the moment
+the gate opens - across restarts that wipe the in-memory clock, 500-outage
+FAILED raises (which never re-arm it), and 5061 resyncs.
+
 ### `[Feature]` Walk-downs take the full step
 
 Per operator rule: when stepping back down while filled at an escalated

@@ -16,6 +16,7 @@
 
 import { canMutate } from '@hashrate-autopilot/shared';
 
+import { effectiveDecreaseAvailableAt } from './types.js';
 import type { NiceHashState, Proposal } from './types.js';
 
 export type NiceHashGateDenialReason =
@@ -68,17 +69,12 @@ function isInsidePriceDecreaseCooldown(
 ): boolean {
   const order = state.owned_orders.find((o) => o.order_id === orderId);
   if (!order) return false;
-  // API-truth clock when available: the controller arms `decrease_available_at`
-  // on every executed price change and resyncs it from NiceHash's own "Seconds
-  // till available" answer on a 5061 rejection - always the best knowledge.
-  if (order.decrease_available_at != null) {
-    return state.tick_at < order.decrease_available_at;
-  }
-  // Fallback (fresh restart, or a pure-controller run without the clock map):
-  // NiceHash's rule is 10 minutes since ANY price change - raises included -
-  // not just since the last decrease. Gating on the decrease stamp alone let a
-  // probe-down right after a ladder climb through to a guaranteed 400/5061
-  // rejection, so use the later of the two persisted stamps.
-  const lastMove = Math.max(order.last_price_decrease_at ?? 0, order.last_price_change_at ?? 0);
-  return lastMove > 0 && state.tick_at - lastMove < cooldownMs;
+  // The ONE decrease clock ({@link effectiveDecreaseAvailableAt}): API-truth
+  // `decrease_available_at` when known (armed on executed price changes,
+  // resynced from 5061 answers), else the persisted last-change stamps + the
+  // cooldown (NiceHash's rule counts ANY price change, raises included). The
+  // hold explainer consults the same helper, so the countdown the dashboard
+  // shows is by construction the moment this gate opens.
+  const availableAt = effectiveDecreaseAvailableAt(order, cooldownMs);
+  return availableAt !== null && state.tick_at < availableAt;
 }

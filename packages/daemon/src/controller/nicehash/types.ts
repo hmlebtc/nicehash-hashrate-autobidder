@@ -323,6 +323,38 @@ export function effectiveCapBtc(
   return cap;
 }
 
+/**
+ * THE single definition of "when will NiceHash next accept a price DECREASE on
+ * this order" - the analogue of {@link effectiveCapBtc} for the decrease clock.
+ *
+ * Consulted by the gate (to block walk-downs) AND by the hold explainer /
+ * status countdown (to say how long the wait is). Both MUST use this one
+ * helper: the 2026-07-13 incident showed the gate blocking on one clock while
+ * the dashboard counted down another (an already-expired last-decrease stamp),
+ * freezing the UI at "~0:00 remaining" for minutes while the walk-down was
+ * legitimately held.
+ *
+ * Order of truth:
+ *   1. `decrease_available_at` - the controller's API-truth clock (armed on
+ *      every executed price change, resynced from NiceHash's own "Seconds
+ *      till available" 5061 answers). Always wins when known.
+ *   2. Persisted ledger stamps: NiceHash's rule is 10 minutes since ANY price
+ *      change (raises included), so the later of last-decrease/last-change
+ *      plus the cooldown.
+ *   3. null - nothing known; a decrease is not throttled by our knowledge.
+ */
+export function effectiveDecreaseAvailableAt(
+  order: Pick<
+    OwnedOrderSnapshot,
+    'decrease_available_at' | 'last_price_decrease_at' | 'last_price_change_at'
+  >,
+  cooldownMs: number,
+): number | null {
+  if (order.decrease_available_at != null) return order.decrease_available_at;
+  const lastMove = Math.max(order.last_price_decrease_at ?? 0, order.last_price_change_at ?? 0);
+  return lastMove > 0 ? lastMove + cooldownMs : null;
+}
+
 export interface NiceHashState {
   readonly tick_at: number;
   readonly run_mode: RunMode;
