@@ -251,3 +251,49 @@ describe('toControllerConfig', () => {
     expect(cfg.dynamic_cap_buffer_btc).toBe(0.005);
   });
 });
+
+describe('escalation ladder settings', () => {
+  it('defaults to a 0.0002 step every 60 seconds', () => {
+    const s = settingsFromEnv({});
+    expect(s.escalationStepBtc).toBe(0.0002);
+    expect(s.escalationIntervalSeconds).toBe(60);
+  });
+
+  it('reads env overrides', () => {
+    const s = settingsFromEnv({
+      NICEHASH_ESCALATION_STEP: '0.0005',
+      NICEHASH_ESCALATION_INTERVAL_SECONDS: '30',
+    });
+    expect(s.escalationStepBtc).toBe(0.0005);
+    expect(s.escalationIntervalSeconds).toBe(30);
+  });
+
+  it('mergeSettings clamps the step to the 0.0001 price grid (0/negative would be a no-op loop)', () => {
+    expect(mergeSettings(base(), { escalationStepBtc: 0 }).escalationStepBtc).toBe(0.0001);
+    expect(mergeSettings(base(), { escalationStepBtc: -1 }).escalationStepBtc).toBe(0.0001);
+    expect(mergeSettings(base(), { escalationStepBtc: 0.0003 }).escalationStepBtc).toBe(0.0003);
+  });
+
+  it('mergeSettings clamps the interval to >= 5 whole seconds (blank coerces to 0)', () => {
+    expect(mergeSettings(base(), { escalationIntervalSeconds: 0 }).escalationIntervalSeconds).toBe(5);
+    expect(mergeSettings(base(), { escalationIntervalSeconds: '' }).escalationIntervalSeconds).toBe(5);
+    expect(mergeSettings(base(), { escalationIntervalSeconds: 90.4 }).escalationIntervalSeconds).toBe(90);
+  });
+
+  it('toControllerConfig carries the ladder knobs through', () => {
+    const algo = {
+      algorithm: 'SHA256ASICBOOST',
+      minimalOrderAmount: '0.001',
+      minSpeedLimit: '0.1',
+      priceDownStep: '-0.0001',
+      marketFactor: '1000000000000000000',
+    } as unknown as MiningAlgorithmSetting;
+    const cfg = toControllerConfig(
+      { ...base(), escalationStepBtc: 0.0004, escalationIntervalSeconds: 45 },
+      algo,
+      'pool-1',
+    );
+    expect(cfg.escalation_step_btc).toBe(0.0004);
+    expect(cfg.escalation_interval_seconds).toBe(45);
+  });
+});

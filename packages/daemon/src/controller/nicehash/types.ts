@@ -100,6 +100,16 @@ export interface OwnedOrderSnapshot {
    * controller (in memory), populated in `observe()`.
    */
   readonly under_filled_since?: number | null;
+  /**
+   * Raw escalation-ladder offset (BTC/unit/day) accumulated for this order -
+   * how far above the normal floor (anchor + overpay) the bid is allowed to
+   * escalate while persistently under-filled. Stamped by `observe()` from the
+   * controller-owned escalation map; `decide()` clamps it to the room left
+   * under the effective cap before adding it to the target. 0 / undefined =
+   * no escalation. Unlike {@link under_filled_since}, this is NOT reset on a
+   * walk-up - each raise must not restart the ladder.
+   */
+  readonly escalation_offset_btc?: number;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */
@@ -179,6 +189,25 @@ export interface NiceHashControllerConfig {
    * Default 0.
    */
   readonly walk_up_grace_seconds?: number;
+  /**
+   * Escalation ladder step (BTC/unit/day). When the order stays under-filled
+   * at the normal floor (anchor + overpay) past the walk-up grace, the bid
+   * escalates ABOVE the floor by this much per escalation interval, bounded by
+   * the effective cap. The first step fast-starts toward the book's average
+   * paying price when available. After sustained fills the offset decays one
+   * probe step per NiceHash decrease-cooldown window (never snapping back to
+   * the floor). Only active with walk_up_enabled. Default 0.0002.
+   */
+  readonly escalation_step_btc?: number;
+  /**
+   * Seconds between UPWARD escalation-ladder moves while under-filled. The
+   * walk-up grace gates only the FIRST step (entry into escalation); later
+   * steps pace on this interval alone. Decay while filled paces on max(this,
+   * NiceHash decrease cooldown) - one probe step per executable walk-down
+   * window, so the ladder never drains faster than the gate lets the price
+   * follow. Default 60.
+   */
+  readonly escalation_interval_seconds?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
   readonly min_speed_limit_units: number;
   /** Absolute price granularity / down step (BTC/unit/day), from metadata. */

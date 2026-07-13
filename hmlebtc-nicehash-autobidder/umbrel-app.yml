@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.46"
+version: "0.6.47"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.47 - underfilled orders now escalate toward the dynamic cap.
+
+  When your bid sits at its normal target (anchor + overpay) but the order stays
+  underfilled past the walk-up grace, the bidder now escalates instead of holding
+  forever: the first step jumps toward the book's average paying price (never
+  above the dynamic cap), then climbs in small steps until hashrate arrives or
+  the cap is reached. After sustained fills it steps back down gently - one probe
+  step per NiceHash decrease-cooldown window (about 10 minutes) - feeling for
+  the cheapest price that still fills. Two new Config knobs under Track-to-fill
+  control it: Escalation step (default 0.0002 BTC/EH/day) and Escalation
+  interval (default 60 s). Note escalation stops at the cap - if the market pays
+  above your cap, a persistent partial fill means the market clears above your
+  break-even, not a bug.
+
   v0.6.46 - order balance tracks real burn even if NiceHash's field freezes.
 
   The order balance, both Time remaining tiles, and the refill trigger now bound

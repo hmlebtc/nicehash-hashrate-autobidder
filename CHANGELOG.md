@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-13
+
+### `[Feature]` Underfilled orders escalate toward the dynamic cap
+
+When the bid sits at its normal target (anchor + overpay) but the order stays
+underfilled past the walk-up grace, the daemon now escalates: the first step
+jumps toward the book's average paying price (capped at the dynamic cap), then
+climbs in small steps (default +0.0002 every 60s, both configurable) until
+delivery returns or the cap is reached. After sustained fills it steps back
+down gently - one probe step per NiceHash decrease-cooldown window (~10 min) -
+never snapping back to the floor. Previously the bid parked a tick above the marginal and held
+forever, even at zero delivery, while the actually-paying orders sat far above.
+
 ## 2026-07-09
 
 ### `[Fix]` Escrow remaining bounded by funded-minus-spent

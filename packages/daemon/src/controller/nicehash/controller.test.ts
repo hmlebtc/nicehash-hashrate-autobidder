@@ -178,3 +178,80 @@ describe('NiceHashController', () => {
     expect(row?.payed_amount_btc).toBe(0.003);
   });
 });
+
+describe('NiceHashController - escalation ladder across ticks', () => {
+  let handle: DatabaseHandle;
+  let ledger: NiceHashOrdersRepo;
+
+  beforeEach(async () => {
+    handle = await openDatabase({ path: ':memory:' });
+    ledger = new NiceHashOrdersRepo(handle.db);
+  });
+  afterEach(async () => {
+    await closeDatabase(handle);
+  });
+
+  it('an executed escalation walk-up resets the grace but NOT the ladder (next step builds on the offset)', async () => {
+    // The under-filled-since grace map IS reset on each executed raise (fresh
+    // grace window); the escalation ladder must survive its own raises or every
+    // step would restart the climb from zero.
+    await ledger.insert({
+      order_id: 'mine',
+      created_at: 1,
+      price_btc: 0.0102,
+      amount_btc: 0.01,
+      limit_units: 4,
+      pool_id: 'pool-1',
+    });
+    const svc = service([
+      {
+        id: 'mine',
+        status: { code: 'ACTIVE' },
+        price: '0.0102',
+        limit: '4',
+        amount: '0.01',
+        availableAmount: '0.01',
+        acceptedCurrentSpeed: '0', // never fills in this scenario
+      },
+    ]);
+    const cli = {
+      ...client(),
+      updatePriceAndLimit: vi.fn(async () => ({})),
+    } as unknown as NiceHashClient;
+    let t = 1_700_000_000_000;
+    const controller = new NiceHashController({
+      service: svc,
+      client: cli,
+      ledger,
+      config: {
+        ...config(),
+        walk_up_enabled: true,
+        walk_up_grace_seconds: 0, // grace passes immediately (graceMs === 0)
+        escalation_step_btc: 0.0002,
+        escalation_interval_seconds: 60,
+      },
+      currency: 'BTC',
+      balanceCurrency: 'TBTC',
+      runMode: () => 'LIVE',
+      now: () => t,
+    });
+
+    // Tick 1: under-filled at the floor (anchor 0.0102 + overpay 0.00001) ->
+    // fast-start one step (no paying-price stat in the book) -> walk up to
+    // floor + 0.0002. Executing the raise resets the grace map internally.
+    const r1 = await controller.tick();
+    const e1 = r1.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 1');
+    expect(e1.new_price_btc).toBeCloseTo(0.01021 + 0.0002, 9);
+    expect(r1.outcomes.find((o) => o.proposal === e1)?.outcome).toBe('EXECUTED');
+
+    // Tick 2, one interval later, still under-filled: the ladder builds on the
+    // retained offset (0.0002 -> 0.0004). Had the raise reset it (like the
+    // grace), this tick would re-fast-start and propose floor + 0.0002 again.
+    t += 60_000;
+    const r2 = await controller.tick();
+    const e2 = r2.proposals.find((p) => p.kind === 'EDIT_PRICE');
+    if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 2');
+    expect(e2.new_price_btc).toBeCloseTo(0.01021 + 0.0004, 9);
+  });
+});
