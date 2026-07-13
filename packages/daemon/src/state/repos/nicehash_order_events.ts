@@ -58,8 +58,12 @@ export class NiceHashEventsRepo {
     await this.db.insertInto('nicehash_order_events').values(e).execute();
   }
 
-  /** List events newest-first, with optional filters + pagination. */
-  async list(filters: NiceHashEventFilters = {}): Promise<NiceHashOrderEventRow[]> {
+  /**
+   * List events newest-first, with optional filters + pagination.
+   * `maxLimit` bounds the requested `limit` - 1000 for the dashboard page,
+   * raised by the CSV export route which needs a much bigger row cap.
+   */
+  async list(filters: NiceHashEventFilters = {}, maxLimit = 1000): Promise<NiceHashOrderEventRow[]> {
     let q = this.db.selectFrom('nicehash_order_events').selectAll();
     if (filters.actions && filters.actions.length > 0) {
       q = q.where('action', 'in', filters.actions as string[]);
@@ -81,7 +85,7 @@ export class NiceHashEventsRepo {
           ]),
         );
     }
-    q = q.orderBy('ts', 'desc').limit(Math.min(filters.limit ?? 200, 1000));
+    q = q.orderBy('ts', 'desc').limit(Math.min(filters.limit ?? 200, maxLimit));
     if (filters.offset) q = q.offset(filters.offset);
     return q.execute() as Promise<NiceHashOrderEventRow[]>;
   }

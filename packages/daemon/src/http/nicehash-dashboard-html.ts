@@ -289,6 +289,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       <input id="histOrder" placeholder="order id contains…" style="font:inherit;padding:6px 9px;border-radius:7px;border:1px solid #30363d;background:#0e1116;color:#e6edf3" />
       <label class="muted">min Δ price <input id="histMinDelta" type="number" step="any" value="0" style="width:110px;font:inherit;padding:6px 9px;border-radius:7px;border:1px solid #30363d;background:#0e1116;color:#e6edf3" /></label>
       <button id="histReload">Reload</button>
+      <button id="histExport">Export CSV</button>
       <span class="msg" id="histMsg"></span>
     </div>
     <table>
@@ -309,6 +310,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
         <button data-lvl="error" class="active">error</button>
       </span>
       <button id="logReload">Reload</button>
+      <button id="logExport">Export CSV</button>
       <span class="msg" id="logMsg"></span>
     </div>
     <table>
@@ -970,14 +972,20 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     if (e.price_before == null || e.price_after == null) return '—';
     var d = e.price_after - e.price_before; return (d > 0 ? '+' : '') + fmtPrice(d, 6);
   }
-  async function loadHistory() {
-    $('histMsg').textContent = 'loading…';
+  // Shared with the Export CSV button so the export always matches the
+  // currently selected action / order / min-Δ filters on screen.
+  function histFilterQs() {
     var acts = [];
     Array.prototype.forEach.call(document.querySelectorAll('#histActions button.active'), function (b) { acts.push(b.getAttribute('data-act')); });
-    var qs = 'limit=500';
+    var qs = '';
     if (acts.length) qs += '&action=' + acts.join(',');
     var order = $('histOrder').value.trim(); if (order) qs += '&order=' + encodeURIComponent(order);
     var md = parseFloat($('histMinDelta').value); if (md > 0) qs += '&minDelta=' + md;
+    return qs;
+  }
+  async function loadHistory() {
+    $('histMsg').textContent = 'loading…';
+    var qs = 'limit=500' + histFilterQs();
     try {
       var r = await fetch('/api/nicehash/history?' + qs); var rows = (await r.json()).events || [];
       $('histRows').innerHTML = rows.length ? rows.map(function (e) {
@@ -994,12 +1002,21 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
   });
   $('histReload').addEventListener('click', loadHistory);
   $('histOrder').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadHistory(); });
+  $('histExport').addEventListener('click', function () {
+    window.location.href = '/api/nicehash/history.csv?' + histFilterQs().replace(/^&/, '');
+  });
 
   // ---- logs page -----------------------------------------------------------
-  async function loadLogs() {
-    $('logMsg').textContent = 'loading…';
+  // Shared with the Export CSV button so the export always matches the
+  // currently selected level filter on screen.
+  function logLevels() {
     var lvls = [];
     Array.prototype.forEach.call(document.querySelectorAll('#logLevels button.active'), function (b) { lvls.push(b.getAttribute('data-lvl')); });
+    return lvls;
+  }
+  async function loadLogs() {
+    $('logMsg').textContent = 'loading…';
+    var lvls = logLevels();
     if (!lvls.length) { $('logRows').innerHTML = '<tr><td colspan="4" class="muted">no levels selected</td></tr>'; $('logMsg').textContent = ''; return; }
     var qs = 'limit=500&level=' + lvls.join(',');
     try {
@@ -1017,6 +1034,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     b.addEventListener('click', function () { b.classList.toggle('active'); loadLogs(); });
   });
   $('logReload').addEventListener('click', loadLogs);
+  $('logExport').addEventListener('click', function () {
+    var lvls = logLevels();
+    if (!lvls.length) { $('logMsg').textContent = 'no levels selected'; return; }
+    window.location.href = '/api/nicehash/logs.csv?level=' + lvls.join(',');
+  });
 
   // ---- config page ---------------------------------------------------------
   var CFG = [
@@ -1042,8 +1064,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
       ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled (and past the grace period below), raise the bid toward the floor + your overpay to win hashrate, until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'],
       ['walkUpGraceSeconds', 'Walk-up grace (seconds)', 'number', 'How long delivered hashrate must stay below your minimum fill before the bidder starts walking the price up. Gives a freshly placed or just-repriced order time to attract miners before escalating. The timer resets after each floor-tracking raise; while the escalation ladder is engaged it re-arms only when the order drops back under the minimum fill (episode-based). 0 = walk up as soon as under-filled. e.g. 180.'],
-      ['escalationStepBtc', 'Escalation step (BTC/EH/day)', 'number', 'When the bid already sits at its normal floor (anchor + overpay) but stays under-filled past the walk-up grace, it escalates above the floor by this much per escalation interval, never exceeding the dynamic cap. After sustained fills it steps back down gently - one probe step per NiceHash decrease-cooldown window (~10 min) - feeling for the cheapest price that still fills. Note: escalation stops at the cap — if the market pays above your cap, a persistent partial fill means the market clears above your break-even, not a bug. Minimum 0.0001. e.g. 0.0002.'],
-      ['escalationIntervalSeconds', 'Escalation interval (seconds)', 'number', 'How often the escalation ladder climbs one step while under-filled. The walk-up grace gates entry into escalation and re-entry after fills drop; climbs within an under-filled episode pace on this interval alone. Stepping back down while filled is paced by the NiceHash decrease cooldown (~10 min) instead when that is longer, so the ladder never decays faster than the price can actually follow. Lower = reaches the cap sooner but overpays sooner too; higher = more patient. Minimum 5. e.g. 60.'] ] },
+      ['escalationStepBtc', 'Escalation step (BTC/EH/day)', 'number', 'When the bid already sits at its normal floor (anchor + overpay) but stays under-filled past the walk-up grace, it escalates above the floor by this much per escalation interval, never exceeding the dynamic cap. After sustained fills it steps back down by the full NiceHash decrease limit (price_down_step, ~0.002) per ~10-min window until it sits just above the next filled tier (the floor); if a full step overshoots what miners accept, the fast re-climb recovers within a minute or two. Note: escalation stops at the cap — if the market pays above your cap, a persistent partial fill means the market clears above your break-even, not a bug. Minimum 0.0001. e.g. 0.0002.'],
+      ['escalationIntervalSeconds', 'Escalation interval (seconds)', 'number', 'How often the escalation ladder climbs one step while under-filled. The walk-up grace gates entry into escalation and re-entry after fills drop; climbs within an under-filled episode pace on this interval alone. Stepping back down while filled is paced by the NiceHash decrease cooldown (~10 min) instead when that is longer, and each down-move takes the full NiceHash decrease limit (~0.002), so the ladder never decays faster - or shallower - than the price can actually follow. Lower = reaches the cap sooner but overpays sooner too; higher = more patient. Minimum 5. e.g. 60.'] ] },
     { group: 'Cheap mode', items: [
       ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
       ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],

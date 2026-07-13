@@ -40,14 +40,18 @@ export class NiceHashDecisionLogRepo {
     await this.db.insertInto('nicehash_decision_log').values(e).execute();
   }
 
-  /** List newest-first, with optional level filter + pagination. */
-  async list(filters: NiceHashLogFilters = {}): Promise<NiceHashLogRow[]> {
+  /**
+   * List newest-first, with optional level filter + pagination.
+   * `maxLimit` bounds the requested `limit` - 2000 for the dashboard page,
+   * raised by the CSV export route which needs a much bigger row cap.
+   */
+  async list(filters: NiceHashLogFilters = {}, maxLimit = 2000): Promise<NiceHashLogRow[]> {
     let q = this.db.selectFrom('nicehash_decision_log').selectAll();
     if (filters.levels && filters.levels.length > 0) {
       q = q.where('level', 'in', filters.levels as string[]);
     }
     if (filters.sinceMs !== undefined) q = q.where('ts', '>=', filters.sinceMs);
-    q = q.orderBy('ts', 'desc').orderBy('id', 'desc').limit(Math.min(filters.limit ?? 300, 2000));
+    q = q.orderBy('ts', 'desc').orderBy('id', 'desc').limit(Math.min(filters.limit ?? 300, maxLimit));
     if (filters.offset) q = q.offset(filters.offset);
     return q.execute() as Promise<NiceHashLogRow[]>;
   }

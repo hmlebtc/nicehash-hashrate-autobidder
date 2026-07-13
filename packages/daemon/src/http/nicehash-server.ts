@@ -10,6 +10,8 @@
  *   GET  /api/health                 - liveness + build number
  *   GET  /api/nicehash/status        - latest observed state + proposals/outcomes
  *   GET  /api/nicehash/orders        - owned-order ledger rows
+ *   GET  /api/nicehash/history.csv   - order-mutation audit trail as CSV (Export button)
+ *   GET  /api/nicehash/logs.csv      - decision + error log as CSV (Export button)
  *   POST /api/nicehash/run-mode      - { mode: DRY_RUN | LIVE | PAUSED }
  */
 
@@ -105,6 +107,47 @@ function downsample<T>(rows: readonly T[], maxPoints = 1500): T[] {
   if (out[out.length - 1] !== last) out.push(last);
   return out;
 }
+
+/** Shared numeric query-param coercion: blank/missing/non-finite -> undefined. */
+function numParam(v: string | undefined): number | undefined {
+  if (v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Clamp a requested CSV export row count into `[1, max]`, defaulting to `def`. */
+function clampCsvLimit(v: number | undefined, def: number, max: number): number {
+  const n = v !== undefined && Number.isFinite(v) ? Math.floor(v) : def;
+  return Math.min(Math.max(n, 1), max);
+}
+
+/**
+ * RFC 4180 field escaping for CSV export: any field containing a comma,
+ * double-quote, CR or LF is wrapped in quotes with inner quotes doubled.
+ * `null`/`undefined` become an empty field.
+ */
+function csvField(v: unknown): string {
+  const s = v === null || v === undefined ? '' : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+/** One CRLF-terminated CSV row from raw field values - the one shared helper
+ *  both CSV export routes (`logs.csv`, `history.csv`) build rows with. */
+function toCsvRow(fields: readonly unknown[]): string {
+  return fields.map(csvField).join(',') + '\r\n';
+}
+
+/** UTC `YYYYMMDD-HHmmss` stamp used in CSV export filenames. */
+function csvFilenameStamp(d: Date): string {
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}-` +
+    `${p2(d.getUTCHours())}${p2(d.getUTCMinutes())}${p2(d.getUTCSeconds())}`
+  );
+}
+
+/** Prepended to every CSV export body so Excel detects UTF-8 correctly. */
+const CSV_BOM = '\uFEFF';
 
 function proposalView(p: Proposal): { kind: string; reason: string } {
   return { kind: p.kind, reason: p.reason };
@@ -236,21 +279,57 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     const actions = q.action
       ? q.action.split(',').map((a) => a.trim().toUpperCase()).filter(Boolean)
       : undefined;
-    const num = (v: string | undefined): number | undefined => {
-      if (v === undefined || v === '') return undefined;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    };
     const events = await deps.events.list({
       ...(actions && actions.length > 0 ? { actions } : {}),
       ...(q.order ? { orderIdContains: q.order } : {}),
-      ...(num(q.since) !== undefined ? { sinceMs: num(q.since)! } : {}),
-      ...(num(q.until) !== undefined ? { untilMs: num(q.until)! } : {}),
-      ...(num(q.minDelta) !== undefined ? { minAbsDeltaPrice: num(q.minDelta)! } : {}),
-      ...(num(q.limit) !== undefined ? { limit: num(q.limit)! } : {}),
-      ...(num(q.offset) !== undefined ? { offset: num(q.offset)! } : {}),
+      ...(numParam(q.since) !== undefined ? { sinceMs: numParam(q.since)! } : {}),
+      ...(numParam(q.until) !== undefined ? { untilMs: numParam(q.until)! } : {}),
+      ...(numParam(q.minDelta) !== undefined ? { minAbsDeltaPrice: numParam(q.minDelta)! } : {}),
+      ...(numParam(q.limit) !== undefined ? { limit: numParam(q.limit)! } : {}),
+      ...(numParam(q.offset) !== undefined ? { offset: numParam(q.offset)! } : {}),
     });
     return { events };
+  });
+
+  // CSV export of the order-mutation audit trail (History tab "Export CSV"),
+  // same filters as /api/nicehash/history but with a much bigger row cap
+  // (up to 10000, default 5000) for offline troubleshooting.
+  app.get('/api/nicehash/history.csv', async (req, reply) => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const actions = q.action
+      ? q.action.split(',').map((a) => a.trim().toUpperCase()).filter(Boolean)
+      : undefined;
+    const limit = clampCsvLimit(numParam(q.limit), 5000, 10000);
+    const events = deps.events
+      ? await deps.events.list(
+          {
+            ...(actions && actions.length > 0 ? { actions } : {}),
+            ...(q.order ? { orderIdContains: q.order } : {}),
+            ...(numParam(q.since) !== undefined ? { sinceMs: numParam(q.since)! } : {}),
+            ...(numParam(q.until) !== undefined ? { untilMs: numParam(q.until)! } : {}),
+            ...(numParam(q.minDelta) !== undefined ? { minAbsDeltaPrice: numParam(q.minDelta)! } : {}),
+            limit,
+            ...(numParam(q.offset) !== undefined ? { offset: numParam(q.offset)! } : {}),
+          },
+          10000,
+        )
+      : [];
+    let csv = CSV_BOM + toCsvRow([
+      'when_iso', 'when_ms', 'order_id', 'action', 'outcome',
+      'price_before_btc', 'price_after_btc', 'delta_btc', 'amount_btc', 'reason',
+    ]);
+    for (const e of events) {
+      const delta = e.price_before !== null && e.price_after !== null ? e.price_after - e.price_before : '';
+      csv += toCsvRow([
+        new Date(e.ts).toISOString(), e.ts, e.order_id ?? '', e.action, e.outcome,
+        e.price_before ?? '', e.price_after ?? '', delta, e.amount_btc ?? '', e.reason ?? '',
+      ]);
+    }
+    const filename = `nicehash-order-history-${csvFilenameStamp(new Date())}.csv`;
+    reply
+      .type('text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .send(csv);
   });
 
   // Decision + error log (Logs page), with optional level filter.
@@ -260,18 +339,46 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
     const levels = q.level
       ? q.level.split(',').map((l) => l.trim().toLowerCase()).filter(Boolean)
       : undefined;
-    const num = (v: string | undefined): number | undefined => {
-      if (v === undefined || v === '') return undefined;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    };
     const logs = await deps.decisionLog.list({
       ...(levels && levels.length > 0 ? { levels } : {}),
-      ...(num(q.since) !== undefined ? { sinceMs: num(q.since)! } : {}),
-      ...(num(q.limit) !== undefined ? { limit: num(q.limit)! } : {}),
-      ...(num(q.offset) !== undefined ? { offset: num(q.offset)! } : {}),
+      ...(numParam(q.since) !== undefined ? { sinceMs: numParam(q.since)! } : {}),
+      ...(numParam(q.limit) !== undefined ? { limit: numParam(q.limit)! } : {}),
+      ...(numParam(q.offset) !== undefined ? { offset: numParam(q.offset)! } : {}),
     });
     return { logs };
+  });
+
+  // CSV export of the decision + error log (Logs tab "Export CSV"), same
+  // filters as /api/nicehash/logs but with a much bigger row cap (up to
+  // 10000, default 5000) for offline troubleshooting.
+  app.get('/api/nicehash/logs.csv', async (req, reply) => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const levels = q.level
+      ? q.level.split(',').map((l) => l.trim().toLowerCase()).filter(Boolean)
+      : undefined;
+    const limit = clampCsvLimit(numParam(q.limit), 5000, 10000);
+    const logs = deps.decisionLog
+      ? await deps.decisionLog.list(
+          {
+            ...(levels && levels.length > 0 ? { levels } : {}),
+            ...(numParam(q.since) !== undefined ? { sinceMs: numParam(q.since)! } : {}),
+            limit,
+            ...(numParam(q.offset) !== undefined ? { offset: numParam(q.offset)! } : {}),
+          },
+          10000,
+        )
+      : [];
+    let csv = CSV_BOM + toCsvRow(['when_iso', 'when_ms', 'level', 'mode', 'summary', 'detail']);
+    for (const row of logs) {
+      csv += toCsvRow([
+        new Date(row.ts).toISOString(), row.ts, row.level, row.run_mode ?? '', row.message, row.detail ?? '',
+      ]);
+    }
+    const filename = `nicehash-decision-log-${csvFilenameStamp(new Date())}.csv`;
+    reply
+      .type('text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .send(csv);
   });
 
   // Summary tiles + profit & loss for a window.

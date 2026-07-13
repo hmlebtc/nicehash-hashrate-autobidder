@@ -63,13 +63,16 @@ export interface EscalationEntry {
  *     continuous under-filled episode - the controller does not reset the
  *     grace clock on the ladder's own raises, so mid-episode `gracePassed`
  *     stays true and the interval alone paces the climb.
- *   - Filled (delivery at/above the fill threshold): decay one step per
- *     `decayIntervalMs` = max(interval, NiceHash decrease cooldown), probing
- *     back down toward the cheapest price that still fills - never snapping to
- *     the floor. Decay paces on the cooldown so the state never races ahead of
- *     what the gate will execute: decaying every interval while walk-downs are
- *     cooldown-blocked would drain the offset to zero and land the released
- *     walk-down on the floor, re-losing the fill.
+ *   - Filled (delivery at/above the fill threshold): step DOWN by
+ *     `decayStepBtc` - the FULL NiceHash per-move decrease limit
+ *     (price_down_step, ~0.002) - once per `decayIntervalMs` = max(interval,
+ *     NiceHash decrease cooldown). Operator rule: take the maximum step down
+ *     each window until the target sits just above the next filled tier (the
+ *     floor); if a full step overshoots the price miners accept, the fast
+ *     re-climb (one interval + episode grace) is the safety net. Decay paces
+ *     on the cooldown so the state never races ahead of what the gate will
+ *     execute: decaying every interval while walk-downs are cooldown-blocked
+ *     would drain the offset before the first walk-down could land.
  *   - Otherwise (entry grace running, interval not elapsed, offset at room):
  *     hold.
  *
@@ -92,10 +95,16 @@ export function nextEscalation(args: {
    * executable walk-downs.
    */
   readonly decayIntervalMs: number;
+  /**
+   * Size of one DOWNWARD ladder move (BTC/unit/day). Callers pass
+   * max(stepBtc, price_down_step_btc) - the full NiceHash per-move decrease
+   * limit, never smaller than one escalation step.
+   */
+  readonly decayStepBtc: number;
   /** Headroom above the floor: max(0, effectiveCap − (anchor + overpay)). */
   readonly room: number;
 }): EscalationEntry | null {
-  const { prev, now, stepBtc, intervalMs, decayIntervalMs, room } = args;
+  const { prev, now, stepBtc, intervalMs, decayIntervalMs, decayStepBtc, room } = args;
   if (!args.walkUpEnabled) return null;
   const offset = prev?.offsetBtc ?? 0;
   const lastStepAt = prev?.lastStepAt ?? 0;
@@ -117,7 +126,7 @@ export function nextEscalation(args: {
   }
 
   if (!args.underFilled && offset > 0 && now - lastStepAt >= decayIntervalMs) {
-    const next = Math.max(0, offset - stepBtc);
+    const next = Math.max(0, offset - decayStepBtc);
     return next > 0 ? { offsetBtc: next, lastStepAt: now } : null;
   }
 
@@ -367,11 +376,16 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       const intervalMs =
         Math.max(5, Math.round(config.escalation_interval_seconds ?? DEFAULT_ESCALATION_INTERVAL_SECONDS)) * 1000;
       // Decay paces on the decrease cooldown when it is longer than the
-      // interval - one probe step per executable walk-down window.
+      // interval - one down-move per executable walk-down window - and each
+      // down-move takes the FULL NiceHash per-move decrease limit (operator
+      // rule: max step down until just above the next filled tier; the fast
+      // re-climb recovers if a full step overshoots). Never smaller than one
+      // escalation step, so a tiny/absent price_down_step still decays.
       const decayIntervalMs = Math.max(
         intervalMs,
         deps.priceDecreaseCooldownMs ?? DEFAULT_PRICE_DECREASE_COOLDOWN_MS,
       );
+      const decayStepBtc = Math.max(stepBtc, config.price_down_step_btc ?? 0);
 
       for (const o of owned) {
         const underFilled = fillThreshold > 0 && o.accepted_speed_units < fillThreshold;
@@ -387,6 +401,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
           stepBtc,
           intervalMs,
           decayIntervalMs,
+          decayStepBtc,
           room,
         });
         if (next) escMap.set(o.order_id, next);

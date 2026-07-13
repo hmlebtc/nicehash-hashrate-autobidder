@@ -697,6 +697,7 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
       room: 0.4825 - 0.4788,
     });
     expect(entry?.offsetBtc).toBeCloseTo(0.0002, 10);
@@ -725,6 +726,7 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
       room: 0.0037,
     });
     expect(second?.offsetBtc).toBeCloseTo(0.0004, 10);
@@ -750,6 +752,7 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
       room: 0.0001,
     });
     expect(clamped?.offsetBtc).toBeCloseTo(0.0001, 10);
@@ -774,6 +777,7 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
       room: 0.0037,
     });
     expect(next).toBe(prev); // unchanged entry
@@ -802,13 +806,16 @@ describe('decide - escalation ladder toward the cap', () => {
         stepBtc: 0.0002,
         intervalMs: 60_000,
         decayIntervalMs: 600_000, // max(interval, decrease cooldown)
+        decayStepBtc: 0.002,
         room: 0.0037,
       }),
     ).toBe(early);
 
-    // Once a full cooldown window has passed: one probe step down.
+    // Once a full cooldown window has passed: the down-move takes the FULL
+    // NiceHash per-move decrease limit (operator rule: max step down until
+    // just above the next filled tier), not one escalation step.
     const next = nextEscalation({
-      prev: { offsetBtc: 0.0012, lastStepAt: NOW - 600_000 },
+      prev: { offsetBtc: 0.0035, lastStepAt: NOW - 600_000 },
       now: NOW,
       walkUpEnabled: true,
       underFilled: false, // filled for a full cooldown window
@@ -816,14 +823,52 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002, // NiceHash price_down_step
       room: 0.0037,
     });
-    expect(next?.offsetBtc).toBeCloseTo(0.001, 10);
+    expect(next?.offsetBtc).toBeCloseTo(0.0015, 10);
 
+    // The second full-step window lands on the floor exactly: never negative,
+    // entry deleted at zero.
+    expect(
+      nextEscalation({
+        prev: next!,
+        now: NOW + 600_000,
+        walkUpEnabled: true,
+        underFilled: false,
+        gracePassed: false,
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000,
+        decayStepBtc: 0.002,
+        room: 0.0037,
+      }),
+    ).toBeNull();
+
+    // A tiny/absent price_down_step never shrinks the down-move below one
+    // escalation step (decayStepBtc = max(step, price_down_step)).
+    expect(
+      nextEscalation({
+        prev: { offsetBtc: 0.0006, lastStepAt: NOW - 600_000 },
+        now: NOW,
+        walkUpEnabled: true,
+        underFilled: false,
+        gracePassed: false,
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000,
+        decayStepBtc: 0.0002, // max(0.0002, tiny price_down_step)
+        room: 0.0037,
+      })?.offsetBtc,
+    ).toBeCloseTo(0.0004, 10);
+
+    // decide() turns the full-step decay into exactly ONE API decrease: bid at
+    // floor + 0.0035, decayed target floor + 0.0015 -> walk down one full
+    // price_down_step (0.002), landing on the target, never below.
     const s = escState({
       owned_orders: [
         escOrder({
-          price_btc: 0.48,
+          price_btc: 0.4823, // floor 0.4788 + 0.0035
           accepted_speed_units: 10, // filled
           under_filled_since: null,
           escalation_offset_btc: next!.offsetBtc,
@@ -833,7 +878,8 @@ describe('decide - escalation ladder toward the cap', () => {
     const out = decide(s);
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.4798, 9); // one ladder step down, within price_down_step
+    expect(e.new_price_btc).toBeCloseTo(0.4803, 9); // one full step, exactly onto the target
+    expect(e.old_price_btc - e.new_price_btc).toBeCloseTo(0.002, 9);
     expect(e.reason).toContain('de-escalating');
 
     // The NiceHash decrease cooldown still gates the resulting walk-down.
@@ -886,6 +932,7 @@ describe('decide - escalation ladder toward the cap', () => {
         stepBtc: 0.0002,
         intervalMs: 60_000,
         decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
         room: 0.0037,
       }),
     ).toBeNull();
@@ -932,6 +979,7 @@ describe('decide - escalation ladder toward the cap', () => {
         stepBtc: 0.0002,
         intervalMs: 60_000,
         decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
         room: 0.0037,
       }),
     ).toBeNull();
@@ -950,6 +998,7 @@ describe('decide - escalation ladder toward the cap', () => {
         stepBtc: 0.0002,
         intervalMs: 60_000,
         decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
         room: 0.0037,
       }),
     ).toBe(engaged);
@@ -966,6 +1015,7 @@ describe('decide - escalation ladder toward the cap', () => {
       stepBtc: 0.0002,
       intervalMs: 60_000,
       decayIntervalMs: 600_000,
+      decayStepBtc: 0.002,
       room: 0.0037,
     });
     expect(stepped?.offsetBtc).toBeCloseTo(0.0014, 10);

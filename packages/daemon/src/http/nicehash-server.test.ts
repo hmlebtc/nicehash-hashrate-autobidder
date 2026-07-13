@@ -10,6 +10,7 @@ import { closeDatabase, openDatabase, type DatabaseHandle } from '../state/db.js
 import { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
 import { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
 import { NiceHashEventsRepo } from '../state/repos/nicehash_order_events.js';
+import { NiceHashDecisionLogRepo } from '../state/repos/nicehash_decision_log.js';
 import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 import { createNiceHashHttpServer, type NiceHashHttpDeps } from './nicehash-server.js';
 
@@ -471,5 +472,213 @@ describe('status next_action - live hold countdown', () => {
     store.setLast({ ...tickResult(), hold_reason: null });
     const body = (await app.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
     expect(body.next_action).toBeNull();
+  });
+});
+
+/** Minimal RFC 4180 parser - just enough to prove the CSV export round-trips
+ *  fields containing commas, quotes, and embedded newlines correctly. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      field += c;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+    if (c === ',') {
+      row.push(field);
+      field = '';
+      i++;
+      continue;
+    }
+    if (c === '\r' && text[i + 1] === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      i += 2;
+      continue;
+    }
+    field += c;
+    i++;
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+describe('NiceHash HTTP server - CSV export', () => {
+  let handle: DatabaseHandle;
+  let app: FastifyInstance;
+  let eventsRepo: NiceHashEventsRepo;
+  let decisionLogRepo: NiceHashDecisionLogRepo;
+  let ledger: NiceHashOrdersRepo;
+
+  const trickyReason = 'walk up, "escalating", 2 steps\nsecond line';
+  const trickyMessage = 'blocked, reason: "cooldown", retry later';
+  const trickyDetail = 'run=LIVE balance=0.001 anchor=0.0102\nEDIT_PRICE: walk down -> BLOCKED(PRICE_DECREASE_COOLDOWN)';
+
+  beforeEach(async () => {
+    handle = await openDatabase({ path: ':memory:' });
+    eventsRepo = new NiceHashEventsRepo(handle.db);
+    decisionLogRepo = new NiceHashDecisionLogRepo(handle.db);
+    ledger = new NiceHashOrdersRepo(handle.db);
+
+    const now = Date.now();
+    await decisionLogRepo.record({
+      ts: now - 3000, level: 'info', kind: 'TICK', run_mode: 'LIVE',
+      message: 'holding — no action', detail: 'run=LIVE balance=0.001 anchor=0.0102',
+    });
+    await decisionLogRepo.record({
+      ts: now - 2000, level: 'warn', kind: 'TICK', run_mode: 'LIVE',
+      message: trickyMessage, detail: trickyDetail,
+    });
+    await decisionLogRepo.record({
+      ts: now - 1000, level: 'error', kind: 'ERROR', run_mode: 'LIVE',
+      message: 'tick error: boom', detail: null,
+    });
+
+    await eventsRepo.record({
+      ts: now - 5000, order_id: 'order-1', action: 'CREATE', run_mode: 'LIVE', outcome: 'EXECUTED',
+      price_before: null, price_after: 0.0102, limit_before: null, limit_after: 1,
+      amount_btc: 0.001, anchor_price_btc: 0.0102, reason: 'initial create', detail: 'ok',
+    });
+    await eventsRepo.record({
+      ts: now - 4000, order_id: 'order-1', action: 'EDIT_PRICE', run_mode: 'LIVE', outcome: 'EXECUTED',
+      price_before: 0.0102, price_after: 0.0105, limit_before: null, limit_after: null,
+      amount_btc: null, anchor_price_btc: 0.0103, reason: trickyReason, detail: 'ok',
+    });
+    await eventsRepo.record({
+      ts: now - 3000, order_id: 'order-1', action: 'CANCEL', run_mode: 'LIVE', outcome: 'FAILED',
+      price_before: 0.0105, price_after: null, limit_before: 1, limit_after: null,
+      amount_btc: null, anchor_price_btc: null, reason: 'operator requested', detail: 'err',
+    });
+
+    app = await createNiceHashHttpServer({
+      store: new NiceHashStateStore('LIVE'),
+      ledger,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+      events: eventsRepo,
+      decisionLog: decisionLogRepo,
+    });
+  });
+  afterEach(async () => {
+    await app.close();
+    await closeDatabase(handle);
+  });
+
+  it('GET /api/nicehash/logs.csv returns a CSV attachment with a UTF-8 BOM and the expected columns', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/logs.csv' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toMatch(
+      /^attachment; filename="nicehash-decision-log-\d{8}-\d{6}\.csv"$/,
+    );
+    expect(res.body.charCodeAt(0)).toBe(0xfeff); // BOM so Excel detects UTF-8
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows[0]).toEqual(['when_iso', 'when_ms', 'level', 'mode', 'summary', 'detail']);
+    expect(rows.length).toBe(4); // header + 3 log rows
+  });
+
+  it('round-trips a summary/detail containing a comma, a double-quote, and a newline', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/logs.csv' });
+    const rows = parseCsv(res.body.slice(1));
+    const header = rows[0]!;
+    const warnRow = rows.find((r) => r[header.indexOf('level')] === 'warn')!;
+    expect(warnRow[header.indexOf('summary')]).toBe(trickyMessage);
+    expect(warnRow[header.indexOf('detail')]).toBe(trickyDetail);
+  });
+
+  it('GET /api/nicehash/logs.csv honors the level filter (level=warn only exports warn rows)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/logs.csv?level=warn' });
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows.length).toBe(2); // header + 1 warn row
+    expect(rows[1]![rows[0]!.indexOf('level')]).toBe('warn');
+  });
+
+  it('GET /api/nicehash/history.csv returns a CSV attachment with a UTF-8 BOM and the expected columns', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/history.csv' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toMatch(
+      /^attachment; filename="nicehash-order-history-\d{8}-\d{6}\.csv"$/,
+    );
+    expect(res.body.charCodeAt(0)).toBe(0xfeff);
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows[0]).toEqual([
+      'when_iso', 'when_ms', 'order_id', 'action', 'outcome',
+      'price_before_btc', 'price_after_btc', 'delta_btc', 'amount_btc', 'reason',
+    ]);
+    expect(rows.length).toBe(4); // header + 3 events
+  });
+
+  it('round-trips a reason containing a comma, a double-quote, and a newline', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/history.csv' });
+    const rows = parseCsv(res.body.slice(1));
+    const header = rows[0]!;
+    const editRow = rows.find((r) => r[header.indexOf('action')] === 'EDIT_PRICE')!;
+    expect(editRow[header.indexOf('reason')]).toBe(trickyReason);
+    // Delta is computed from price_before/price_after (0.0105 - 0.0102).
+    expect(Number(editRow[header.indexOf('delta_btc')])).toBeCloseTo(0.0003, 9);
+  });
+
+  it('GET /api/nicehash/history.csv honors the action filter (action=CANCEL only exports CANCEL rows)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/history.csv?action=CANCEL' });
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows.length).toBe(2); // header + 1 CANCEL row
+    expect(rows[1]![rows[0]!.indexOf('action')]).toBe('CANCEL');
+  });
+
+  it('clamps an oversized limit to 10000 and defaults to 5000 when absent', async () => {
+    const spy = vi.spyOn(eventsRepo, 'list');
+    await app.inject({ method: 'GET', url: '/api/nicehash/history.csv?limit=999999' });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ limit: 10000 }), 10000);
+    spy.mockClear();
+    await app.inject({ method: 'GET', url: '/api/nicehash/history.csv' });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ limit: 5000 }), 10000);
+  });
+
+  it('returns a header-only CSV when the repos are not wired up', async () => {
+    const bareApp = await createNiceHashHttpServer({
+      store: new NiceHashStateStore('LIVE'),
+      ledger,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+    });
+    try {
+      const logsRes = await bareApp.inject({ method: 'GET', url: '/api/nicehash/logs.csv' });
+      expect(parseCsv(logsRes.body.slice(1)).length).toBe(1);
+      const histRes = await bareApp.inject({ method: 'GET', url: '/api/nicehash/history.csv' });
+      expect(parseCsv(histRes.body.slice(1)).length).toBe(1);
+    } finally {
+      await bareApp.close();
+    }
   });
 });

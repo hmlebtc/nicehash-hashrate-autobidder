@@ -215,9 +215,10 @@ export interface NiceHashControllerConfig {
    * at the normal floor (anchor + overpay) past the walk-up grace, the bid
    * escalates ABOVE the floor by this much per escalation interval, bounded by
    * the effective cap - a pure ladder, one step at a time (no market-hint
-   * jump). After sustained fills the offset decays one probe step per NiceHash
-   * decrease-cooldown window (never snapping back to the floor). Only active
-   * with walk_up_enabled. Default 0.0002.
+   * jump). After sustained fills the offset steps DOWN by the full NiceHash
+   * per-move decrease limit (price_down_step) per decrease-cooldown window,
+   * until the target sits just above the next filled tier (the floor). Only
+   * active with walk_up_enabled. Default 0.0002.
    */
   readonly escalation_step_btc?: number;
   /**
@@ -225,9 +226,9 @@ export interface NiceHashControllerConfig {
    * walk-up grace gates entry into escalation and re-entry after a filled
    * spell drops back under-filled; steps within a continuous under-filled
    * episode pace on this interval alone. Decay while filled paces on max(this,
-   * NiceHash decrease cooldown) - one probe step per executable walk-down
-   * window, so the ladder never drains faster than the gate lets the price
-   * follow. Default 60.
+   * NiceHash decrease cooldown) - one FULL-sized down-move (price_down_step)
+   * per executable walk-down window, so the ladder never drains faster than
+   * the gate lets the price follow. Default 60.
    */
   readonly escalation_interval_seconds?: number;
   /** Minimum speed limit (display units), from algorithm metadata. */
