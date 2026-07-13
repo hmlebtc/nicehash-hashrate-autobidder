@@ -50,9 +50,11 @@ export interface MarketAnchor {
   readonly thin: boolean;
   /**
    * Ascending prices of competitor orders currently being filled (have miners),
-   * i.e. the "fill ladder". `anchor_price_btc` is its first (cheapest) entry.
-   * The walk-up uses it to jump to just above the next filled tier above us
-   * rather than a fixed step. Empty when nothing is being filled.
+   * i.e. the "fill ladder". `anchor_price_btc` is its first (cheapest) entry;
+   * `filled_prices[1]` is the NEXT FILLED TIER - the bottom of the contiguously
+   * miner-bearing run at the top of the book (every row above it filled) -
+   * omitted when that run reaches the marginal itself (the market genuinely
+   * clears at the marginal). Empty when nothing is being filled.
    */
   readonly filled_prices?: readonly number[];
   /**
@@ -185,14 +187,16 @@ export interface NiceHashControllerConfig {
   /** NiceHash minimum order amount (BTC), from algorithm metadata. */
   readonly min_order_amount_btc: number;
   /**
-   * Anchor on the *next filled tier* (the second rung of the fill ladder,
-   * `MarketAnchor.filled_prices[1]`) instead of the marginal (cheapest filled,
-   * `filled_prices[0]`). The marginal is the theoretical price to beat, but on a
-   * thin/lumpy market bidding a hair above it often wins nothing - the market is
-   * actually allocating hashrate one tier up. Tracking that tier + overpay places
-   * the bid where fills really happen (still clamped by the cap). Falls back to
-   * the marginal when there is no second tier. Default off (undefined) in the
-   * pure controller; the daemon defaults it on. #tracks NiceHash cyan line.
+   * Anchor on the *next filled tier* (`MarketAnchor.filled_prices[1]` - the
+   * bottom of the contiguously miner-bearing top of the book) instead of the
+   * marginal (cheapest filled, `filled_prices[0]`). The marginal is the
+   * theoretical price to beat, but on a lumpy book bidding a hair above it
+   * often wins nothing - the market is really clearing into the contiguous
+   * block far above. Tracking that block's bottom + overpay places the bid
+   * where fills provably happen (still clamped by the cap). Falls back to the
+   * marginal when the contiguous fill reaches the marginal (no separate tier).
+   * Default off (undefined) in the pure controller; the daemon defaults it on.
+   * #tracks NiceHash cyan line.
    */
   readonly anchor_next_filled_tier?: boolean;
   /**
@@ -307,9 +311,8 @@ export function dynamicCapPrice(
  * `min(fixed hard cap, premium cap, dynamic break-even cap)`. This is the single
  * definition of "our ceiling"; `decide()` reprises the same math inline (it also
  * needs to know *which* bound is binding, for its log label), and `observe()`
- * uses this to bound the reported "next filled tier" so a distant book jump never
- * charts or anchors a price we could never actually bid. Returns at least the
- * fixed cap; a null/absent hashprice simply drops the hashprice-derived bounds.
+ * uses it to pace the escalation ladder. Returns at least the fixed cap; a
+ * null/absent hashprice simply drops the hashprice-derived bounds.
  */
 export function effectiveCapBtc(
   config: NiceHashControllerConfig,

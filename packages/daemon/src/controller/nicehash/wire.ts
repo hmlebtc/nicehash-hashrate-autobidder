@@ -67,11 +67,9 @@ export function marketAnchorFromBook(
   targetUnits: number,
   ownOrderIds: ReadonlySet<string> = new Set(),
   currency = 'BTC',
-  priceStepBtc = 0,
-  capBtc = 0,
 ): MarketAnchor {
   const { competitors, totalSpeedUnits } = competingOrdersFromBook(book, currency, ownOrderIds);
-  return computeMarketAnchor(competitors, totalSpeedUnits, targetUnits, priceStepBtc, capBtc);
+  return computeMarketAnchor(competitors, totalSpeedUnits, targetUnits);
 }
 
 /** Map a wire order to an owned-order snapshot. Timestamps are ledger-sourced. */

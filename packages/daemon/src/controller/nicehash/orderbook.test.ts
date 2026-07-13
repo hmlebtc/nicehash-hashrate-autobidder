@@ -14,8 +14,10 @@ describe('computeMarketAnchor', () => {
     const a = computeMarketAnchor(competitors, 100, 4);
     expect(a.anchor_price_btc).toBe(0.0004);
     expect(a.thin).toBe(false);
-    // exposes the ascending fill ladder (orders with miners) for the walk-up
-    expect(a.filled_prices).toEqual([0.0004, 0.0005, 0.0006]);
+    // The whole book above the marginal is contiguously miner-bearing, so the
+    // top run reaches the marginal itself: there is NO separate next tier - a
+    // bid at the marginal wins (strict contiguous-top rule).
+    expect(a.filled_prices).toEqual([0.0004]);
   });
 
   it('anchors at the GLOBAL cheapest order with miners and the ladder is miner-bearing only', () => {
@@ -36,7 +38,10 @@ describe('computeMarketAnchor', () => {
     ];
     const a = computeMarketAnchor(competitors, 16, 2);
     expect(a.anchor_price_btc).toBe(0.4482);
-    expect(a.filled_prices).toEqual([0.4482, 0.4488, 0.4526, 0.466]); // miner-bearing only
+    // Strict rule: the contiguous miner-bearing top is 0.466 down to 0.4526
+    // (the 0.4525 zero-miner row ends it). 0.4488 is a real fill but sits
+    // below the zero-miner wall - not part of the clearing block.
+    expect(a.filled_prices).toEqual([0.4482, 0.4526, 0.466]);
   });
 
   it('does not walk up the book for a larger target (still anchors at the floor)', () => {
@@ -103,9 +108,11 @@ describe('computeMarketAnchor', () => {
       { price_btc: 0.4607, limit_units: 0.00389315, rigs_count: 3314, accepted_speed_units: 0.2028 },
       { price_btc: 0.462, limit_units: 0.00066185, rigs_count: 1245, accepted_speed_units: 0.0344 },
     ];
-    const a = computeMarketAnchor(competitors, 13, 1, 0.0001, 0.45594);
+    const a = computeMarketAnchor(competitors, 13, 1);
     expect(a.anchor_price_btc).toBe(0.4606); // NiceHash purple, not the 0.4556 straggler
-    expect(a.filled_prices[1]).toBe(0.4607); // nearest real block above the marginal
+    // 0.462 -> 0.4607 -> 0.4606 (the marginal) are contiguously miner-bearing:
+    // the top run reaches the marginal, so there is no separate next tier.
+    expect(a.filled_prices).toEqual([0.4606]);
   });
 
   it('counts orders by accepted-speed when no rig counts are reported anywhere', () => {
@@ -154,12 +161,12 @@ describe('computeMarketAnchor', () => {
     expect(a.thin).toBe(false);
   });
 
-  it('excludes dropped-count 0-miner tiers from the ladder (miner-bearing only)', () => {
-    // marginal 0.4535 (purple) with a 0.4536 tier right above it, then a block at
-    // 0.4555-0.4557 whose per-order miners AND speed the API dropped to 0, then 0.456.
-    // Miners is the reliable signal: the 0.4555-0.4557 rows are NOT counted as filled
-    // tiers (0 miners), so the next filled tier is 0.4536 (contiguous with the marginal)
-    // and the ladder is the miner-bearing prices only.
+  it('a zero-miner wall below the top block pushes the next tier to the block above it', () => {
+    // marginal 0.4535 (purple) with a 0.4536 tier right above it, then rows at
+    // 0.4555-0.4557 whose per-order miners the API dropped to 0, then 0.456.
+    // Strict rule: the contiguous miner-bearing top is just {0.456} (the
+    // 0.4557 zero-miner row ends it) - the next tier is 0.456, and the
+    // 0.4536 fill below the wall is not part of the clearing block.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4535, limit_units: 5, rigs_count: 40501 }, // marginal (purple)
       { price_btc: 0.4536, limit_units: 5, rigs_count: 57 },
@@ -168,17 +175,17 @@ describe('computeMarketAnchor', () => {
       { price_btc: 0.4557, limit_units: 5, rigs_count: 0, accepted_speed_units: 0 },
       { price_btc: 0.456, limit_units: 5, rigs_count: 174 },
     ];
-    const a = computeMarketAnchor(competitors, 18, 1, 0.0001, 0.45592);
+    const a = computeMarketAnchor(competitors, 18, 1);
     expect(a.anchor_price_btc).toBe(0.4535);
-    expect(a.filled_prices[1]).toBe(0.4536); // contiguous with the marginal
-    expect(a.filled_prices).toEqual([0.4535, 0.4536, 0.456]);
+    expect(a.filled_prices[1]).toBe(0.456);
+    expect(a.filled_prices).toEqual([0.4535, 0.456]);
   });
 
-  it('reads the next filled tier right above the marginal (contiguous miner run)', () => {
-    // Live book (2026-07-06): marginal 0.4556 (purple, 57k miners), then 0.4557 (16
-    // miners), 0.4559, 0.456, 0.4561, 0.4562 - all miner-bearing and contiguous. The
-    // next filled tier is the immediate one, 0.4557 - NOT clamped to the cap (0.45617)
-    // that sits within this run.
+  it('a book contiguously filled down to the marginal has NO separate next tier', () => {
+    // Live book (2026-07-06): marginal 0.4556 (purple, 57k miners), then 0.4557,
+    // 0.4559, 0.456, 0.4561, 0.4562 - every row miner-bearing. The contiguous
+    // top run reaches the marginal itself: the market genuinely clears at the
+    // marginal, so a bid there wins and next tier is null ([marginal] ladder).
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4556, limit_units: 0.0187, rigs_count: 57182 }, // marginal (purple)
       { price_btc: 0.4557, limit_units: 0.00001, rigs_count: 16 },
@@ -187,17 +194,17 @@ describe('computeMarketAnchor', () => {
       { price_btc: 0.4561, limit_units: 0.0004, rigs_count: 99 },
       { price_btc: 0.4562, limit_units: 0.00006, rigs_count: 53 },
     ];
-    const a = computeMarketAnchor(competitors, 14, 1, 0.0001, 0.45617);
+    const a = computeMarketAnchor(competitors, 14, 1);
     expect(a.anchor_price_btc).toBe(0.4556);
-    expect(a.filled_prices[1]).toBe(0.4557); // not clamped to the 0.45617 cap
+    expect(a.filled_prices).toEqual([0.4556]);
   });
 
-  it('skips a lone miner straggler and anchors the next tier on the solid block', () => {
+  it('skips a lone miner straggler and anchors the next tier on the contiguous top block', () => {
     // Operator's live book (2026-07-06): marginal 0.4545 (purple, 61k miners). Above it
-    // sits 0.4554 - a LONE miner tier (79 miners) isolated by wide 0-miner gaps on both
-    // sides - then a solid block 0.4565/0.4566/0.4567. Some rows carry speed but 0
-    // miners (0.4562: not filled). The next filled tier must skip the lone 0.4554
-    // straggler and anchor on 0.4565 (the start of the solid block).
+    // sits 0.4554 - a lone miner tier under a zero-miner row - then the block
+    // 0.4565/0.4566/0.4567. Strict rule: the contiguous miner-bearing top is
+    // 0.4567 down to 0.4565 (the 0.4562 zero-miner row ends it), so the next
+    // tier is 0.4565 - the 0.4554 island below the wall is not the block.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4545, limit_units: 0.0052, rigs_count: 61103 }, // marginal (purple)
       { price_btc: 0.4554, limit_units: 0.00003, rigs_count: 79, accepted_speed_units: 0.0018 }, // lone straggler
@@ -206,9 +213,9 @@ describe('computeMarketAnchor', () => {
       { price_btc: 0.4566, limit_units: 0.0001, rigs_count: 451 },
       { price_btc: 0.4567, limit_units: 0.0055, rigs_count: 10451 },
     ];
-    const a = computeMarketAnchor(competitors, 14, 1, 0.0001, 0.4569);
+    const a = computeMarketAnchor(competitors, 14, 1);
     expect(a.anchor_price_btc).toBe(0.4545);
-    expect(a.filled_prices[1]).toBe(0.4565); // 0.4554 lone straggler skipped
+    expect(a.filled_prices[1]).toBe(0.4565); // 0.4554 island below the wall skipped
   });
 
   it('keeps a miner tier that starts a block even with a small gap above the marginal', () => {
@@ -223,118 +230,156 @@ describe('computeMarketAnchor', () => {
       { price_btc: 0.457, limit_units: 0.00002, rigs_count: 24 },
       { price_btc: 0.4571, limit_units: 0.0046, rigs_count: 6545 },
     ];
-    const a = computeMarketAnchor(competitors, 14, 1, 0.0001, 0.4569);
+    const a = computeMarketAnchor(competitors, 14, 1);
     expect(a.anchor_price_btc).toBe(0.4545);
-    expect(a.filled_prices[1]).toBe(0.4568); // solid block start, not the 0-miner rows
+    expect(a.filled_prices[1]).toBe(0.4568); // bottom of the contiguous top, not the 0-miner rows
   });
 
-  it('de-dupes the marginal; the next tier is the next real price (empty levels carry no order)', () => {
-    // The marginal 0.4533 is shared by many orders; nothing rests between it and the
-    // block at 0.4553. The next filled tier is 0.4553 (a de-dupe of the marginal),
-    // not a duplicate 0.4533.
+  it('a fully miner-bearing book (dup marginal rows included) has no next tier', () => {
+    // Every row carries miners, so the contiguous top run reaches the marginal
+    // (0.4533, shared by two rows - the de-dupe must not fabricate a tier).
+    // Market clears at the marginal: next tier null, ladder = [marginal].
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
       { price_btc: 0.4533, limit_units: 5, rigs_count: 22831 }, // dup marginal
       { price_btc: 0.4553, limit_units: 5, rigs_count: 5868 },
       { price_btc: 0.4555, limit_units: 5, rigs_count: 14810 },
     ];
-    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001);
+    const a = computeMarketAnchor(competitors, 17.7, 1);
     expect(a.anchor_price_btc).toBe(0.4533);
-    expect(a.filled_prices).toEqual([0.4533, 0.4553, 0.4555]);
+    expect(a.filled_prices).toEqual([0.4533]);
   });
 
-  it('keeps a real straggler right above the marginal as the next tier (no gap-jump)', () => {
-    // 0.4535 rests only 8 miners, close above the marginal 0.4533, with a wide empty
-    // gap up to the block 0.4553. It is a REAL filled tier, so it IS the literal next
-    // filled tier - not skipped as "the marginal's cluster". (Reverses the old gap-jump.)
-    const competitors: CompetingOrder[] = [
-      { price_btc: 0.4533, limit_units: 5, rigs_count: 60000 },
-      { price_btc: 0.4535, limit_units: 5, rigs_count: 8 },
-      { price_btc: 0.4553, limit_units: 5, rigs_count: 3632 },
-    ];
-    const a = computeMarketAnchor(competitors, 17.4, 1, 0.0001);
-    expect(a.filled_prices).toEqual([0.4533, 0.4535, 0.4553]);
-  });
-
-  it('falls back to the next distinct price on a contiguous book (no wide gap)', () => {
-    const competitors: CompetingOrder[] = [
-      { price_btc: 0.45, limit_units: 5, rigs_count: 5000 },
-      { price_btc: 0.4501, limit_units: 5, rigs_count: 3000 }, // adjacent, 0 empty levels
-      { price_btc: 0.4502, limit_units: 5, rigs_count: 2000 },
-    ];
-    const a = computeMarketAnchor(competitors, 10, 1, 0.0001);
-    expect(a.filled_prices).toEqual([0.45, 0.4501, 0.4502]);
-  });
-
-  it('without a price step, de-dupes only (no gap jumping)', () => {
-    const competitors: CompetingOrder[] = [
-      { price_btc: 0.4533, limit_units: 5, rigs_count: 60000 },
-      { price_btc: 0.4533, limit_units: 5, rigs_count: 8 }, // dup
-      { price_btc: 0.4553, limit_units: 5, rigs_count: 3632 },
-    ];
-    const a = computeMarketAnchor(competitors, 17.4, 1); // no step
-    expect(a.filled_prices).toEqual([0.4533, 0.4553]);
-  });
-
-  it('reads the literal ladder even above the cap (no clamp, no gap-jump)', () => {
-    // A contiguous low cluster (0.4533-0.4535), then real tiers at 0.46 and 0.498,
-    // with the cap at 0.4554. We no longer clamp tiers onto the cap or gap-jump: the
-    // ladder is the literal set of real tiers above the marginal, so 0.4534 is the
-    // next filled tier. (The bid is capped separately in decide(); this is a faithful
-    // read of the book.)
+  it('reads the top block faithfully however far above any cap it sits (no clamp)', () => {
+    // Marginal cluster low, a zero-miner row at 0.454, then the clearing block
+    // at 0.46/0.498. The tier is the block bottom (0.46) as-is - never clamped
+    // to a cap (the bid is capped separately in decide()).
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 }, // marginal
-      { price_btc: 0.4534, limit_units: 5, rigs_count: 5000 },
-      { price_btc: 0.4535, limit_units: 5, rigs_count: 4000 },
+      { price_btc: 0.454, limit_units: 5, rigs_count: 0 }, // zero-miner wall
       { price_btc: 0.46, limit_units: 5, rigs_count: 3000 },
       { price_btc: 0.498, limit_units: 5, rigs_count: 2000 },
     ];
-    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001, 0.4554);
+    const a = computeMarketAnchor(competitors, 17.7, 1);
     expect(a.anchor_price_btc).toBe(0.4533);
-    expect(a.filled_prices).toEqual([0.4533, 0.4534, 0.4535, 0.46, 0.498]);
+    expect(a.filled_prices).toEqual([0.4533, 0.46, 0.498]);
   });
 
   it('keeps the real next tier when the whole book is above the cap (no blank tier)', () => {
-    // Live regression: the entire filled book is priced above our break-even cap
-    // (marginal 0.4580 > cap 0.4559). The cap-clamp must NOT drop every tier and
-    // blank filled_prices[1] - we still expose the real next filled tier so the
-    // dashboard shows where the market is. (The bid is capped separately.)
+    // Live regression: the entire filled book is priced above our break-even
+    // cap. The tier must still be populated so the dashboard shows where the
+    // market is - the bid is capped separately.
     const competitors: CompetingOrder[] = [
-      { price_btc: 0.458, limit_units: 5, rigs_count: 106 }, // marginal, above the cap
-      { price_btc: 0.46, limit_units: 5, rigs_count: 90013 }, // next block
+      { price_btc: 0.458, limit_units: 5, rigs_count: 106 }, // marginal
+      { price_btc: 0.4599, limit_units: 5, rigs_count: 0 }, // zero-miner row below the block
+      { price_btc: 0.46, limit_units: 5, rigs_count: 90013 }, // block
       { price_btc: 0.4602, limit_units: 5, rigs_count: 5695 },
     ];
-    const a = computeMarketAnchor(competitors, 18.3, 1, 0.0001, 0.4559);
+    const a = computeMarketAnchor(competitors, 18.3, 1);
     expect(a.anchor_price_btc).toBe(0.458);
-    // next tier is populated (0.46), not blanked by the clamp
     expect(a.filled_prices).toEqual([0.458, 0.46, 0.4602]);
   });
 
-  it('anchors the next tier on the solid block above the cap (no clamp)', () => {
-    // Whole filled book above the cap (marginal 0.4561 > cap 0.4559). Phantom 0-miner
-    // slots hug the marginal, then a solid miner block 0.4566/0.4567. The next tier is
-    // the block start 0.4566, exposed as-is (no cap-clamp); the bid is capped in decide().
+  it('anchors the next tier on the contiguous block above phantom 0-miner slots', () => {
+    // Phantom 0-miner slots hug the marginal, then a miner block 0.4566/0.4567.
+    // The contiguous top run is {0.4567, 0.4566}; the tier is the block bottom.
     const competitors: CompetingOrder[] = [
-      { price_btc: 0.4561, limit_units: 0.0002, rigs_count: 10563 }, // marginal (above cap)
+      { price_btc: 0.4561, limit_units: 0.0002, rigs_count: 10563 }, // marginal
       { price_btc: 0.4562, limit_units: 0, rigs_count: 0 }, // phantom
       { price_btc: 0.4563, limit_units: 0, rigs_count: 0 },
-      { price_btc: 0.4566, limit_units: 0.0004, rigs_count: 606 }, // block start
+      { price_btc: 0.4566, limit_units: 0.0004, rigs_count: 606 }, // block bottom
       { price_btc: 0.4567, limit_units: 0.0004, rigs_count: 720 },
     ];
-    const a = computeMarketAnchor(competitors, 18, 1, 0.0001, 0.4559);
+    const a = computeMarketAnchor(competitors, 18, 1);
     expect(a.anchor_price_btc).toBe(0.4561);
-    expect(a.filled_prices[1]).toBe(0.4566); // solid block start, not clamped to the cap
+    expect(a.filled_prices[1]).toBe(0.4566);
   });
 
-  it('reads every real tier above the marginal with no cap-clamp', () => {
+  // ---- Strict contiguous-top-of-book rule: the operator's 2026-07-13 live
+  // book. Miner fills exist at 0.4788 (marginal), 0.4791 (an island under a
+  // wall of zero-miner rows) and 0.4808 (another island), but the block the
+  // market actually clears into is the contiguous run 0.4850..0.4820. The old
+  // gap heuristic tracked the 0.4791 island; the next tier must be 0.4820.
+  const operatorBook = (): CompetingOrder[] => [
+    { price_btc: 0.485, limit_units: 5, rigs_count: 49 },
+    { price_btc: 0.4846, limit_units: 5, rigs_count: 105 },
+    { price_btc: 0.4842, limit_units: 5, rigs_count: 4235 },
+    { price_btc: 0.4838, limit_units: 5, rigs_count: 1135 },
+    { price_btc: 0.4836, limit_units: 5, rigs_count: 105 },
+    { price_btc: 0.4831, limit_units: 5, rigs_count: 70 },
+    { price_btc: 0.4828, limit_units: 5, rigs_count: 80 },
+    { price_btc: 0.4827, limit_units: 5, rigs_count: 63 },
+    { price_btc: 0.4822, limit_units: 5, rigs_count: 61 },
+    { price_btc: 0.4821, limit_units: 5, rigs_count: 2574 },
+    { price_btc: 0.482, limit_units: 5, rigs_count: 46648 },
+    { price_btc: 0.4813, limit_units: 5, rigs_count: 0 }, // zero-miner wall starts
+    { price_btc: 0.4808, limit_units: 5, rigs_count: 2 }, // island
+    { price_btc: 0.4801, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4797, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4795, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4792, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4791, limit_units: 5, rigs_count: 3785 }, // island (the old tier)
+    { price_btc: 0.479, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4788, limit_units: 5, rigs_count: 7835 }, // marginal (purple)
+    { price_btc: 0.4787, limit_units: 5, rigs_count: 0 },
+    { price_btc: 0.4785, limit_units: 5, rigs_count: 0 },
+  ];
+
+  it("operator's live book: next tier = bottom of the contiguously filled top (0.4820), not the 0.4791 island", () => {
+    const a = computeMarketAnchor(operatorBook(), 20, 1);
+    expect(a.anchor_price_btc).toBe(0.4788);
+    expect(a.filled_prices[1]).toBe(0.482);
+  });
+
+  it('zero-miner noise priced ABOVE the highest miner-bearing row is ignored', () => {
+    // Price priority makes a genuinely-unfilled order above a filled one
+    // impossible - a 0.4900:0 row on top is dead noise, not a run-breaker.
+    const a = computeMarketAnchor(
+      [{ price_btc: 0.49, limit_units: 5, rigs_count: 0 }, ...operatorBook()],
+      20,
+      1,
+    );
+    expect(a.anchor_price_btc).toBe(0.4788);
+    expect(a.filled_prices[1]).toBe(0.482);
+  });
+
+  it('a zero-miner row INSIDE the block climbs the tier to the run above it (strict)', () => {
+    // Documented v0.6.38 trade-off: the API under-reports miners on genuinely
+    // filled rows, so a 0.4830:0 row inside the block ends the run at 0.4831 -
+    // the cap bounds the worst case.
+    const a = computeMarketAnchor(
+      [{ price_btc: 0.483, limit_units: 5, rigs_count: 0 }, ...operatorBook()],
+      20,
+      1,
+    );
+    expect(a.anchor_price_btc).toBe(0.4788);
+    expect(a.filled_prices[1]).toBe(0.4831);
+  });
+
+  it('no contiguous tier above the marginal -> null (ladder = [marginal])', () => {
+    // The highest miner-bearing row IS the marginal (everything above it is
+    // zero-miner): the run bottoms out at the marginal, so there is no next
+    // tier to anchor above it.
     const competitors: CompetingOrder[] = [
-      { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
-      { price_btc: 0.4553, limit_units: 5, rigs_count: 5868 },
-      { price_btc: 0.4555, limit_units: 5, rigs_count: 14810 }, // above cap, but NOT clamped
+      { price_btc: 0.48, limit_units: 5, rigs_count: 0 },
+      { price_btc: 0.479, limit_units: 5, rigs_count: 0 },
+      { price_btc: 0.4788, limit_units: 5, rigs_count: 7835 }, // marginal & highest fill
     ];
-    const a = computeMarketAnchor(competitors, 17.7, 1, 0.0001, 0.4554);
-    // no clamp: both 0.4553 and 0.4555 appear as-is even though 0.4555 > cap 0.4554
-    expect(a.filled_prices).toEqual([0.4533, 0.4553, 0.4555]);
+    const a = computeMarketAnchor(competitors, 20, 1);
+    expect(a.anchor_price_btc).toBe(0.4788);
+    expect(a.filled_prices).toEqual([0.4788]);
+  });
+
+  it('row-level strictness: a zero-miner row sharing a price with a miner-bearing row taints the level', () => {
+    // 0.4842 has both a miner-bearing and a zero-miner ROW: the level is not
+    // provably consuming, so the run ends above it - the tier is 0.4846.
+    const a = computeMarketAnchor(
+      [{ price_btc: 0.4842, limit_units: 5, rigs_count: 0 }, ...operatorBook()],
+      20,
+      1,
+    );
+    expect(a.anchor_price_btc).toBe(0.4788);
+    expect(a.filled_prices[1]).toBe(0.4846);
   });
 
   it('computes the median and speed-weighted average of the filled orders', () => {
