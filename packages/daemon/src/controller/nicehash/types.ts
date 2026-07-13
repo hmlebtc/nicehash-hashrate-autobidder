@@ -93,8 +93,11 @@ export interface OwnedOrderSnapshot {
   /**
    * Epoch ms when the order most recently became (and has since stayed)
    * under-filled - delivered below the fill threshold - or null when it is
-   * currently filled. Reset whenever the bidder walks the price up, so each new
-   * price gets a fresh grace window. Feeds the walk-up grace period
+   * currently filled. Reset when the bidder makes a plain floor-tracking raise
+   * (each new price gets a fresh grace window) but NOT on the escalation
+   * ladder's own raises - episode-based grace: the clock marks the start of the
+   * under-filled episode and re-arms when fills drop again. Feeds the walk-up
+   * grace period
    * ({@link NiceHashControllerConfig.walk_up_grace_seconds}): the bidder waits
    * this long under-filled before climbing. Tracked across ticks by the
    * controller (in memory), populated in `observe()`.
@@ -183,8 +186,9 @@ export interface NiceHashControllerConfig {
   /**
    * Grace period (seconds) the order must be continuously under-filled before the
    * bidder walks the price up. Gives a freshly placed or just-repriced order time
-   * to attract miners before escalating, and paces walk-ups (the timer resets on
-   * each upward move). 0 disables the grace (walk up as soon as under-filled).
+   * to attract miners before escalating, and paces floor-tracking walk-ups (the
+   * timer resets on each such raise; the escalation ladder's raises don't reset
+   * it - episode-based). 0 disables the grace (walk up as soon as under-filled).
    * Only affects walk-ups (walk_up_enabled); pure floor-tracking ignores it.
    * Default 0.
    */
@@ -193,16 +197,17 @@ export interface NiceHashControllerConfig {
    * Escalation ladder step (BTC/unit/day). When the order stays under-filled
    * at the normal floor (anchor + overpay) past the walk-up grace, the bid
    * escalates ABOVE the floor by this much per escalation interval, bounded by
-   * the effective cap. The first step fast-starts toward the book's average
-   * paying price when available. After sustained fills the offset decays one
-   * probe step per NiceHash decrease-cooldown window (never snapping back to
-   * the floor). Only active with walk_up_enabled. Default 0.0002.
+   * the effective cap - a pure ladder, one step at a time (no market-hint
+   * jump). After sustained fills the offset decays one probe step per NiceHash
+   * decrease-cooldown window (never snapping back to the floor). Only active
+   * with walk_up_enabled. Default 0.0002.
    */
   readonly escalation_step_btc?: number;
   /**
    * Seconds between UPWARD escalation-ladder moves while under-filled. The
-   * walk-up grace gates only the FIRST step (entry into escalation); later
-   * steps pace on this interval alone. Decay while filled paces on max(this,
+   * walk-up grace gates entry into escalation and re-entry after a filled
+   * spell drops back under-filled; steps within a continuous under-filled
+   * episode pace on this interval alone. Decay while filled paces on max(this,
    * NiceHash decrease cooldown) - one probe step per executable walk-down
    * window, so the ladder never drains faster than the gate lets the price
    * follow. Default 60.

@@ -238,10 +238,12 @@ export function decide(state: NiceHashState): readonly Proposal[] {
 
   // Walk-up grace: only chase the price up once the order has been continuously
   // under-filled for at least this long, so a freshly placed or just-repriced
-  // order gets time to attract miners before escalating (and walk-ups are paced -
-  // the controller resets the timer on each upward move). 0 disables it. Tracked
-  // across ticks via `under_filled_since`. Only gates real fill-chasing walk-ups;
-  // pure floor-tracking (walk-up off) still climbs to the floor immediately.
+  // order gets time to attract miners before escalating. Plain floor-tracking
+  // walk-ups are paced by it too (the controller resets the timer on each such
+  // raise); the escalation ladder's own raises do NOT reset it - see the
+  // episode-based grace note below. 0 disables it. Tracked across ticks via
+  // `under_filled_since`. Only gates real fill-chasing walk-ups; pure
+  // floor-tracking (walk-up off) still climbs to the floor immediately.
   const graceMs = Math.max(0, (config.walk_up_grace_seconds ?? 0) * 1000);
   const gracePassed =
     graceMs === 0 ||
@@ -271,22 +273,18 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // one step below its own ceiling. (We can't be over-filled in this state anyway:
   // a bid <= cap < marginal wins nothing, so forcing the climb never overpays.)
   //
-  // An ENGAGED escalation ladder (offset > 0) also bypasses the grace: the grace
-  // gates the entry into escalation, but every executed raise resets it, so
-  // grace-gating the climbs too would throttle the ladder to max(grace,
-  // interval) per step instead of the operator's chosen escalation interval.
+  // The grace is EPISODE-based for the escalation ladder: `under_filled_since`
+  // marks the start of the current under-filled episode (the controller does
+  // not reset it on the ladder's own raises), so within a continuous episode
+  // `gracePassed` stays true and the ladder climbs on its interval alone; when
+  // a filled spell drops back under-filled the clock re-stamps, and this same
+  // grace gates the RE-entry before the ladder resumes climbing.
   const marketAboveCap = marginal > effectiveCap;
-  const wantWalkUp =
-    marketAboveCap ||
-    (walkUpEnabled ? underFilled && (gracePassed || escalationOffset > 0) : true);
+  const wantWalkUp = marketAboveCap || (walkUpEnabled ? underFilled && gracePassed : true);
 
   // Reason suffix for tracked-price edits. When escalated, say so - the plain
   // "(anchor + overpay)" would misdescribe a target sitting above the floor.
-  const avgPaying = state.market.avg_price_btc ?? null;
-  const escalationSuffix =
-    avgPaying !== null && avgPaying > effectiveCap && trackTarget >= effectiveCap - 1e-9
-      ? ` (escalating toward paying price ${fmtPrice(avgPaying)}, capped at ${capLabel} ${fmtPrice(effectiveCap)})`
-      : ` (escalating +${escalationOffset.toFixed(8)} above floor ${fmtPrice(desired)} · headroom to cap +${(effectiveCap - trackTarget).toFixed(8)})`;
+  const escalationSuffix = ` (escalating +${escalationOffset.toFixed(8)} above floor ${fmtPrice(desired)} · headroom to cap +${(effectiveCap - trackTarget).toFixed(8)})`;
   const trackSuffix = escalationOffset > 0 ? escalationSuffix : priceSuffix;
 
   const cur = primary.price_btc;
@@ -300,9 +298,17 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // hashprice falls and the dynamic cap follows, but the bid doesn't).
   const overCap = cur - effectiveCap > 1e-9;
 
+  // FP guard on the reprice deadband: two adjacent 4-dp grid prices can differ
+  // by a hair UNDER 1e-4 in binary floating point (e.g. 0.4825 - 0.4824 =
+  // 0.0000999…), so an exact one-tick move would fail a bare `>= minRepriceStep`
+  // and park the bid one tick short - the escalation ladder's final rung to the
+  // cap stalls at cap - 0.0001 forever. The epsilon is far below any real
+  // sub-tick drift and far above double ulp noise.
+  const stepEps = 1e-9;
+
   let editTo = cur;
   let mode = '';
-  if (cur - trackTarget >= minRepriceStep || overCap) {
+  if (cur - trackTarget >= minRepriceStep - stepEps || overCap) {
     // Overpaying above the (possibly escalated) target, or above the cap: walk
     // down toward it (filled or not). `walkDownTo` clamps to `trackTarget`,
     // which is itself <= effectiveCap, so this always steps the bid back
@@ -310,12 +316,12 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     // probing down - never a snap back to the floor.
     editTo = walkDownTo;
     mode =
-      overCap && cur - trackTarget < minRepriceStep
+      overCap && cur - trackTarget < minRepriceStep - stepEps
         ? 'walk down under cap'
         : escalationOffset > 0
           ? 'walk down (de-escalating)'
           : 'walk down to floor';
-  } else if (trackTarget - cur >= minRepriceStep && wantWalkUp) {
+  } else if (trackTarget - cur >= minRepriceStep - stepEps && wantWalkUp) {
     // Below the target: climb to it when under-filled and the grace has elapsed
     // (or always, if walk-up is off). When filled we skip this - hold the cheaper
     // bid, don't chase up.

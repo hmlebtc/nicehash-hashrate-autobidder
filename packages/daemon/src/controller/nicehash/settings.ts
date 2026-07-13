@@ -66,15 +66,17 @@ export interface NiceHashSettings {
   /**
    * Seconds the order must stay under-filled before the bidder walks the price up.
    * Gives a fresh/just-repriced order time to attract miners before escalating,
-   * and paces walk-ups. 0 = climb as soon as under-filled. Default 180.
+   * and paces floor-tracking walk-ups. For the escalation ladder it is
+   * episode-based (gates entry/re-entry, not steps within an episode).
+   * 0 = climb as soon as under-filled. Default 180.
    */
   readonly walkUpGraceSeconds: number;
   /**
    * Escalation ladder step (BTC/EH/day). While the order stays under-filled at
    * the normal floor (anchor + overpay) past the walk-up grace, the bid
    * escalates above the floor by this much per escalation interval, bounded by
-   * the dynamic cap (first step fast-starts toward the book's average paying
-   * price). After sustained fills it decays one probe step per NiceHash
+   * the dynamic cap - a pure ladder, one step at a time (no market-hint jump).
+   * After sustained fills it decays one probe step per NiceHash
    * decrease-cooldown window (~10 min). Only active with walkUpEnabled.
    * Clamped to >= 0.0001 (the price grid). Default 0.0002.
    */

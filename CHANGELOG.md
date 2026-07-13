@@ -2,6 +2,25 @@
 
 ## 2026-07-13
 
+### `[Fix]` Escalation ladder starts with a single step (no fast-start jump)
+
+Per operator preference, the first escalation move is now exactly one
+escalation step above the floor - the ladder no longer jumps toward the
+book's average paying price on entry. Every step, including the first,
+paces on the escalation interval, so the bid never pays more than the
+ladder has proven necessary. Cap bound, decay, and all other escalation
+behavior unchanged.
+
+### `[Fix]` Walk-up grace is episode-based for the escalation ladder
+
+The walk-up grace now gates entry into escalation AND re-entry after a
+filled spell drops back underfilled - each new underfilled episode waits
+out the full grace before the ladder (re)starts climbing. Within a
+continuous episode the grace never paces the steps: the ladder's own
+raises no longer reset the grace clock, so climbs pace purely on the
+escalation interval. Plain floor-tracking walk-ups keep the existing
+reset-per-raise pacing.
+
 ### `[Feature]` Underfilled orders escalate toward the dynamic cap
 
 When the bid sits at its normal target (anchor + overpay) but the order stays

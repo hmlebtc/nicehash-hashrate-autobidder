@@ -51,15 +51,18 @@ export interface EscalationEntry {
  * One escalation-ladder update for a single order - the pure rule behind the
  * escalate-toward-the-cap behavior:
  *
- *   - Under-filled with room left under the cap:
- *       - the FIRST step (offset 0) waits for the walk-up grace, then
- *         fast-starts to clamp(max(step, avgPaying − floor), 0, room) - jump
- *         toward the book's average paying price. The grace gates only this
- *         ENTRY: give the market the full grace to fill at the normal floor
- *         price before paying more.
- *       - later steps add `stepBtc` once per `intervalMs`, paced by the
- *         interval ALONE - each executed raise resets the grace, so requiring
- *         it per step would throttle the ladder to max(grace, interval).
+ *   - Under-filled with room left under the cap, once the walk-up grace has
+ *     passed:
+ *       - the FIRST step (offset 0) starts the ladder at exactly ONE step
+ *         above the floor (min(step, room)). No market-hint jump - the ladder
+ *         never pays more than it has proven necessary, one step at a time.
+ *       - later steps add `stepBtc` once per `intervalMs`.
+ *     The grace is EPISODE-based: it gates entry into escalation and re-entry
+ *     after a filled spell drops back under-filled (`under_filled_since`
+ *     re-stamps on that transition), but never paces steps within a
+ *     continuous under-filled episode - the controller does not reset the
+ *     grace clock on the ladder's own raises, so mid-episode `gracePassed`
+ *     stays true and the interval alone paces the climb.
  *   - Filled (delivery at/above the fill threshold): decay one step per
  *     `decayIntervalMs` = max(interval, NiceHash decrease cooldown), probing
  *     back down toward the cheapest price that still fills - never snapping to
@@ -91,8 +94,6 @@ export function nextEscalation(args: {
   readonly decayIntervalMs: number;
   /** Headroom above the floor: max(0, effectiveCap − (anchor + overpay)). */
   readonly room: number;
-  /** Book's average paying price minus the floor, or null when unavailable. */
-  readonly avgAboveFloor: number | null;
 }): EscalationEntry | null {
   const { prev, now, stepBtc, intervalMs, decayIntervalMs, room } = args;
   if (!args.walkUpEnabled) return null;
@@ -100,13 +101,14 @@ export function nextEscalation(args: {
   const lastStepAt = prev?.lastStepAt ?? 0;
 
   if (args.underFilled && offset < room) {
+    // Episode-based grace: gates entry AND re-entry after a filled spell (the
+    // under-filled clock re-stamps on the filled -> under-filled transition).
+    // Mid-episode it is vacuously true - ladder raises don't reset the clock.
+    if (!args.gracePassed) return prev ?? null;
     if (offset === 0) {
-      // Entry is grace-gated; once engaged, steps pace on the interval alone.
-      if (!args.gracePassed) return prev ?? null;
-      // Fast-start: jump toward the average paying price (at least one step),
-      // bounded by the room so the target never exceeds the cap.
-      const fast = Math.min(Math.max(stepBtc, args.avgAboveFloor ?? stepBtc), room);
-      return { offsetBtc: Math.max(0, fast), lastStepAt: now };
+      // Start the ladder at exactly one step above the floor, bounded by the
+      // room so the target never exceeds the cap.
+      return { offsetBtc: Math.min(stepBtc, room), lastStepAt: now };
     }
     if (now - lastStepAt >= intervalMs) {
       return { offsetBtc: offset + stepBtc, lastStepAt: now };
@@ -140,15 +142,16 @@ export interface NiceHashObserveDeps {
    * across ticks (in memory). observe() updates it from this tick's delivered
    * speed vs the fill threshold (set when an order goes under-filled, cleared when
    * it fills) and stamps each owned order's `under_filled_since`. The controller
-   * also resets an entry on a walk-up so each new price gets a fresh grace window.
-   * Drives the walk-up grace period in decide().
+   * also resets an entry on a plain floor-tracking walk-up (each new price gets a
+   * fresh grace window) - but not on the escalation ladder's own raises
+   * (episode-based grace). Drives the walk-up grace period in decide().
    */
   readonly underFilledSinceById?: Map<string, number>;
   /**
    * Mutable per-order escalation-ladder state, owned by the controller across
    * ticks (in memory, like `underFilledSinceById`). observe() advances it each
-   * tick via {@link nextEscalation} (fast-start / step up while under-filled
-   * past the grace, decay while filled) and stamps each owned order's
+   * tick via {@link nextEscalation} (step up while under-filled past the
+   * grace, decay while filled) and stamps each owned order's
    * `escalation_offset_btc`. Unlike the grace map, the controller does NOT
    * reset entries on a walk-up - the ladder must survive its own raises.
    */
@@ -319,7 +322,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   }
 
   // Escalation-ladder bookkeeping: advance each owned order's offset above the
-  // floor (fast-start / step up while under-filled, decay while filled) and
+  // floor (step up while under-filled, decay while filled) and
   // stamp it on the snapshot for decide(). Pruned alongside the grace map when
   // the orders read succeeded and an order is genuinely absent - NEVER on a
   // failed read (the order still sits at its escalated price on NiceHash, and
@@ -348,8 +351,6 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       const anchor = config.anchor_next_filled_tier && nextTier !== null ? nextTier : marginal;
       const floor = anchor + config.overpay_btc_per_unit_day;
       const room = Math.max(0, cap - floor);
-      const avg = market!.avg_price_btc;
-      const avgAboveFloor = avg != null && Number.isFinite(avg) ? avg - floor : null;
       const fillThreshold = (config.target_speed_units * (config.min_fill_pct ?? 100)) / 100;
       const graceMs = Math.max(0, (config.walk_up_grace_seconds ?? 0) * 1000);
       const stepBtc = Math.max(0.0001, config.escalation_step_btc ?? DEFAULT_ESCALATION_STEP_BTC);
@@ -377,7 +378,6 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
           intervalMs,
           decayIntervalMs,
           room,
-          avgAboveFloor,
         });
         if (next) escMap.set(o.order_id, next);
         else escMap.delete(o.order_id);

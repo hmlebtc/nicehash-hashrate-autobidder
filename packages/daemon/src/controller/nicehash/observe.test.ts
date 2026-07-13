@@ -325,9 +325,9 @@ describe('observe', () => {
 });
 
 describe('observe - escalation ladder', () => {
-  // The base BOOK has no filled competitor (no rigs / delivered speed), so the
-  // average paying price is unavailable and the fast-start falls back to one
-  // step. 'mine' delivers 0 (< target 4), i.e. under-filled every tick.
+  // The base BOOK has no filled competitor (no rigs / delivered speed).
+  // 'mine' delivers 0 (< target 4), i.e. under-filled every tick; the ladder
+  // starts at exactly one step and climbs one step per interval.
   const escConfig = () =>
     config({
       walk_up_enabled: true,
@@ -336,7 +336,7 @@ describe('observe - escalation ladder', () => {
       escalation_interval_seconds: 60,
     });
 
-  it('fast-starts the ladder while under-filled and stamps the offset on the snapshot', async () => {
+  it('starts the ladder one step up while under-filled and stamps the offset on the snapshot', async () => {
     const esc = new Map();
     const grace = new Map<string, number>();
     const s1 = await observe({
@@ -541,7 +541,7 @@ describe('observe - state maps survive a failed my-orders read', () => {
     // Tick N+2: the read recovers -> the ladder resumes from the retained
     // offset (stepping on the interval), the grace timestamp is the original,
     // and decide() proposes no DOWNWARD move - the escalated position holds.
-    // (Had the maps been wiped, the ladder would re-fast-start at one step ->
+    // (Had the maps been wiped, the ladder would restart at one step ->
     // target 0.01041 below the 0.0106 bid -> a walk-down surrendering the
     // position.)
     const recovered = service({
