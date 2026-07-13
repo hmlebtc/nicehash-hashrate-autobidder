@@ -2,6 +2,22 @@
 
 ## 2026-07-13
 
+### `[Feature]` Walk-downs take the full step
+
+Per operator rule: when stepping back down while filled at an escalated
+price, the bid now drops by the full NiceHash per-move decrease limit
+(price_down_step, ~0.002) each 10-minute window - not one escalation step -
+until it sits just above the next filled tier (the floor). If a full step
+overshoots the price miners accept, the fast re-climb recovers within a
+minute or two. Escalation climbing is unchanged.
+
+### `[Feature]` Export decision log and order history to CSV
+
+Both the Logs tab (decision + error log) and the History tab (order events)
+gain an Export CSV button. The export honors the on-screen filters, carries
+up to 10,000 rows for offline troubleshooting, and is Excel-safe (UTF-8 BOM,
+RFC 4180 escaping - reasons contain commas and quotes).
+
 ### `[Fix]` Decrease gate matches NiceHash's 10-min-since-any-price-change rule
 
 The walk-down throttle only counted the last DECREASE, but NiceHash rejects a

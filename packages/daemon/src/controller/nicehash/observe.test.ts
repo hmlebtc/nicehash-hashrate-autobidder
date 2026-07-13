@@ -383,6 +383,46 @@ describe('observe - escalation ladder', () => {
     );
   });
 
+  it('a full-step decay drops by price_down_step per window (operator max-step rule)', async () => {
+    // config price_down_step 0.002 > escalation step 0.0002 -> the down-move
+    // takes the full NiceHash per-move decrease limit: 0.0035 -> 0.0015.
+    const esc = new Map([['mine', { offsetBtc: 0.0035, lastStepAt: 1000 }]]);
+    const filledBook = {
+      stats: {
+        BTC: {
+          totalSpeed: '100',
+          displayMarketFactor: 'PH',
+          displayPriceFactor: 'EH',
+          orders: [
+            { id: 'mine', price: '0.0102', limit: '4', acceptedSpeed: '4', alive: true },
+            { id: 'rival', price: '0.0102', limit: '5', acceptedSpeed: '0', alive: true },
+          ],
+        },
+      },
+    };
+    const svc = service({
+      getOrderBook: vi.fn(async () => filledBook) as unknown as NiceHashService['getOrderBook'],
+    });
+    const s = await observe({
+      service: svc,
+      ...base,
+      config: config({
+        walk_up_enabled: true,
+        walk_up_grace_seconds: 0,
+        escalation_step_btc: 0.0002,
+        escalation_interval_seconds: 60,
+        price_down_step_btc: 0.002,
+      }),
+      underFilledSinceById: new Map(),
+      escalationByOrderId: esc,
+      now: () => 1000 + 600_000,
+    });
+    expect(s.owned_orders.find((o) => o.order_id === 'mine')?.escalation_offset_btc).toBeCloseTo(
+      0.0015,
+      10,
+    );
+  });
+
   it('decays the ladder one step per decrease-cooldown window once the order fills', async () => {
     const esc = new Map([['mine', { offsetBtc: 0.0006, lastStepAt: 1000 }]]);
     const filledBook = {

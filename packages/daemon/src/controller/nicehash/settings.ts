@@ -76,8 +76,9 @@ export interface NiceHashSettings {
    * the normal floor (anchor + overpay) past the walk-up grace, the bid
    * escalates above the floor by this much per escalation interval, bounded by
    * the dynamic cap - a pure ladder, one step at a time (no market-hint jump).
-   * After sustained fills it decays one probe step per NiceHash
-   * decrease-cooldown window (~10 min). Only active with walkUpEnabled.
+   * After sustained fills it steps down by the full NiceHash per-move decrease
+   * limit (price_down_step, ~0.002) per decrease-cooldown window (~10 min),
+   * until just above the next filled tier. Only active with walkUpEnabled.
    * Clamped to >= 0.0001 (the price grid). Default 0.0002.
    */
   readonly escalationStepBtc: number;
