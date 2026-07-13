@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { decide } from './decide.js';
+import { gate } from './gate.js';
+import { nextEscalation } from './observe.js';
 import type { NiceHashControllerConfig, NiceHashState, OwnedOrderSnapshot } from './types.js';
 
 function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControllerConfig {
@@ -638,5 +640,387 @@ describe('decide - anchor on the next filled tier', () => {
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
     expect(p.price_btc).toBeCloseTo(0.00051, 9); // marginal 0.0005 + overpay
+  });
+});
+
+describe('decide - escalation ladder toward the cap', () => {
+  // The 2026-07 live scenario: anchor 0.4787, overpay 0.0001 -> floor 0.4788,
+  // cap 0.4825, bid parked at the floor with ZERO delivery while the actually-
+  // paying orders sit at ~0.4977. The old logic held forever; the escalation
+  // ladder climbs toward the cap.
+  const NOW = 1700000000000;
+  const escConfig = (over: Partial<NiceHashControllerConfig> = {}) =>
+    config({
+      overpay_btc_per_unit_day: 0.0001,
+      max_price_btc_per_unit_day: 0.4825, // effective cap
+      walk_up_enabled: true,
+      min_fill_pct: 80,
+      walk_up_grace_seconds: 180,
+      escalation_step_btc: 0.0002,
+      escalation_interval_seconds: 60,
+      price_down_step_btc: 0.002,
+      ...over,
+    });
+  const escMarket = (over = {}) => ({
+    anchor_price_btc: 0.4787,
+    total_speed_units: 100,
+    thin: false,
+    filled_prices: [0.4787],
+    avg_price_btc: 0.4977,
+    ...over,
+  });
+  const escOrder = (over: Partial<OwnedOrderSnapshot> = {}) =>
+    ownedOrder({
+      price_btc: 0.4788,
+      accepted_speed_units: 0,
+      under_filled_since: NOW - 30 * 60_000, // grace long elapsed
+      ...over,
+    });
+  const escState = (over: Partial<NiceHashState> = {}) =>
+    state({
+      tick_at: NOW,
+      market: escMarket(),
+      config: escConfig(),
+      owned_orders: [escOrder()],
+      ...over,
+    });
+
+  it('screenshot scenario: first escalation fast-starts toward the paying price, clamped to the cap', () => {
+    // observe()-side ladder update: room = 0.4825 - 0.4788 = 0.0037; the avg
+    // paying price (0.4977) is above the cap, so the fast-start clamps to room.
+    const entry = nextEscalation({
+      prev: undefined,
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: true,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.4825 - 0.4788,
+      avgAboveFloor: 0.4977 - 0.4788,
+    });
+    expect(entry?.offsetBtc).toBeCloseTo(0.0037, 10);
+
+    const out = decide(
+      escState({ owned_orders: [escOrder({ escalation_offset_btc: entry!.offsetBtc })] }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4825, 9); // straight to the cap
+    expect(e.reason).toContain('escalating toward paying price');
+  });
+
+  it('normal book: fast-start lands on the average paying price, then steps by +step, clamping at the cap', () => {
+    // avg 0.4800 (below the cap): fast-start offset = 0.4800 - 0.4788 = 0.0012.
+    const first = nextEscalation({
+      prev: undefined,
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: true,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: 0.48 - 0.4788,
+    });
+    expect(first?.offsetBtc).toBeCloseTo(0.0012, 10);
+    const out1 = decide(
+      escState({
+        market: escMarket({ avg_price_btc: 0.48 }),
+        owned_orders: [escOrder({ escalation_offset_btc: first!.offsetBtc })],
+      }),
+    );
+    const e1 = out1.find((p) => p.kind === 'EDIT_PRICE');
+    if (e1?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e1.new_price_btc).toBeCloseTo(0.48, 9);
+    expect(e1.reason).toContain('walk up (escalating)');
+
+    // Next interval, still under-filled -> +0.0002.
+    const second = nextEscalation({
+      prev: first!,
+      now: NOW + 60_000,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: true,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: 0.48 - 0.4788,
+    });
+    expect(second?.offsetBtc).toBeCloseTo(0.0014, 10);
+    const out2 = decide(
+      escState({
+        market: escMarket({ avg_price_btc: 0.48 }),
+        owned_orders: [
+          escOrder({ price_btc: 0.48, escalation_offset_btc: second!.offsetBtc }),
+        ],
+      }),
+    );
+    const e2 = out2.find((p) => p.kind === 'EDIT_PRICE');
+    if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e2.new_price_btc).toBeCloseTo(0.4802, 9);
+
+    // A raw offset past the room clamps the target at the cap, never above.
+    const out3 = decide(
+      escState({ owned_orders: [escOrder({ escalation_offset_btc: 0.0050 })] }),
+    );
+    const e3 = out3.find((p) => p.kind === 'EDIT_PRICE');
+    if (e3?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e3.new_price_btc).toBeCloseTo(0.4825, 9);
+  });
+
+  it('fast-starts by exactly one step when the average paying price is unavailable', () => {
+    const entry = nextEscalation({
+      prev: undefined,
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: true,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: null,
+    });
+    expect(entry?.offsetBtc).toBeCloseTo(0.0002, 10);
+    const out = decide(
+      escState({
+        market: escMarket({ avg_price_btc: null }),
+        owned_orders: [escOrder({ escalation_offset_btc: entry!.offsetBtc })],
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4790, 9);
+  });
+
+  it('holds between intervals: the ladder does not move and the bid stays put', () => {
+    const prev = { offsetBtc: 0.0002, lastStepAt: NOW - 30_000 }; // 30s < 60s interval
+    const next = nextEscalation({
+      prev,
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: true,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: null,
+    });
+    expect(next).toBe(prev); // unchanged entry
+    // Bid already at the escalated target -> no proposal (hold).
+    const out = decide(
+      escState({
+        owned_orders: [escOrder({ price_btc: 0.479, escalation_offset_btc: next!.offsetBtc })],
+      }),
+    );
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('decays one step per decrease-cooldown window and walks the bid down (never outrunning the gate)', () => {
+    // Sustained fill with the escalation interval (60s) elapsed but the
+    // decrease cooldown (10 min) not: NO decay yet. Decaying every interval
+    // while walk-downs are cooldown-blocked would drain the offset to zero and
+    // land the released walk-down on the floor, re-losing the fill.
+    const early = { offsetBtc: 0.0012, lastStepAt: NOW - 60_000 };
+    expect(
+      nextEscalation({
+        prev: early,
+        now: NOW,
+        walkUpEnabled: true,
+        underFilled: false,
+        gracePassed: false,
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000, // max(interval, decrease cooldown)
+        room: 0.0037,
+        avgAboveFloor: null,
+      }),
+    ).toBe(early);
+
+    // Once a full cooldown window has passed: one probe step down.
+    const next = nextEscalation({
+      prev: { offsetBtc: 0.0012, lastStepAt: NOW - 600_000 },
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: false, // filled for a full cooldown window
+      gracePassed: false,
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: null,
+    });
+    expect(next?.offsetBtc).toBeCloseTo(0.001, 10);
+
+    const s = escState({
+      owned_orders: [
+        escOrder({
+          price_btc: 0.48,
+          accepted_speed_units: 10, // filled
+          under_filled_since: null,
+          escalation_offset_btc: next!.offsetBtc,
+        }),
+      ],
+    });
+    const out = decide(s);
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4798, 9); // one ladder step down, within price_down_step
+    expect(e.reason).toContain('de-escalating');
+
+    // The NiceHash decrease cooldown still gates the resulting walk-down.
+    const blocked = gate(out, {
+      ...s,
+      owned_orders: [
+        { ...s.owned_orders[0]!, last_price_decrease_at: NOW - 5 * 60_000 }, // 5min < 10min
+      ],
+    }, { priceDecreaseCooldownMs: 10 * 60_000 });
+    expect(blocked.find((g) => g.proposal.kind === 'EDIT_PRICE')?.allowed).toBe(false);
+  });
+
+  it('a rising anchor eats into the offset (room clamp): the target never exceeds the cap', () => {
+    // Escalated to raw offset 0.0030, then the anchor rises to 0.4820: floor
+    // 0.4821, room 0.0004 -> effective offset 0.0004, target = the cap 0.4825.
+    const out = decide(
+      escState({
+        market: escMarket({ anchor_price_btc: 0.482, filled_prices: [0.482] }),
+        owned_orders: [escOrder({ price_btc: 0.4818, escalation_offset_btc: 0.003 })],
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4825, 9);
+    expect(e.new_price_btc).toBeLessThanOrEqual(0.4825 + 1e-12);
+  });
+
+  it('a cap falling below the escalated bid triggers the existing over-cap walk-down (no fight)', () => {
+    const out = decide(
+      escState({
+        config: escConfig({ max_price_btc_per_unit_day: 0.4805 }), // cap fell
+        owned_orders: [escOrder({ price_btc: 0.4825, escalation_offset_btc: 0.0037 })],
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4805, 9); // down to the new cap (within one down-step)
+    expect(e.new_price_btc).toBeLessThanOrEqual(0.4805 + 1e-12);
+  });
+
+  it('ignores any stamped offset when walk-up is disabled (and the ladder itself stays empty)', () => {
+    // The ladder never forms with walk-up off...
+    expect(
+      nextEscalation({
+        prev: { offsetBtc: 0.001, lastStepAt: NOW - 120_000 },
+        now: NOW,
+        walkUpEnabled: false,
+        underFilled: true,
+        gracePassed: true,
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000,
+        room: 0.0037,
+        avgAboveFloor: null,
+      }),
+    ).toBeNull();
+    // ...and decide() ignores a stale stamped offset outright.
+    const out = decide(
+      escState({
+        config: escConfig({ walk_up_enabled: false }),
+        owned_orders: [escOrder({ escalation_offset_btc: 0.0037 })],
+      }),
+    );
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined(); // already at floor 0.4788
+  });
+
+  it('marketAboveCap: room is 0, so escalation changes nothing vs today (regression guard)', () => {
+    // Whole market above the cap (marginal 0.4900 > cap 0.4825): the existing
+    // forcing walks the bid to the cap; a stamped offset must not alter that.
+    const mk = escMarket({ anchor_price_btc: 0.49, filled_prices: [0.49], avg_price_btc: 0.4977 });
+    const control = decide(
+      escState({ market: mk, owned_orders: [escOrder({ price_btc: 0.4788 })] }),
+    );
+    const escalated = decide(
+      escState({
+        market: mk,
+        owned_orders: [escOrder({ price_btc: 0.4788, escalation_offset_btc: 0.0099 })],
+      }),
+    );
+    const ce = control.find((p) => p.kind === 'EDIT_PRICE');
+    const ee = escalated.find((p) => p.kind === 'EDIT_PRICE');
+    if (ce?.kind !== 'EDIT_PRICE' || ee?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(ee.new_price_btc).toBeCloseTo(ce.new_price_btc, 12);
+    expect(ee.new_price_btc).toBeCloseTo(0.4825, 9);
+  });
+
+  it('grace gates only the entry: an engaged ladder steps and climbs on the interval alone', () => {
+    // The FIRST escalation waits for the walk-up grace (give the market the
+    // full grace to fill at the normal floor price before paying more)...
+    expect(
+      nextEscalation({
+        prev: undefined,
+        now: NOW,
+        walkUpEnabled: true,
+        underFilled: true,
+        gracePassed: false,
+        stepBtc: 0.0002,
+        intervalMs: 60_000,
+        decayIntervalMs: 600_000,
+        room: 0.0037,
+        avgAboveFloor: null,
+      }),
+    ).toBeNull();
+
+    // ...but an ENGAGED ladder paces on the interval alone. Each executed raise
+    // resets the grace (controller behavior), so requiring it per step would
+    // throttle the ladder to max(grace, interval) instead of the configured
+    // escalation interval.
+    const prev = { offsetBtc: 0.0012, lastStepAt: NOW - 60_000 };
+    const stepped = nextEscalation({
+      prev,
+      now: NOW,
+      walkUpEnabled: true,
+      underFilled: true,
+      gracePassed: false, // grace reset by the previous raise, not re-elapsed
+      stepBtc: 0.0002,
+      intervalMs: 60_000,
+      decayIntervalMs: 600_000,
+      room: 0.0037,
+      avgAboveFloor: null,
+    });
+    expect(stepped?.offsetBtc).toBeCloseTo(0.0014, 10);
+
+    // And decide() climbs to the escalated target during the fresh grace
+    // window - the grace bypass applies to the walk-up too, or the bid would
+    // lag the ladder by a full grace period per step.
+    const out = decide(
+      escState({
+        owned_orders: [
+          escOrder({
+            price_btc: 0.48,
+            escalation_offset_btc: stepped!.offsetBtc,
+            under_filled_since: NOW - 1000, // fresh grace window (unelapsed)
+          }),
+        ],
+      }),
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4788 + 0.0014, 9);
+
+    // Without an engaged ladder, the same fresh grace still holds the climb
+    // (the entry gate is unchanged).
+    const held = decide(
+      escState({
+        owned_orders: [
+          escOrder({ price_btc: 0.478, escalation_offset_btc: 0, under_filled_since: NOW - 1000 }),
+        ],
+      }),
+    );
+    expect(held.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
   });
 });

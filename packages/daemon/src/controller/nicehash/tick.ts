@@ -14,12 +14,18 @@
 import { decide } from './decide.js';
 import { executeProposal, type ExecutionResult, type NiceHashExecuteContext } from './execute.js';
 import { gate, type NiceHashGateOutcome } from './gate.js';
-import { observe, type NiceHashObserveDeps } from './observe.js';
+import {
+  DEFAULT_PRICE_DECREASE_COOLDOWN_MS,
+  observe,
+  type NiceHashObserveDeps,
+} from './observe.js';
 import type { NiceHashState, Proposal } from './types.js';
 import type { NiceHashClient } from '@hashrate-autopilot/nicehash-client';
 
-/** Default NiceHash price-decrease cooldown: 10 minutes. */
-export const DEFAULT_PRICE_DECREASE_COOLDOWN_MS = 10 * 60_000;
+// Re-exported for existing importers; the constant lives in observe.ts so the
+// escalation ladder's decay pacing shares the exact value the gate throttles
+// decreases with.
+export { DEFAULT_PRICE_DECREASE_COOLDOWN_MS };
 
 export type TickOutcome =
   | ExecutionResult
@@ -36,7 +42,9 @@ export interface NiceHashTickDeps extends Omit<NiceHashObserveDeps, 'now'> {
   readonly client: NiceHashClient;
   /** Order type to create, e.g. "STANDARD". */
   readonly orderType?: string;
-  readonly priceDecreaseCooldownMs?: number;
+  // `priceDecreaseCooldownMs` is inherited from NiceHashObserveDeps: observe()
+  // paces the escalation ladder's decay on it, and gate() below throttles
+  // decreases with it - both resolve the same default, so they never diverge.
   readonly now?: () => number;
   /** Hook to persist side effects (created order id, price-decrease ts). */
   readonly onExecuted?: (outcome: TickOutcome) => void | Promise<void>;

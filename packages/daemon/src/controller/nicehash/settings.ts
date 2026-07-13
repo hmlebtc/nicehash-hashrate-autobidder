@@ -69,6 +69,22 @@ export interface NiceHashSettings {
    * and paces walk-ups. 0 = climb as soon as under-filled. Default 180.
    */
   readonly walkUpGraceSeconds: number;
+  /**
+   * Escalation ladder step (BTC/EH/day). While the order stays under-filled at
+   * the normal floor (anchor + overpay) past the walk-up grace, the bid
+   * escalates above the floor by this much per escalation interval, bounded by
+   * the dynamic cap (first step fast-starts toward the book's average paying
+   * price). After sustained fills it decays one probe step per NiceHash
+   * decrease-cooldown window (~10 min). Only active with walkUpEnabled.
+   * Clamped to >= 0.0001 (the price grid). Default 0.0002.
+   */
+  readonly escalationStepBtc: number;
+  /**
+   * Seconds between upward escalation-ladder moves while under-filled (decay
+   * while filled paces on the decrease cooldown when that is longer). Clamped
+   * to >= 5 whole seconds. Default 60.
+   */
+  readonly escalationIntervalSeconds: number;
   // --- Fees / break-even ---
   /** NiceHash marketplace fee on the order, percent (e.g. 3). */
   readonly niceHashFeePct: number;
@@ -167,6 +183,8 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     walkUpGraceSeconds: n(env, 'NICEHASH_WALK_UP_GRACE_SECONDS', 180),
+    escalationStepBtc: n(env, 'NICEHASH_ESCALATION_STEP', 0.0002),
+    escalationIntervalSeconds: n(env, 'NICEHASH_ESCALATION_INTERVAL_SECONDS', 60),
     niceHashFeePct: n(env, 'NICEHASH_FEE_PCT', 3),
     poolFeePct: n(env, 'NICEHASH_POOL_FEE_PCT', 1),
     dynamicCapEnabled: b(env, 'NICEHASH_DYNAMIC_CAP', true),
@@ -225,6 +243,8 @@ export function toControllerConfig(
     min_fill_pct: settings.minFillPct,
     walk_up_enabled: settings.walkUpEnabled,
     walk_up_grace_seconds: settings.walkUpGraceSeconds,
+    escalation_step_btc: settings.escalationStepBtc,
+    escalation_interval_seconds: settings.escalationIntervalSeconds,
     // Cheap mode only engages when enabled AND its target exceeds the normal one.
     cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
     cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
@@ -305,6 +325,12 @@ export function mergeSettings(
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
     walkUpGraceSeconds: num('walkUpGraceSeconds'),
+    // Clamp to the price grid: a 0/negative step would make the escalation
+    // ladder a no-op loop (or walk the wrong way).
+    escalationStepBtc: Math.max(0.0001, num('escalationStepBtc')),
+    // Clamp to a 5s floor and whole seconds, same rationale as tickSeconds: a
+    // cleared field coerces to 0 and would step the ladder every single tick.
+    escalationIntervalSeconds: Math.max(5, Math.round(num('escalationIntervalSeconds'))),
     niceHashFeePct: num('niceHashFeePct'),
     poolFeePct: num('poolFeePct'),
     dynamicCapEnabled: bool('dynamicCapEnabled'),

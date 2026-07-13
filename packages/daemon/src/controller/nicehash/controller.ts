@@ -31,6 +31,7 @@ import type {
   NiceHashLogInput,
 } from '../../state/repos/nicehash_decision_log.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
+import type { EscalationEntry } from './observe.js';
 import { tick as runTick, type NiceHashTickResult, type TickOutcome } from './tick.js';
 import { isActionableOrder, type NiceHashState, type RunMode } from './types.js';
 import type { NiceHashControllerConfig } from './types.js';
@@ -77,6 +78,16 @@ export class NiceHashController {
    */
   private readonly underFilledSince = new Map<string, number>();
 
+  /**
+   * Per-order escalation-ladder state (offset above the floor + last-step
+   * time), kept in memory across ticks. observe() advances it each tick and
+   * stamps `escalation_offset_btc` on the owned-order snapshots. Deliberately
+   * NOT reset in persist() on a walk-up (unlike `underFilledSince`) - the
+   * ladder's own raises must not restart it. Resets on restart, so escalation
+   * re-ramps from the floor (the safe direction).
+   */
+  private readonly escalationByOrder = new Map<string, EscalationEntry>();
+
   constructor(private readonly deps: NiceHashControllerDeps) {}
 
   async tick(): Promise<NiceHashTickResult> {
@@ -102,6 +113,7 @@ export class NiceHashController {
       lastPriceDecreaseById,
       lastPriceChangeById,
       underFilledSinceById: this.underFilledSince,
+      escalationByOrderId: this.escalationByOrder,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
@@ -181,7 +193,9 @@ export class NiceHashController {
         } else if (p.new_price_btc > p.old_price_btc) {
           // Upward move: no decrease cooldown, but reset the walk-up grace window
           // so the new (higher) price gets the full grace to attract miners before
-          // we climb again.
+          // we climb again. The escalation ladder (`escalationByOrder`) is
+          // deliberately NOT reset here: an escalation step is itself a raise,
+          // and resetting the ladder on its own move would restart it from zero.
           await this.deps.ledger.setLastPriceChange(p.order_id, now(), p.new_price_btc);
           this.underFilledSince.set(p.order_id, now());
         }

@@ -226,6 +226,10 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   //   - Below the floor and under-filled -> walk UP to it (raises are free on
   //     NiceHash). When the order IS filled we do NOT chase a rising floor up:
   //     we hold the cheaper bid as long as the hashrate keeps coming.
+  //   - Persistently under-filled AT the floor -> escalate ABOVE it toward the
+  //     effective cap (the escalation ladder below): NiceHash allocates by
+  //     price priority, so a bid hugging the marginal can sit unfilled forever
+  //     while the actually-paying orders rest far above.
   //   - With walk-up disabled, just track the floor both ways.
   const minFillPct = config.min_fill_pct ?? 100;
   const walkUpEnabled = config.walk_up_enabled ?? false;
@@ -243,6 +247,19 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     graceMs === 0 ||
     (primary.under_filled_since != null && state.tick_at - primary.under_filled_since >= graceMs);
 
+  // Escalation ladder: while persistently under-filled at the normal floor the
+  // controller accumulates a per-order offset (stamped by observe() as
+  // `escalation_offset_btc`); the tracked target becomes floor + offset,
+  // clamped to the effective cap. Because the offset lives INSIDE the target,
+  // walk-down clamps to the escalated price (no up/down churn) and a rising
+  // anchor eats into the offset instead of stacking on top (`room` shrinks).
+  // With the market above the cap, room is 0 and the existing forcing wins.
+  // Only active with walk-up enabled - turning walk-up off ignores any offset.
+  const escalationRaw = walkUpEnabled ? Math.max(0, primary.escalation_offset_btc ?? 0) : 0;
+  const escalationRoom = Math.max(0, effectiveCap - desired);
+  const escalationOffset = Math.min(escalationRaw, escalationRoom);
+  const trackTarget = Math.min(desired + escalationOffset, effectiveCap);
+
   // When the whole market is priced above our affordability cap (the marginal -
   // the cheapest order actually winning hashrate - sits above the effective cap),
   // we cannot win any hashrate at a price we'd pay. The bid should then simply sit
@@ -253,11 +270,27 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // resetting the grace timer and never climbs the final step to the cap, sitting
   // one step below its own ceiling. (We can't be over-filled in this state anyway:
   // a bid <= cap < marginal wins nothing, so forcing the climb never overpays.)
+  //
+  // An ENGAGED escalation ladder (offset > 0) also bypasses the grace: the grace
+  // gates the entry into escalation, but every executed raise resets it, so
+  // grace-gating the climbs too would throttle the ladder to max(grace,
+  // interval) per step instead of the operator's chosen escalation interval.
   const marketAboveCap = marginal > effectiveCap;
-  const wantWalkUp = marketAboveCap || (walkUpEnabled ? underFilled && gracePassed : true);
+  const wantWalkUp =
+    marketAboveCap ||
+    (walkUpEnabled ? underFilled && (gracePassed || escalationOffset > 0) : true);
+
+  // Reason suffix for tracked-price edits. When escalated, say so - the plain
+  // "(anchor + overpay)" would misdescribe a target sitting above the floor.
+  const avgPaying = state.market.avg_price_btc ?? null;
+  const escalationSuffix =
+    avgPaying !== null && avgPaying > effectiveCap && trackTarget >= effectiveCap - 1e-9
+      ? ` (escalating toward paying price ${fmtPrice(avgPaying)}, capped at ${capLabel} ${fmtPrice(effectiveCap)})`
+      : ` (escalating +${escalationOffset.toFixed(8)} above floor ${fmtPrice(desired)} · headroom to cap +${(effectiveCap - trackTarget).toFixed(8)})`;
+  const trackSuffix = escalationOffset > 0 ? escalationSuffix : priceSuffix;
 
   const cur = primary.price_btc;
-  const walkDownTo = Math.max(targetPrice, cur - config.price_down_step_btc);
+  const walkDownTo = Math.max(trackTarget, cur - config.price_down_step_btc);
 
   // A bid sitting ABOVE the effective cap is paying past break-even. Correct it
   // down even when the over-cap gap is smaller than one price step: paying above
@@ -269,18 +302,25 @@ export function decide(state: NiceHashState): readonly Proposal[] {
 
   let editTo = cur;
   let mode = '';
-  if (cur - targetPrice >= minRepriceStep || overCap) {
-    // Overpaying above the floor (or above the cap): walk down toward it
-    // (filled or not). `walkDownTo` clamps to `targetPrice`, which is itself
-    // <= effectiveCap, so this always steps the bid back toward break-even.
+  if (cur - trackTarget >= minRepriceStep || overCap) {
+    // Overpaying above the (possibly escalated) target, or above the cap: walk
+    // down toward it (filled or not). `walkDownTo` clamps to `trackTarget`,
+    // which is itself <= effectiveCap, so this always steps the bid back
+    // toward break-even. With an escalated target this is the ladder's decay
+    // probing down - never a snap back to the floor.
     editTo = walkDownTo;
-    mode = overCap && cur - targetPrice < minRepriceStep ? 'walk down under cap' : 'walk down to floor';
-  } else if (targetPrice - cur >= minRepriceStep && wantWalkUp) {
-    // Below the floor: climb to it when under-filled and the grace has elapsed
+    mode =
+      overCap && cur - trackTarget < minRepriceStep
+        ? 'walk down under cap'
+        : escalationOffset > 0
+          ? 'walk down (de-escalating)'
+          : 'walk down to floor';
+  } else if (trackTarget - cur >= minRepriceStep && wantWalkUp) {
+    // Below the target: climb to it when under-filled and the grace has elapsed
     // (or always, if walk-up is off). When filled we skip this - hold the cheaper
     // bid, don't chase up.
-    editTo = Math.min(effectiveCap, targetPrice);
-    mode = 'walk up to floor';
+    editTo = Math.min(effectiveCap, trackTarget);
+    mode = escalationOffset > 0 ? 'walk up (escalating)' : 'walk up to floor';
   }
 
   if (Math.abs(editTo - cur) > 1e-12) {
@@ -289,7 +329,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
       order_id: primary.order_id,
       new_price_btc: editTo,
       old_price_btc: cur,
-      reason: `${mode}: ${fmtPrice(cur)} -> ${fmtPrice(editTo)}${priceSuffix}`,
+      reason: `${mode}: ${fmtPrice(cur)} -> ${fmtPrice(editTo)}${trackSuffix}`,
     });
   }
 
