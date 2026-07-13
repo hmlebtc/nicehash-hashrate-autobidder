@@ -907,9 +907,15 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     else if (props.length && props[0].kind === 'CREATE_ORDER') nowMsg = 'No active order — placing a new bid this cycle.';
     else nowMsg = 'Holding — no order yet, waiting for conditions.';
     $('actNow').textContent = nowMsg;
-    $('nextAction').innerHTML = props.length
-      ? ('Next: ' + props.map(function (p) { return esc(p.kind) + ' — ' + esc(p.reason); }).join('<br>'))
-      : 'Next: hold — no action expected next tick.';
+    // The server-computed hold story (next_action) wins: it explains WHY the
+    // bot is waiting, with a live countdown recomputed on every poll (grace /
+    // escalation interval / NiceHash decrease cooldown). Falls back to the raw
+    // proposals (a real action is happening), then the plain hold line.
+    $('nextAction').innerHTML = s.next_action
+      ? ('Next: ' + esc(s.next_action))
+      : (props.length
+        ? ('Next: ' + props.map(function (p) { return esc(p.kind) + ' — ' + esc(p.reason); }).join('<br>'))
+        : 'Next: hold — no action expected next tick.');
     var lastOut = outs.length ? outs.map(function (o) { return o.outcome + (o.detail ? (' · ' + o.detail) : ''); }).join(' / ') : '';
     $('actLast').textContent = (s.tick_at ? ('last decision ' + new Date(s.tick_at).toLocaleTimeString()) : 'no decision yet') + (lastOut ? (' · ' + lastOut) : '');
     updateTickCountdown();
@@ -932,7 +938,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       var cls = o.outcome === 'EXECUTED' ? 'ok' : o.outcome === 'FAILED' ? 'failed' : o.outcome === 'DRY_RUN' ? 'dry' : 'blocked';
       var label = o.outcome ? (o.outcome + (o.detail ? (' · ' + o.detail) : '')) : '';
       return '<tr><td>' + esc(p.kind) + '</td><td class="muted">' + esc(p.reason) + '</td><td><span class="pill ' + cls + '">' + esc(label) + '</span></td></tr>';
-    }).join('') : '<tr><td colspan="3" class="muted">holding — no action</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="muted">' + esc(s.next_action || 'holding — no action') + '</td></tr>';
   }
 
   function renderAll() { renderStatus(); renderTiles(); renderPnl(); renderCharts(); }

@@ -157,6 +157,16 @@ export interface NiceHashObserveDeps {
    */
   readonly escalationByOrderId?: Map<string, EscalationEntry>;
   /**
+   * Mutable per-order "decrease available at" clock (epoch ms), owned by the
+   * controller across ticks - when NiceHash will next accept a price DECREASE.
+   * The controller arms it on every executed price change and overwrites it
+   * from NiceHash's own "Seconds till available" answer on a 5061 rejection
+   * (the API is the source of truth). observe() stamps it on each owned
+   * order's `decrease_available_at` for the gate and the hold explainer, and
+   * prunes entries for orders that disappeared (successful reads only).
+   */
+  readonly decreaseAvailableAtByOrderId?: Map<string, number>;
+  /**
    * Minimum time between price decreases on a single order (ms) - the SAME
    * value the tick pipeline hands the gate. The escalation ladder's decay
    * paces on max(escalation interval, this), so state decay never outruns the
@@ -386,6 +396,22 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     owned = owned.map((o) => ({
       ...o,
       escalation_offset_btc: escMap.get(o.order_id)?.offsetBtc ?? 0,
+      escalation_last_step_at: escMap.get(o.order_id)?.lastStepAt ?? null,
+    }));
+  }
+
+  // API-truth decrease-cooldown clock: stamp each owned order with when
+  // NiceHash will next accept a price decrease (armed by the controller on
+  // executed price changes, resynced from 5061 "Seconds till available"
+  // answers). Pruned like the other per-order maps - only on a successful
+  // orders read with the order genuinely absent.
+  const availMap = deps.decreaseAvailableAtByOrderId;
+  if (availMap && ordersOk) {
+    const availOwnedIds = new Set(owned.map((o) => o.order_id));
+    for (const id of [...availMap.keys()]) if (!availOwnedIds.has(id)) availMap.delete(id);
+    owned = owned.map((o) => ({
+      ...o,
+      decrease_available_at: availMap.get(o.order_id) ?? null,
     }));
   }
 

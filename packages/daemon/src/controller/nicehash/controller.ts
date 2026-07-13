@@ -31,7 +31,7 @@ import type {
   NiceHashLogInput,
 } from '../../state/repos/nicehash_decision_log.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
-import type { EscalationEntry } from './observe.js';
+import { DEFAULT_PRICE_DECREASE_COOLDOWN_MS, type EscalationEntry } from './observe.js';
 import { tick as runTick, type NiceHashTickResult, type TickOutcome } from './tick.js';
 import { isActionableOrder, type NiceHashState, type RunMode } from './types.js';
 import type { NiceHashControllerConfig } from './types.js';
@@ -90,6 +90,20 @@ export class NiceHashController {
    */
   private readonly escalationByOrder = new Map<string, EscalationEntry>();
 
+  /**
+   * Per-order API-truth decrease-cooldown clock: epoch ms when NiceHash will
+   * next accept a price DECREASE. Armed on every EXECUTED price change (create
+   * / raise / decrease - NiceHash's rule is 10 min since ANY price change) and
+   * OVERWRITTEN from NiceHash's own "Seconds till available" answer when a
+   * decrease is rejected with error 5061: the API's answer always wins over
+   * anything we derive, so the daemon self-corrects even across clock drift or
+   * manual edits made outside the daemon. observe() stamps it onto snapshots
+   * for the gate + the hold explainer. Resets on restart; the gate then falls
+   * back to the persisted last-change stamps, and any residual disagreement
+   * costs at most one probe (the 5061 resyncs it).
+   */
+  private readonly decreaseAvailableAt = new Map<string, number>();
+
   constructor(private readonly deps: NiceHashControllerDeps) {}
 
   async tick(): Promise<NiceHashTickResult> {
@@ -116,6 +130,7 @@ export class NiceHashController {
       lastPriceChangeById,
       underFilledSinceById: this.underFilledSince,
       escalationByOrderId: this.escalationByOrder,
+      decreaseAvailableAtByOrderId: this.decreaseAvailableAt,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
@@ -173,8 +188,29 @@ export class NiceHashController {
   }
 
   private async persist(outcome: TickOutcome, now: () => number): Promise<void> {
-    if (outcome.outcome !== 'EXECUTED') return;
     const p = outcome.proposal;
+    const cooldownMs = this.deps.priceDecreaseCooldownMs ?? DEFAULT_PRICE_DECREASE_COOLDOWN_MS;
+
+    // NiceHash rejected a price decrease with its own cooldown answer (error
+    // 5061, "... Seconds till available: N"): resync our clock to the API's -
+    // it is the source of truth, so the daemon self-corrects even when the
+    // rejection came from clock drift or a manual edit outside the daemon.
+    // A malformed message falls back to the full window (conservative).
+    if (
+      outcome.outcome === 'FAILED' &&
+      p.kind === 'EDIT_PRICE' &&
+      p.new_price_btc < p.old_price_btc
+    ) {
+      const rejection = parseDecreaseCooldownRejection(outcome.error);
+      if (rejection) {
+        const waitMs =
+          rejection.secondsRemaining !== null ? rejection.secondsRemaining * 1000 : cooldownMs;
+        this.decreaseAvailableAt.set(p.order_id, now() + waitMs);
+      }
+      return;
+    }
+
+    if (outcome.outcome !== 'EXECUTED') return;
     switch (p.kind) {
       case 'CREATE_ORDER':
         if (outcome.orderId) {
@@ -187,9 +223,15 @@ export class NiceHashController {
             pool_id: p.pool_id,
             last_known_status: 'CREATED',
           });
+          // The create sets the initial price - NiceHash's decrease rule counts
+          // it as a price change, so arm the clock.
+          this.decreaseAvailableAt.set(outcome.orderId, now() + cooldownMs);
         }
         return;
       case 'EDIT_PRICE':
+        // Any executed price change (raise or decrease) re-arms NiceHash's
+        // decrease cooldown; a later 5061 answer overwrites this if we drift.
+        this.decreaseAvailableAt.set(p.order_id, now() + cooldownMs);
         if (p.new_price_btc < p.old_price_btc) {
           await this.deps.ledger.setLastPriceDecrease(p.order_id, now(), p.new_price_btc);
         } else if (p.new_price_btc > p.old_price_btc) {
@@ -220,6 +262,24 @@ export class NiceHashController {
         return; // picked up by reconcileFromApi / no ledger effect
     }
   }
+}
+
+/**
+ * Recognise a NiceHash "price decrease not allowed yet" rejection (error code
+ * 5061, message like "Order price decreased not allowed within 10 minutes of
+ * last price change. Seconds till available: 149") and extract the remaining
+ * seconds. Returns null when the error is something else entirely;
+ * `secondsRemaining: null` when the rejection matched but the countdown could
+ * not be parsed (caller should fall back to the full cooldown window).
+ */
+export function parseDecreaseCooldownRejection(
+  error: string,
+): { readonly secondsRemaining: number | null } | null {
+  if (!/\b5061\b/.test(error) && !/decrease.*not allowed within/i.test(error)) return null;
+  const m = /seconds till available:\s*(\d+)/i.exec(error);
+  if (!m) return { secondsRemaining: null };
+  const n = Number(m[1]);
+  return { secondsRemaining: Number.isFinite(n) && n >= 0 ? n : null };
 }
 
 function sum<T>(xs: readonly T[], f: (x: T) => number): number {

@@ -21,6 +21,11 @@ import type { OrderBookEntry, OrderBookResponse } from '@hashrate-autopilot/nice
 
 import { NICEHASH_DASHBOARD_HTML } from './nicehash-dashboard-html.js';
 import {
+  formatHoldReason,
+  formatRemaining,
+  type HoldReason,
+} from '../controller/nicehash/explain.js';
+import {
   maskSettings,
   mergeSettings,
   settingsFromEnv,
@@ -105,8 +110,12 @@ function proposalView(p: Proposal): { kind: string; reason: string } {
   return { kind: p.kind, reason: p.reason };
 }
 
-function outcomeView(o: TickOutcome): { kind: string; outcome: string; detail: string } {
-  const detail =
+function outcomeView(
+  o: TickOutcome,
+  hold: HoldReason | null,
+  nowMs: number,
+): { kind: string; outcome: string; detail: string } {
+  let detail =
     o.outcome === 'BLOCKED'
       ? o.reason
       : o.outcome === 'FAILED'
@@ -114,6 +123,16 @@ function outcomeView(o: TickOutcome): { kind: string; outcome: string; detail: s
         : 'note' in o
           ? (o.note ?? '')
           : '';
+  // A cooldown-blocked walk-down carries a live countdown instead of the bare
+  // reason code - computed per request so the dashboard's poll sees it tick.
+  if (
+    o.outcome === 'BLOCKED' &&
+    o.reason === 'PRICE_DECREASE_COOLDOWN' &&
+    hold?.kind === 'DECREASE_COOLDOWN' &&
+    hold.until !== null
+  ) {
+    detail = `waiting on NiceHash decrease cooldown, ~${formatRemaining(hold.until, nowMs)} remaining`;
+  }
   return { kind: o.proposal.kind, outcome: o.outcome, detail };
 }
 
@@ -148,9 +167,12 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
       unknown_orders: [],
       proposals: [],
       outcomes: [],
+      next_action: null,
     };
   }
   const s = result.state;
+  const nowMs = Date.now();
+  const hold = result.hold_reason ?? null;
   return {
     run_mode: s.run_mode,
     tick_at: s.tick_at,
@@ -175,7 +197,10 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     market_error: s.market_error ?? null,
     orders_error: s.orders_error ?? null,
     proposals: result.proposals.map(proposalView),
-    outcomes: result.outcomes.map(outcomeView),
+    outcomes: result.outcomes.map((o) => outcomeView(o, hold, nowMs)),
+    // Why the bot is holding / what it's waiting on, with the countdown
+    // rendered against THIS request's clock (live between the 3s polls).
+    next_action: formatHoldReason(hold, nowMs),
   };
 }
 

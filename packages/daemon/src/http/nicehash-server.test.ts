@@ -413,3 +413,63 @@ describe('NiceHash HTTP server - metrics / history / summary / run-now', () => {
     expect(runNow).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('status next_action - live hold countdown', () => {
+  let app: FastifyInstance;
+  let store: NiceHashStateStore;
+
+  beforeEach(async () => {
+    store = new NiceHashStateStore('LIVE');
+    app = await createNiceHashHttpServer(deps(store, fakeSettingsRepo(settingsFromEnv({})).repo));
+  });
+  afterEach(async () => {
+    await app.close();
+    vi.useRealTimers();
+  });
+
+  it('formats the hold with a remaining time computed at REQUEST time (counts down between polls)', async () => {
+    const base = 1_700_000_000_000;
+    const edit = {
+      kind: 'EDIT_PRICE' as const,
+      order_id: 'o1',
+      new_price_btc: 0.4824,
+      old_price_btc: 0.4825,
+      reason: 'walk down (de-escalating): ...',
+    };
+    store.setLast({
+      ...tickResult(),
+      proposals: [edit],
+      outcomes: [{ proposal: edit, outcome: 'BLOCKED', reason: 'PRICE_DECREASE_COOLDOWN' }],
+      hold_reason: {
+        kind: 'DECREASE_COOLDOWN',
+        until: base + 149_000, // NiceHash's own "Seconds till available" answer
+        from_btc: 0.4825,
+        to_btc: 0.4824,
+        label: 'walk down (de-escalating)',
+      },
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(base);
+    let body = (await app.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
+    expect(body.next_action).toBe(
+      'walk down (de-escalating) 0.4825 -> 0.4824 — waiting on NiceHash decrease cooldown, ~2:29 remaining',
+    );
+    expect(body.outcomes[0].detail).toBe(
+      'waiting on NiceHash decrease cooldown, ~2:29 remaining',
+    );
+
+    // 100s later, WITHOUT a new tick: the countdown moved - it is computed per
+    // request, never frozen at tick time.
+    vi.setSystemTime(base + 100_000);
+    body = (await app.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
+    expect(body.next_action).toContain('~0:49 remaining');
+    expect(body.outcomes[0].detail).toContain('~0:49 remaining');
+  });
+
+  it('clears the hold story when the next tick has a real action or no hold', async () => {
+    store.setLast({ ...tickResult(), hold_reason: null });
+    const body = (await app.inject({ method: 'GET', url: '/api/nicehash/status' })).json();
+    expect(body.next_action).toBeNull();
+  });
+});

@@ -117,3 +117,66 @@ describe('gate - price-decrease cooldown', () => {
     expect(out[0]?.allowed).toBe(true);
   });
 });
+
+describe('gate - decrease cooldown counts ANY price change (NiceHash rule)', () => {
+  it('denies a decrease within the cooldown of a RAISE (the 400/5061 case)', () => {
+    // Only the last-change stamp is recent (a ladder climb); the last-decrease
+    // stamp is ancient. NiceHash rejects decreases within 10 min of ANY price
+    // change, so the gate must too - previously this sailed through to a
+    // guaranteed 400 "5061: ... not allowed within 10 minutes of last price
+    // change".
+    const s = state('LIVE', [
+      {
+        ...ownedAt(null),
+        last_price_decrease_at: null,
+        last_price_change_at: 1_000_000 - 60_000, // raised 1 min ago
+      },
+    ]);
+    const out = gate([editDown], s, { priceDecreaseCooldownMs: COOLDOWN });
+    if (out[0]?.allowed === false) expect(out[0].reason).toBe('PRICE_DECREASE_COOLDOWN');
+    else throw new Error('expected cooldown denial');
+  });
+
+  it('allows a decrease once BOTH stamps are older than the cooldown', () => {
+    const s = state('LIVE', [
+      {
+        ...ownedAt(1_000_000 - 12 * 60_000),
+        last_price_change_at: 1_000_000 - 11 * 60_000,
+      },
+    ]);
+    const out = gate([editDown], s, { priceDecreaseCooldownMs: COOLDOWN });
+    expect(out[0]?.allowed).toBe(true);
+  });
+
+  it('the API-truth clock (decrease_available_at) overrides the derived stamps', () => {
+    // NiceHash said "Seconds till available: 30" -> available at 1_000_030_000,
+    // even though the derived stamps would say the window has long passed...
+    const blocked = state('LIVE', [
+      {
+        ...ownedAt(1_000_000 - 30 * 60_000),
+        decrease_available_at: 1_000_000 + 30_000,
+      },
+    ]);
+    const b = gate([editDown], blocked, { priceDecreaseCooldownMs: COOLDOWN });
+    if (b[0]?.allowed === false) expect(b[0].reason).toBe('PRICE_DECREASE_COOLDOWN');
+    else throw new Error('expected cooldown denial');
+
+    // ...and the reverse: the API says available NOW, even though a recent
+    // raise stamp would have derived a block. The API's answer wins.
+    const allowed = state('LIVE', [
+      {
+        ...ownedAt(null),
+        last_price_change_at: 1_000_000 - 60_000,
+        decrease_available_at: 1_000_000 - 1,
+      },
+    ]);
+    expect(gate([editDown], allowed, { priceDecreaseCooldownMs: COOLDOWN })[0]?.allowed).toBe(true);
+  });
+
+  it('raises stay unthrottled even with the API-truth clock in the future', () => {
+    const s = state('LIVE', [
+      { ...ownedAt(1_000_000 - 1000), decrease_available_at: 1_000_000 + 600_000 },
+    ]);
+    expect(gate([editUp], s, { priceDecreaseCooldownMs: COOLDOWN })[0]?.allowed).toBe(true);
+  });
+});
