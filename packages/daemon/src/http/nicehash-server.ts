@@ -12,8 +12,13 @@
  *   GET  /api/nicehash/orders        - owned-order ledger rows
  *   GET  /api/nicehash/history.csv   - order-mutation audit trail as CSV (Export button)
  *   GET  /api/nicehash/logs.csv      - decision + error log as CSV (Export button)
+ *   GET  /api/nicehash/book          - capture status + the latest book snapshot
+ *   GET  /api/nicehash/book.csv      - flattened book snapshots as CSV (streamed)
+ *   POST /api/nicehash/book/clear    - delete ALL stored snapshots -> { deleted }
  *   POST /api/nicehash/run-mode      - { mode: DRY_RUN | LIVE | PAUSED }
  */
+
+import { once } from 'node:events';
 
 import fastifyCors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -36,6 +41,7 @@ import {
 import type { NiceHashStateStore } from '../controller/nicehash/state-store.js';
 import type { NiceHashControllerConfig, Proposal, RunMode } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult, TickOutcome } from '../controller/nicehash/tick.js';
+import type { NiceHashBookSnapshotsRepo } from '../state/repos/nicehash_book_snapshots.js';
 import type { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
 import type { NiceHashSettingsRepo } from '../state/repos/nicehash_settings.js';
 import type { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
@@ -61,6 +67,8 @@ export interface NiceHashHttpDeps {
   readonly metrics?: NiceHashMetricsRepo;
   readonly events?: NiceHashEventsRepo;
   readonly decisionLog?: NiceHashDecisionLogRepo;
+  /** Order-book capture store (Order book tab + CSV export). */
+  readonly bookSnapshots?: NiceHashBookSnapshotsRepo;
   /** Latest network-hashprice estimate (BTC/EH/day), or null. */
   readonly hashprice?: () => number | null;
   /** Trigger an out-of-band controller tick (the "Run decision now" button). */
@@ -379,6 +387,117 @@ export async function createNiceHashHttpServer(deps: NiceHashHttpDeps): Promise<
       .type('text/csv; charset=utf-8')
       .header('Content-Disposition', `attachment; filename="${filename}"`)
       .send(csv);
+  });
+
+  // Order-book capture: status line + the latest snapshot (Order book tab).
+  app.get('/api/nicehash/book', async () => {
+    const cfg = typeof deps.config === 'function' ? deps.config() : deps.config;
+    const capturing = cfg.capture_order_book ?? true;
+    if (!deps.bookSnapshots) return { capturing: false, capture: null, latest: null };
+    const [capture, latest] = await Promise.all([
+      deps.bookSnapshots.meta(),
+      deps.bookSnapshots.latest(),
+    ]);
+    return { capturing, capture, latest };
+  });
+
+  // CSV export of the captured order books, flattened to one line per book
+  // row per snapshot. Params: from/to (epoch ms) bound the window; `snapshots`
+  // caps HOW MANY snapshots are exported (most recent first, emitted in
+  // chronological order) - the row explosion is ~1000 lines per snapshot, so
+  // the cap is on snapshots, not lines (default 240 = 2h at 30s ticks, max
+  // 2880 = 24h). Streamed: snapshots are inflated ONE at a time and written
+  // straight to the socket, so days of blobs are never held in memory.
+  app.get('/api/nicehash/book.csv', async (req, reply) => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
+    const limit = clampCsvLimit(numParam(q.snapshots), 240, 2880);
+    const fromMs = numParam(q.from);
+    const toMs = numParam(q.to);
+    const filename = `nicehash-order-book-${csvFilenameStamp(new Date())}.csv`;
+    reply.hijack();
+    const raw = reply.raw;
+
+    // The response is hijacked, so the daemon owns the socket's failure modes:
+    // a client abort (tab closed mid-download) destroys the socket, and any
+    // later write emits 'error' - UNHANDLED, that event would crash the whole
+    // daemon mid-flight with a live order. Swallow it; the loop below also
+    // bails out as soon as the socket is gone.
+    raw.on('error', () => {
+      /* client went away - the gone() checks stop the stream */
+    });
+    const gone = (): boolean => raw.destroyed || raw.writableEnded;
+
+    // Backpressure-honoring write: a max export is 2880 snapshots x ~1000 rows
+    // (~250 MB of CSV), which must NEVER buffer wholesale into daemon memory
+    // against a slow client (Pi-class Umbrel boxes). When write() reports a
+    // full buffer, wait for 'drain' - abandoning the wait if the socket dies
+    // first (the 'close' listener aborts the once(), and both listeners are
+    // cleaned up so repeated drains can't accumulate them).
+    const write = async (chunk: string): Promise<void> => {
+      if (gone()) return;
+      if (raw.write(chunk)) return;
+      const ac = new AbortController();
+      const onClose = (): void => ac.abort();
+      raw.once('close', onClose);
+      try {
+        await once(raw, 'drain', { signal: ac.signal });
+      } catch {
+        /* socket closed while waiting - gone() bails the caller out */
+      } finally {
+        raw.off('close', onClose);
+      }
+    };
+
+    try {
+      raw.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="${filename}"`,
+      });
+      await write(
+        CSV_BOM +
+          toCsvRow([
+            'when_iso', 'when_ms', 'marginal_btc', 'raw_tier_btc', 'smoothed_tier_btc',
+            'order_id', 'price_btc', 'limit_units', 'rigs', 'speed_units', 'debounce_state',
+          ]),
+      );
+      if (deps.bookSnapshots) {
+        const tsList = await deps.bookSnapshots.listTs({
+          ...(fromMs !== undefined ? { fromMs } : {}),
+          ...(toMs !== undefined ? { toMs } : {}),
+          limit,
+        });
+        for (const ts of tsList) {
+          if (gone()) break; // client aborted: stop inflating snapshots
+          const snap = await deps.bookSnapshots.get(ts);
+          if (!snap) continue;
+          const iso = new Date(snap.ts).toISOString();
+          let chunk = '';
+          for (const r of snap.rows) {
+            chunk += toCsvRow([
+              iso, snap.ts, snap.marginal_price_btc ?? '', snap.raw_tier_btc ?? '',
+              snap.smoothed_tier_btc ?? '', r.id ?? '', r.price_btc, r.limit_units,
+              r.rigs_count ?? '', r.accepted_speed_units ?? '', r.debounce_state,
+            ]);
+          }
+          await write(chunk);
+        }
+      }
+    } catch {
+      /* repo/stream error mid-export: end the (partial) response below rather
+         than leaving the client hanging - and never let it bubble up from a
+         hijacked handler. */
+    } finally {
+      if (!gone()) raw.end();
+    }
+  });
+
+  // Wipe ALL stored order-book snapshots (the tab's "Clear data" button - the
+  // dashboard confirm()s first; deliberately destructive). Capture simply
+  // resumes on the next tick if the toggle is on.
+  app.post('/api/nicehash/book/clear', async () => {
+    if (!deps.bookSnapshots) return { deleted: 0 };
+    const deleted = await deps.bookSnapshots.clearAll();
+    return { deleted };
   });
 
   // Summary tiles + profit & loss for a window.

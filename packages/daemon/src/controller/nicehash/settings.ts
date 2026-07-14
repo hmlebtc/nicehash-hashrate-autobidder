@@ -116,6 +116,13 @@ export interface NiceHashSettings {
   readonly retentionDays: number;
   /** Days of decision/error logs to retain (Logs tab). */
   readonly logRetentionDays: number;
+  /**
+   * Record one order-book snapshot per successful tick (the Order book tab +
+   * CSV export). ~40 MB/day at 30-second ticks (gzipped). Default true.
+   */
+  readonly captureOrderBook: boolean;
+  /** Days of order-book snapshots to retain. Clamped to 1-30. Default 3. */
+  readonly bookRetentionDays: number;
 }
 
 /** Sentinel returned in place of the real secret by {@link maskSettings}. */
@@ -197,6 +204,8 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     priceSource: s(env, 'NICEHASH_PRICE_SOURCE', 'coingecko'),
     retentionDays: n(env, 'NICEHASH_RETENTION_DAYS', 30),
     logRetentionDays: n(env, 'NICEHASH_LOG_RETENTION_DAYS', 30),
+    captureOrderBook: b(env, 'NICEHASH_CAPTURE_ORDER_BOOK', true),
+    bookRetentionDays: n(env, 'NICEHASH_BOOK_RETENTION_DAYS', 3),
   };
 }
 
@@ -256,6 +265,7 @@ export function toControllerConfig(
     dynamic_cap_enabled: settings.dynamicCapEnabled,
     dynamic_cap_buffer_btc: settings.dynamicCapBufferBtc,
     speed_display_unit: speedUnitLabel(Number(algo.marketFactor)),
+    capture_order_book: settings.captureOrderBook,
   };
 }
 
@@ -345,5 +355,9 @@ export function mergeSettings(
     priceSource: str('priceSource'),
     retentionDays: num('retentionDays'),
     logRetentionDays: num('logRetentionDays'),
+    captureOrderBook: bool('captureOrderBook'),
+    // Clamp to 1-30 days: snapshots cost ~40 MB/day at 30s ticks, and a
+    // cleared field coerces to 0 which would prune everything on sight.
+    bookRetentionDays: Math.min(30, Math.max(1, Math.round(num('bookRetentionDays')))),
   };
 }

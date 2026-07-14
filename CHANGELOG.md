@@ -2,6 +2,31 @@
 
 ## 2026-07-14
 
+### `[Feature]` Order book capture tab + CSV export (v0.6.55)
+
+New "Order book" dashboard tab: the daemon records one gzipped snapshot of
+the alive competitor book per successful tick (price, limit, rigs, speed and
+each row's live debounce state, plus the marginal and the raw vs smoothed
+tier readings). The tab shows capture status and the latest snapshot's
+top-of-book region; Export CSV flattens snapshots to one line per order row
+for offline analysis - run the bot for a few days and replay exactly what it
+saw - and a Clear data button (confirmation required) wipes the stored
+snapshots immediately. Toggle ("Capture order book", default on) and
+retention (default 3 days; ~40 MB/day at 30-second ticks) live under
+Config -> Daemon & data.
+
+### `[Fix]` NEXT TIER gaps: symmetric flicker debounce + no more blank tier (v0.6.55)
+
+Rig-count flicker goes both ways: a zero-miner row that flips to rigs>0 for
+a single book read made the filled top reach the marginal, blanking the cyan
+NEXT TIER (and flapping the anchor) for ~2 minutes per blip. A confirmed
+zero-miner row now needs two consecutive reads WITH miners before it counts
+as filled again (one-read flickers never move the tier; genuine drops land
+one read later), and a recovering row can never confirm a pending upward
+move. When the filled top genuinely reaches the marginal, the tier tile and
+the cyan chart line now show the marginal value instead of a gap - the
+stored metrics and CSV exports keep the honest null.
+
 ### `[Fix]` Next-tier spike smoothing (debounce + hysteresis)
 
 A live probe (11 book reads over 5 minutes) confirmed NEXT TIER flapped

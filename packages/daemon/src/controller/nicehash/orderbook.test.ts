@@ -504,6 +504,31 @@ describe('computeMarketAnchor - zero-confirmation debounce', () => {
     expect(a.filled_prices).toEqual([0.48, 0.5]);
   });
 
+  it('a recovering nonzero row (confirmed zero reading rigs>0, unconfirmed) is still a run-breaker', () => {
+    // The symmetric side: 'b' was a confirmed zero and now reads rigs>0, but
+    // the nonzero reading is not yet confirmed - the scan must keep treating
+    // it as a breaker so a one-read flicker can't extend the run.
+    const rows = block(); // b reads rigs=450
+    const a = computeMarketAnchor(rows, 20, 1, new Set(), new Set(['b']));
+    expect(a.filled_prices[1]).toBe(0.4885); // run ends above the recovering row
+  });
+
+  it('a recovering nonzero row stays a RAW fill for the marginal and stats (scan-only suppression)', () => {
+    // 'rec' reads rigs>0 below the old marginal while recovering: the scan
+    // treats it as a zero (breaker), but the marginal and the price stats are
+    // a true read of the raw rigs data - the row IS rigs>0.
+    const rows: CompetingOrder[] = [
+      { id: 'a', price_btc: 0.5, limit_units: 5, rigs_count: 1000 },
+      { id: 'w', price_btc: 0.485, limit_units: 5, rigs_count: 0 }, // confirmed zero
+      { id: 'm', price_btc: 0.48, limit_units: 5, rigs_count: 5000 },
+      { id: 'rec', price_btc: 0.475, limit_units: 5, rigs_count: 300 }, // recovering
+    ];
+    const a = computeMarketAnchor(rows, 20, 1, new Set(), new Set(['rec']));
+    expect(a.anchor_price_btc).toBe(0.475); // raw marginal includes the recovering row
+    expect(a.median_price_btc).toBeCloseTo(0.48, 9); // stats raw too
+    expect(a.filled_prices).toEqual([0.475, 0.5]); // scan: run = {0.50}, breaker at 0.485
+  });
+
   it('unconfirmed zeros all the way to the marginal collapse the tier to null (no fabricated tier)', () => {
     // Every zero between the block and the marginal is unconfirmed (e.g. the
     // whole wall flickered to zero on ONE read): the scan is transparent down

@@ -19,6 +19,10 @@ import type { NiceHashClient } from '@hashrate-autopilot/nicehash-client';
 
 import type { NiceHashOrdersRepo } from '../../state/repos/nicehash_orders.js';
 import type {
+  NiceHashBookSnapshot,
+  NiceHashBookSnapshotsRepo,
+} from '../../state/repos/nicehash_book_snapshots.js';
+import type {
   NiceHashMetricRow,
   NiceHashMetricsRepo,
 } from '../../state/repos/nicehash_tick_metrics.js';
@@ -67,6 +71,12 @@ export interface NiceHashControllerDeps {
   readonly events?: NiceHashEventsRepo;
   /** Optional debug sink: one decision summary row per tick (Logs page). */
   readonly decisionLog?: NiceHashDecisionLogRepo;
+  /**
+   * Optional order-book capture sink: one full-book snapshot per successful
+   * tick (the "Order book" tab + CSV export). Gated per tick by the config's
+   * `capture_order_book` toggle (live-editable, defaults to on).
+   */
+  readonly bookSnapshots?: NiceHashBookSnapshotsRepo;
   /**
    * Conversion from a speed-display unit (e.g. PH) to a price-display unit
    * (e.g. EH): marketFactor / priceFactor. Used to express the burn rate
@@ -122,18 +132,20 @@ export class NiceHashController {
   private readonly editAvailableAt = new Map<string, number>();
 
   /**
-   * Per-COMPETITOR zero-rig confirmation streaks (order id -> consecutive
-   * successful book reads at rigs=0), kept in memory across ticks. observe()
-   * bumps/resets/prunes it on every successful book read and freezes it on
-   * failed reads, exactly like the other cross-tick maps. Rows whose zero is
-   * not yet confirmed twice don't break the next-tier contiguity run
-   * (probe-verified single-read rig-count flicker + new-order migration
-   * windows). Resets on restart, and the FIRST successful read after restart
-   * seeds every zero row as already-confirmed: that read reproduces the
-   * strict (pre-smoothing) tier exactly. Treating restart zeros as
-   * unconfirmed would collapse the tier toward the marginal for one tick -
-   * enough for decide() to walk the bid down out of the filled block and
-   * lose the fill over a routine release restart.
+   * Per-COMPETITOR rig-count debounce state (order id -> zero/nonzero
+   * confirmation counters), kept in memory across ticks. observe() advances
+   * it on every successful book read and freezes it on failed reads, exactly
+   * like the other cross-tick maps. Zero side: a rigs=0 reading breaks the
+   * next-tier contiguity run only once confirmed by two consecutive reads.
+   * Nonzero side (symmetric, v0.6.55): a confirmed-zero row reading rigs>0
+   * stays a breaker until two consecutive nonzero reads - one-read flicker in
+   * EITHER direction no longer moves the tier (probe-verified both ways).
+   * Resets on restart, and the FIRST successful read after restart seeds
+   * every zero row as already-confirmed: that read reproduces the strict
+   * (pre-smoothing) tier exactly. Treating restart zeros as unconfirmed
+   * would collapse the tier toward the marginal for one tick - enough for
+   * decide() to walk the bid down out of the filled block and lose the fill
+   * over a routine release restart.
    */
   private readonly zeroRigStreaks: ZeroRigStreakState = initialZeroRigStreaks();
 
@@ -163,6 +175,12 @@ export class NiceHashController {
       this.deps.ledger.lastPriceChangeMap(),
     ]);
 
+    // Order-book capture: observe hands the snapshot out synchronously; it is
+    // persisted AFTER the tick (best-effort) so storage can never stall or
+    // break the control loop. Gated by the live-editable config toggle.
+    let bookCapture: NiceHashBookSnapshot | null = null;
+    const captureEnabled = (config.capture_order_book ?? true) && !!this.deps.bookSnapshots;
+
     const result = await runTick({
       service: this.deps.service,
       client: this.deps.client,
@@ -184,6 +202,13 @@ export class NiceHashController {
       ...(this.deps.priceDecreaseCooldownMs !== undefined
         ? { priceDecreaseCooldownMs: this.deps.priceDecreaseCooldownMs }
         : {}),
+      ...(captureEnabled
+        ? {
+            onBookCapture: (snapshot: NiceHashBookSnapshot) => {
+              bookCapture = snapshot;
+            },
+          }
+        : {}),
       now,
       onExecuted: (outcome) => this.persist(outcome, now),
     });
@@ -199,6 +224,16 @@ export class NiceHashController {
         payed_amount_btc: o.payed_amount_btc,
       })),
     );
+
+    // Persist the captured order-book snapshot. Best-effort like the metrics:
+    // a storage hiccup must not break the control loop.
+    if (bookCapture !== null && this.deps.bookSnapshots) {
+      try {
+        await this.deps.bookSnapshots.record(bookCapture);
+      } catch {
+        /* ignore - the capture is non-critical */
+      }
+    }
 
     // Record the per-tick metrics row + any order-mutation events. Best-effort:
     // a persistence hiccup must not break the control loop.

@@ -269,6 +269,24 @@ export interface NiceHashTickMetricsTable {
   unknown_count: number;
 }
 
+/**
+ * Per-tick order-book capture (the "Order book" tab + CSV export). One row per
+ * successful book read; `book_gz` is the full alive competitor book as gzipped
+ * JSON (compact per-row keys: i=id, p=price, l=limit, r=rigs, s=speed,
+ * d=debounce state) sorted price-descending. Pruned by the book-capture
+ * retention window.
+ */
+export interface NiceHashBookSnapshotsTable {
+  ts: number;
+  marginal_price_btc: number | null;
+  /** Strict next tier straight from the raw book (no smoothing). */
+  raw_tier_btc: number | null;
+  /** The exposed (debounced + hysteresis) tier the bot acted on. */
+  smoothed_tier_btc: number | null;
+  row_count: number;
+  book_gz: Buffer;
+}
+
 /** Per-tick decision + error log (Logs page). */
 export interface NiceHashDecisionLogTable {
   id: Generated<number>;
@@ -743,6 +761,7 @@ export interface Database {
   nicehash_tick_metrics: NiceHashTickMetricsTable;
   nicehash_order_events: NiceHashOrderEventsTable;
   nicehash_decision_log: NiceHashDecisionLogTable;
+  nicehash_book_snapshots: NiceHashBookSnapshotsTable;
   deferred_actions: DeferredActionsTable;
   decisions: DecisionsTable;
   spend_events: SpendEventsTable;
