@@ -48,6 +48,18 @@ export function computeMarketAnchor(
    * (marginal, filled set, stats) stays a true read of the raw rigs data.
    */
   unconfirmedZeroIds: ReadonlySet<string> = new Set(),
+  /**
+   * Order ids in CONFIRMED-ZERO state whose CURRENT rigs>0 reading is not yet
+   * confirmed (fewer than two consecutive nonzero reads - the symmetric side
+   * of the debounce). Rig flicker goes both ways: the probe showed rows flip
+   * 0 -> ~20 rigs for one read with speed 0 on both sides, which under a
+   * zero-only debounce collapses the tier to the marginal instantly and then
+   * costs ~4 ticks to recover. A recovering row still acts as a RUN-BREAKER
+   * in the contiguity scan (never as filled) until its nonzero reading
+   * confirms; the marginal, filled set and stats stay a true read of the raw
+   * rigs data (the row IS rigs>0 raw).
+   */
+  unconfirmedNonzeroIds: ReadonlySet<string> = new Set(),
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -148,13 +160,25 @@ export function computeMarketAnchor(
     (o.rigs_count ?? 0) === 0 &&
     o.id !== undefined &&
     unconfirmedZeroIds.has(o.id);
+  // The symmetric side: a confirmed-zero row reading rigs>0 stays an effective
+  // run-breaker until the nonzero reading confirms (two consecutive reads).
+  // In the SCAN it behaves exactly like a confirmed zero row - never filled,
+  // always a breaker - so a one-read nonzero flicker cannot extend the run
+  // and collapse the tier to the marginal. Raw-truth scope: the row still
+  // counts as filled in the marginal / stats / minerTiers (it IS rigs>0).
+  const isRecoveringNonzero = (o: CompetingOrder): boolean =>
+    filledByRigs.length > 0 &&
+    (o.rigs_count ?? 0) > 0 &&
+    o.id !== undefined &&
+    unconfirmedNonzeroIds.has(o.id);
+  const isScanFilled = (o: CompetingOrder): boolean => isFilledRow(o) && !isRecoveringNonzero(o);
   const levels = [...new Set(valid.map((o) => o.price_btc))].sort((a, b) => b - a); // descending
   let nextTier: number | null = null;
   let started = false;
   for (const level of levels) {
     const rows = valid.filter((o) => o.price_btc === level);
-    const anyFilled = rows.some(isFilledRow);
-    const allFilledOrUnconfirmed = rows.every((o) => isFilledRow(o) || isUnconfirmedZero(o));
+    const anyFilled = rows.some(isScanFilled);
+    const allFilledOrUnconfirmed = rows.every((o) => isScanFilled(o) || isUnconfirmedZero(o));
     if (!started) {
       if (!anyFilled) continue; // dead noise above the highest miner-bearing row
       started = true;

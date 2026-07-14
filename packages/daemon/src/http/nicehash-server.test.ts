@@ -7,6 +7,7 @@ import { SECRET_MASK, settingsFromEnv, type NiceHashSettings } from '../controll
 import type { NiceHashControllerConfig } from '../controller/nicehash/types.js';
 import type { NiceHashTickResult } from '../controller/nicehash/tick.js';
 import { closeDatabase, openDatabase, type DatabaseHandle } from '../state/db.js';
+import { NiceHashBookSnapshotsRepo } from '../state/repos/nicehash_book_snapshots.js';
 import { NiceHashOrdersRepo } from '../state/repos/nicehash_orders.js';
 import { NiceHashMetricsRepo } from '../state/repos/nicehash_tick_metrics.js';
 import { NiceHashEventsRepo } from '../state/repos/nicehash_order_events.js';
@@ -677,8 +678,185 @@ describe('NiceHash HTTP server - CSV export', () => {
       expect(parseCsv(logsRes.body.slice(1)).length).toBe(1);
       const histRes = await bareApp.inject({ method: 'GET', url: '/api/nicehash/history.csv' });
       expect(parseCsv(histRes.body.slice(1)).length).toBe(1);
+      const bookRes = await bareApp.inject({ method: 'GET', url: '/api/nicehash/book.csv' });
+      expect(parseCsv(bookRes.body.slice(1)).length).toBe(1);
     } finally {
       await bareApp.close();
+    }
+  });
+});
+
+describe('NiceHash HTTP server - order-book capture', () => {
+  let handle: DatabaseHandle;
+  let app: FastifyInstance;
+  let bookRepo: NiceHashBookSnapshotsRepo;
+
+  const row = (
+    id: string,
+    price: number,
+    rigs: number,
+    state: 'filled' | 'unconfirmed_zero' | 'confirmed_zero' | 'recovering_nonzero',
+  ) => ({
+    id,
+    price_btc: price,
+    limit_units: 5,
+    rigs_count: rigs,
+    accepted_speed_units: 0,
+    debounce_state: state,
+  });
+
+  beforeEach(async () => {
+    handle = await openDatabase({ path: ':memory:' });
+    bookRepo = new NiceHashBookSnapshotsRepo(handle.db);
+    await bookRepo.record({
+      ts: 1000,
+      marginal_price_btc: 0.4788,
+      raw_tier_btc: 0.4789,
+      smoothed_tier_btc: 0.4789,
+      rows: [row('top', 0.49, 5000, 'filled'), row('z1', 0.4788, 0, 'confirmed_zero')],
+    });
+    await bookRepo.record({
+      ts: 2000,
+      marginal_price_btc: 0.4788,
+      raw_tier_btc: null,
+      smoothed_tier_btc: 0.4789,
+      rows: [row('top', 0.49, 5000, 'filled'), row('z1', 0.4788, 20, 'recovering_nonzero')],
+    });
+    await bookRepo.record({
+      ts: 3000,
+      marginal_price_btc: 0.4788,
+      raw_tier_btc: 0.4789,
+      smoothed_tier_btc: 0.4789,
+      rows: [row('top', 0.49, 5000, 'filled'), row('z1', 0.4788, 0, 'confirmed_zero')],
+    });
+    app = await createNiceHashHttpServer({
+      store: new NiceHashStateStore('LIVE'),
+      ledger: { list: vi.fn(async () => []) } as unknown as NiceHashOrdersRepo,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+      bookSnapshots: bookRepo,
+    });
+  });
+  afterEach(async () => {
+    await app.close();
+    await closeDatabase(handle);
+  });
+
+  it('GET /api/nicehash/book returns the capture status and the latest snapshot', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/book' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.capturing).toBe(true); // config omits the toggle -> defaults on
+    expect(body.capture.count).toBe(3);
+    expect(body.capture.first_ts).toBe(1000);
+    expect(body.capture.last_ts).toBe(3000);
+    expect(body.capture.stored_bytes).toBeGreaterThan(0);
+    expect(body.latest.ts).toBe(3000);
+    expect(body.latest.rows).toHaveLength(2);
+    expect(body.latest.rows[1].debounce_state).toBe('confirmed_zero');
+  });
+
+  it('GET /api/nicehash/book reports not-capturing when no repo is wired', async () => {
+    const bare = await createNiceHashHttpServer({
+      store: new NiceHashStateStore('LIVE'),
+      ledger: { list: vi.fn(async () => []) } as unknown as NiceHashOrdersRepo,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+    });
+    try {
+      const body = (await bare.inject({ method: 'GET', url: '/api/nicehash/book' })).json();
+      expect(body).toEqual({ capturing: false, capture: null, latest: null });
+    } finally {
+      await bare.close();
+    }
+  });
+
+  it('GET /api/nicehash/book.csv streams one line per order row per snapshot, chronological', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/book.csv' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/csv');
+    expect(res.headers['content-disposition']).toMatch(
+      /^attachment; filename="nicehash-order-book-\d{8}-\d{6}\.csv"$/,
+    );
+    expect(res.body.charCodeAt(0)).toBe(0xfeff); // BOM
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows[0]).toEqual([
+      'when_iso', 'when_ms', 'marginal_btc', 'raw_tier_btc', 'smoothed_tier_btc',
+      'order_id', 'price_btc', 'limit_units', 'rigs', 'speed_units', 'debounce_state',
+    ]);
+    expect(rows.length).toBe(1 + 3 * 2); // header + 3 snapshots x 2 rows
+    const header = rows[0]!;
+    // Chronological order, and the flattened fields land in the right columns.
+    expect(rows[1]![header.indexOf('when_ms')]).toBe('1000');
+    expect(rows[5]![header.indexOf('when_ms')]).toBe('3000');
+    const flicker = rows.find((r) => r[header.indexOf('debounce_state')] === 'recovering_nonzero')!;
+    expect(flicker[header.indexOf('when_ms')]).toBe('2000');
+    expect(flicker[header.indexOf('rigs')]).toBe('20');
+    expect(flicker[header.indexOf('raw_tier_btc')]).toBe(''); // honest null in the export
+    expect(flicker[header.indexOf('smoothed_tier_btc')]).toBe('0.4789');
+  });
+
+  it('GET /api/nicehash/book.csv honors the snapshot cap (most recent first, emitted ascending)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/book.csv?snapshots=2' });
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows.length).toBe(1 + 2 * 2); // header + the 2 MOST RECENT snapshots
+    const header = rows[0]!;
+    expect(rows[1]![header.indexOf('when_ms')]).toBe('2000'); // 1000 dropped by the cap
+    expect(rows[4]![header.indexOf('when_ms')]).toBe('3000');
+  });
+
+  it('GET /api/nicehash/book.csv honors a from/to window', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/book.csv?from=1500&to=2500' });
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows.length).toBe(1 + 2); // header + the single ts=2000 snapshot
+    expect(rows[1]![rows[0]!.indexOf('when_ms')]).toBe('2000');
+  });
+
+  it('GET /api/nicehash/book.csv ends the (partial) response instead of hanging when a snapshot read fails mid-stream', async () => {
+    const original = bookRepo.get.bind(bookRepo);
+    vi.spyOn(bookRepo, 'get').mockImplementation(async (ts: number) => {
+      if (ts === 2000) throw new Error('blob corrupted');
+      return original(ts);
+    });
+    // inject() only resolves once the response ENDS - a hang here would time
+    // the test out. The export is cut short at the failing snapshot but the
+    // client still gets a complete (partial) CSV.
+    const res = await app.inject({ method: 'GET', url: '/api/nicehash/book.csv' });
+    expect(res.statusCode).toBe(200);
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows.length).toBe(1 + 2); // header + the ts=1000 snapshot's 2 rows only
+    expect(rows[1]![rows[0]!.indexOf('when_ms')]).toBe('1000');
+  });
+
+  it('POST /api/nicehash/book/clear wipes every snapshot and reports the count', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/nicehash/book/clear' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ deleted: 3 });
+    const after = (await app.inject({ method: 'GET', url: '/api/nicehash/book' })).json();
+    expect(after.capture.count).toBe(0);
+    expect(after.latest).toBeNull();
+    // Idempotent: clearing an already-empty store deletes nothing.
+    expect((await app.inject({ method: 'POST', url: '/api/nicehash/book/clear' })).json()).toEqual({ deleted: 0 });
+  });
+
+  it('POST /api/nicehash/book/clear reports 0 when no repo is wired', async () => {
+    const bare = await createNiceHashHttpServer({
+      store: new NiceHashStateStore('LIVE'),
+      ledger: { list: vi.fn(async () => []) } as unknown as NiceHashOrdersRepo,
+      settingsRepo: fakeSettingsRepo(settingsFromEnv({})).repo,
+      config: config(),
+      buildNumber: 700,
+      tickSeconds: 60,
+    });
+    try {
+      const res = await bare.inject({ method: 'POST', url: '/api/nicehash/book/clear' });
+      expect(res.json()).toEqual({ deleted: 0 });
+    } finally {
+      await bare.close();
     }
   });
 });

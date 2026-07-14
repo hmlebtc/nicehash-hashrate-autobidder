@@ -269,6 +269,12 @@ export interface NiceHashControllerConfig {
    * it. Optional; the dashboard falls back to PH when absent.
    */
   readonly speed_display_unit?: string;
+  /**
+   * Record one order-book snapshot per successful tick (the "Order book" tab
+   * + CSV export). Defaults to true when a snapshot sink is wired; costs
+   * roughly 40 MB/day at 30-second ticks (gzipped). Live-editable.
+   */
+  readonly capture_order_book?: boolean;
   /** Cheap-mode scale-up: engage when our bid < this % of hashprice. 0 disables. */
   readonly cheap_threshold_pct: number;
   /** Target speed while cheap mode is engaged (display units). */

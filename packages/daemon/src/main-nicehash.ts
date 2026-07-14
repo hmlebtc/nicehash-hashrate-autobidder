@@ -39,6 +39,7 @@ import { createNiceHashHttpServer } from './http/nicehash-server.js';
 import { HashpriceOracle } from './services/nicehash-hashprice.js';
 import { NiceHashService } from './services/nicehash-service.js';
 import { closeDatabase, openDatabase } from './state/db.js';
+import { NiceHashBookSnapshotsRepo } from './state/repos/nicehash_book_snapshots.js';
 import { NiceHashOrdersRepo } from './state/repos/nicehash_orders.js';
 import { NiceHashSettingsRepo } from './state/repos/nicehash_settings.js';
 import { NiceHashMetricsRepo } from './state/repos/nicehash_tick_metrics.js';
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
   const metricsRepo = new NiceHashMetricsRepo(handle.db);
   const eventsRepo = new NiceHashEventsRepo(handle.db);
   const decisionLogRepo = new NiceHashDecisionLogRepo(handle.db);
+  const bookSnapshotsRepo = new NiceHashBookSnapshotsRepo(handle.db);
 
   // 2. Load persisted settings, or seed from env on first boot. A stored row
   // from an older version may lack newer fields; backfill them from the env
@@ -168,6 +170,7 @@ async function main(): Promise<void> {
     metrics: metricsRepo,
     events: eventsRepo,
     decisionLog: decisionLogRepo,
+    bookSnapshots: bookSnapshotsRepo,
     speedToPriceUnit,
   });
 
@@ -181,6 +184,12 @@ async function main(): Promise<void> {
       await metricsRepo.pruneOlderThan(now - retentionMs);
       await eventsRepo.pruneOlderThan(now - retentionMs);
       await decisionLogRepo.pruneOlderThan(now - logRetentionMs);
+      // Book snapshots are the bulky series (~40 MB/day at 30s ticks), so the
+      // retention window is read fresh from the LIVE settings each prune pass
+      // (settings is reassigned by applyLiveSettings) - a dashboard edit takes
+      // effect on the next daily prune without a restart.
+      const bookRetentionMs = Math.max(1, settings.bookRetentionDays) * 24 * 60 * 60_000;
+      await bookSnapshotsRepo.pruneOlderThan(now - bookRetentionMs);
     } catch {
       /* non-fatal */
     }
@@ -233,6 +242,7 @@ async function main(): Promise<void> {
     metrics: metricsRepo,
     events: eventsRepo,
     decisionLog: decisionLogRepo,
+    bookSnapshots: bookSnapshotsRepo,
     hashprice: () => hashpriceOracle.latest(),
     runNow: doTick,
   });

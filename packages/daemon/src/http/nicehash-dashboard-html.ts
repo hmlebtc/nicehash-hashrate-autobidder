@@ -145,6 +145,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     <button data-page="status" class="active">Status</button>
     <button data-page="history">History</button>
     <button data-page="logs">Logs</button>
+    <button data-page="book">Order book</button>
     <button data-page="config">Config</button>
   </nav>
   <div class="grow"></div>
@@ -319,6 +320,27 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     </table>
   </section>
 
+  <!-- ===================== ORDER BOOK ===================== -->
+  <section id="page-book" class="page">
+    <h2 class="section">Order book capture</h2>
+    <p class="muted">One snapshot of the alive competitor book per successful tick, with each row's debounce state —
+      the raw data behind the NEXT TIER smoothing. The table shows the latest snapshot's top-of-book region
+      (down to just below the marginal). Export flattens snapshots to CSV (one line per order row) for offline
+      analysis. Capture toggle and retention are on the Config tab (Daemon &amp; data).</p>
+    <div class="btnrow">
+      <button id="bookReload">Reload</button>
+      <button id="bookExport">Export CSV</button>
+      <label class="muted">snapshots <input id="bookSnaps" type="number" min="1" max="2880" step="1" value="240" style="width:90px;font:inherit;padding:6px 9px;border-radius:7px;border:1px solid #30363d;background:#0e1116;color:#e6edf3" title="how many of the most recent snapshots to export (240 = 2h at 30s ticks, max 2880)" /></label>
+      <button id="bookClear" title="Delete ALL stored order-book snapshots">Clear data</button>
+      <span class="msg" id="bookMsg"></span>
+    </div>
+    <div class="msg" id="bookStatusLine">—</div>
+    <table>
+      <thead><tr><th>Price</th><th>Rigs</th><th>Speed</th><th>Limit</th><th>Order</th><th>Debounce</th></tr></thead>
+      <tbody id="bookRows"><tr><td colspan="6" class="muted">—</td></tr></tbody>
+    </table>
+  </section>
+
   <!-- ===================== CONFIG ===================== -->
   <section id="page-config" class="page">
     <h2 class="section">Configuration</h2>
@@ -412,6 +434,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('active', b.getAttribute('data-page') === p); });
     if (p === 'history') loadHistory();
     if (p === 'logs') loadLogs();
+    if (p === 'book') loadBook();
     if (p === 'config') { buildConfigForm(); loadConfig(); } // rebuild so unit labels reflect the live market
     if (p === 'status') { loadMetrics(); loadSummary(); }
   }
@@ -723,6 +746,11 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       if (med > 0 && (btc < med * 0.5 || btc > med * 2)) return null; // outlier -> drop
       return cvPrice(btc);
     }
+    // The cyan next-filled-tier line: a null tier means the filled top reaches
+    // the marginal (the market clears AT the purple price), so draw the cyan
+    // AT the marginal instead of breaking the line. Presentation only - the
+    // stored metrics rows and CSV exports keep the honest null.
+    function tierY(r) { return ppb(r.next_filled_price_btc != null ? r.next_filled_price_btc : r.anchor_price_btc); }
     // The Y scale follows the action that matters: our bid, the marginal we track,
     // and the (binding) dynamic cap. Hashprice is dropped from this chart (it sits
     // far above the action and is redundant with the green dynamic-cap line + the
@@ -733,7 +761,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     var price = [
       { color: '#fb923c', points: m.map(function (r) { return { x: r.ts, y: ppb(r.our_price_btc) }; }) },
       { color: '#a855f7', points: m.map(function (r) { return { x: r.ts, y: ppb(r.anchor_price_btc) }; }) },
-      { color: '#38bdf8', noscale: true, points: m.map(function (r) { return { x: r.ts, y: ppb(r.next_filled_price_btc) }; }) },
+      { color: '#38bdf8', noscale: true, points: m.map(function (r) { return { x: r.ts, y: tierY(r) }; }) },
       { color: '#34d399', dashed: true, points: m.map(function (r) { return { x: r.ts, y: ppb(dynamicCapBtc(r.hashprice_btc_per_unit_day)) }; }) },
       { color: '#f87171', dashed: true, noscale: true, points: m.map(function (r) { return { x: r.ts, y: pp(hardcap) }; }) }
     ];
@@ -745,7 +773,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     // band filter (ppb) as the price chart so a bad tick can't blow out the axis.
     var market = [
       { color: '#94a3b8', points: m.map(function (r) { return { x: r.ts, y: ppb(r.hashprice_btc_per_unit_day) }; }) },
-      { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: ppb(r.next_filled_price_btc) }; }) },
+      { color: '#38bdf8', points: m.map(function (r) { return { x: r.ts, y: tierY(r) }; }) },
       { color: '#fbbf24', points: m.map(function (r) { return { x: r.ts, y: ppb(r.market_median_price_btc) }; }) },
       { color: '#f472b6', points: m.map(function (r) { return { x: r.ts, y: ppb(r.market_avg_price_btc) }; }) }
     ];
@@ -875,9 +903,22 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('orderRunwayLimitSub').textContent = primary ? 'if delivered at full limit' : 'no active order';
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
     $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
+    // Null tier = the filled top reaches the marginal (the market clears AT
+    // the purple price). Presentation only: show the marginal value instead of
+    // a dash so the tile (like the cyan chart line) never blanks out - the
+    // API/status field itself stays an honest null.
     var nextTier = s.market && s.market.next_filled_price_btc != null ? s.market.next_filled_price_btc : null;
-    $('nextTier').textContent = nextTier != null ? fmtPrice(nextTier) : '—';
-    $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
+    var tierMarginal = s.market && s.market.anchor_price_btc != null ? s.market.anchor_price_btc : null;
+    if (nextTier != null) {
+      $('nextTier').textContent = fmtPrice(nextTier);
+      $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
+    } else if (tierMarginal != null) {
+      $('nextTier').textContent = fmtPrice(tierMarginal);
+      $('nextTierUnit').textContent = priceUnit() + ' · = marginal (filled top reaches the purple)';
+    } else {
+      $('nextTier').textContent = '—';
+      $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
+    }
     $('supply').textContent = s.market ? fmtSpeed(s.market.total_speed_units) : '—';
     $('supplyUnit').textContent = speedUnit() + (s.market && s.market.thin ? ' · thin market' : '');
 
@@ -1040,6 +1081,85 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     window.location.href = '/api/nicehash/logs.csv?level=' + lvls.join(',');
   });
 
+  // ---- order book page ------------------------------------------------------
+  // Latest captured snapshot (top-of-book region) + capture status line. The
+  // debounce state column is the per-row smoothing state machine: it explains
+  // WHY the tier did or did not move on this book (see the Track-to-fill help).
+  var BOOK_STATE_LABEL = {
+    filled: 'filled',
+    unconfirmed_zero: 'zero (1st read)',
+    confirmed_zero: 'zero (confirmed)',
+    recovering_nonzero: 'recovering'
+  };
+  var bookCount = 0; // last-seen snapshot count, for the Clear-data confirm text
+  async function loadBook() {
+    $('bookMsg').textContent = 'loading…';
+    try {
+      var r = await fetch('/api/nicehash/book'); var j = await r.json();
+      var cap = j.capture;
+      bookCount = cap && cap.count ? cap.count : 0;
+      if (!cap || !cap.count) {
+        $('bookStatusLine').textContent = j.capturing
+          ? 'Capture is ON — no snapshots stored yet (one per successful tick).'
+          : 'Capture is OFF (enable "Capture order book" on the Config tab).';
+      } else {
+        var mb = cap.stored_bytes / (1024 * 1024);
+        $('bookStatusLine').textContent = cap.count + ' snapshot' + (cap.count === 1 ? '' : 's') + ' · ' +
+          new Date(cap.first_ts).toLocaleString() + ' → ' + new Date(cap.last_ts).toLocaleString() +
+          ' · ~' + (mb >= 100 ? mb.toFixed(0) : mb.toFixed(1)) + ' MB stored · capture ' + (j.capturing ? 'ON' : 'OFF');
+      }
+      var snap = j.latest;
+      if (!snap || !snap.rows || !snap.rows.length) {
+        $('bookRows').innerHTML = '<tr><td colspan="6" class="muted">no snapshot yet</td></tr>';
+        $('bookMsg').textContent = '';
+        return;
+      }
+      // Top-of-book region: from the top down to a few rows below the marginal
+      // (rows are stored price-descending).
+      var rows = snap.rows, cut = rows.length;
+      if (snap.marginal_price_btc != null) {
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].price_btc < snap.marginal_price_btc) { cut = i; break; }
+        }
+        cut = Math.min(rows.length, cut + 3);
+      }
+      var shown = rows.slice(0, cut);
+      $('bookRows').innerHTML = shown.map(function (b) {
+        var color = '';
+        if (snap.marginal_price_btc != null && b.price_btc === snap.marginal_price_btc && (b.rigs_count || 0) > 0) color = ' style="color:#a855f7"'; // the marginal (purple)
+        else if (snap.smoothed_tier_btc != null && b.price_btc === snap.smoothed_tier_btc) color = ' style="color:#38bdf8"'; // the exposed tier (cyan)
+        var st = BOOK_STATE_LABEL[b.debounce_state] || b.debounce_state;
+        return '<tr><td' + color + '>' + fmtPrice(b.price_btc) + '</td><td>' + (b.rigs_count == null ? '—' : b.rigs_count) +
+          '</td><td>' + (b.accepted_speed_units == null ? '—' : fmtSpeed(b.accepted_speed_units)) +
+          '</td><td>' + (b.limit_units == null ? '—' : fmtSpeed(b.limit_units)) +
+          '</td><td><code>' + esc((b.id || '').slice(0, 8)) + '</code></td><td class="muted">' + esc(st) + '</td></tr>';
+      }).join('');
+      $('bookMsg').textContent = 'snapshot ' + new Date(snap.ts).toLocaleTimeString() +
+        ' · marginal ' + fmtPrice(snap.marginal_price_btc) +
+        ' · raw tier ' + (snap.raw_tier_btc != null ? fmtPrice(snap.raw_tier_btc) : '—') +
+        ' · smoothed tier ' + (snap.smoothed_tier_btc != null ? fmtPrice(snap.smoothed_tier_btc) : '— (= marginal)') +
+        ' · showing ' + shown.length + ' of ' + rows.length + ' rows';
+    } catch (e) { $('bookMsg').textContent = 'failed to load the order book'; }
+  }
+  $('bookReload').addEventListener('click', loadBook);
+  $('bookExport').addEventListener('click', function () {
+    var n = parseInt($('bookSnaps').value, 10);
+    window.location.href = '/api/nicehash/book.csv' + (n > 0 ? ('?snapshots=' + n) : '');
+  });
+  // Deliberately destructive: wipes every stored snapshot, so confirm() first.
+  $('bookClear').addEventListener('click', async function () {
+    var what = bookCount > 0 ? 'all ' + bookCount : 'all';
+    if (!confirm('Delete ' + what + ' stored order-book snapshots? This cannot be undone.')) return;
+    $('bookMsg').textContent = 'clearing…';
+    try {
+      var r = await fetch('/api/nicehash/book/clear', { method: 'POST' });
+      var j = await r.json();
+      await loadBook();
+      var n = j.deleted || 0;
+      $('bookMsg').textContent = 'deleted ' + n + ' snapshot' + (n === 1 ? '' : 's');
+    } catch (e) { $('bookMsg').textContent = 'clear failed'; }
+  });
+
   // ---- config page ---------------------------------------------------------
   var CFG = [
     { group: 'Connection', items: [
@@ -1060,7 +1180,7 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
-      ['anchorNextFilledTier', 'Anchor on next filled tier', 'checkbox', 'Track the next filled tier (the cyan line — the bottom of the contiguously filled top of the book, with no zero-miner orders above it) instead of the marginal (purple, the cheapest fill). On a lumpy book a bid a hair above the marginal often wins nothing because the market is really clearing into the block far above; anchoring at that block\'s bottom + your overpay puts the bid where fills provably land (still clamped by the cap). Falls back to the marginal when the filled top reaches the marginal itself. The tier is spike-smoothed: a zero-miner row only breaks the block after two consecutive book reads at zero (rig counts flicker, and brand-new orders sit at 0 miners for a minute or two while sellers migrate), and an upward tier move must hold for two consecutive ticks before the bid — and the chart — follow it; downward moves apply instantly, so a one-tick spike never triggers a raise. On is recommended.'],
+      ['anchorNextFilledTier', 'Anchor on next filled tier', 'checkbox', 'Track the next filled tier (the cyan line — the bottom of the contiguously filled top of the book, with no zero-miner orders above it) instead of the marginal (purple, the cheapest fill). On a lumpy book a bid a hair above the marginal often wins nothing because the market is really clearing into the block far above; anchoring at that block\'s bottom + your overpay puts the bid where fills provably land (still clamped by the cap). Falls back to the marginal when the filled top reaches the marginal itself — the cyan line and the Next tier tile then show the marginal value instead of a gap. The tier is flicker-smoothed BOTH ways: a zero-miner row only breaks the block after two consecutive book reads at zero (rig counts flicker, and brand-new orders sit at 0 miners for a minute or two while sellers migrate), a row that was confirmed zero needs two consecutive reads with miners before it counts as filled again (so a one-read blip can\'t collapse the tier to the marginal), and an upward tier move must hold for two consecutive ticks before the bid — and the chart — follow it; confirmed downward moves apply with at most one read of delay, and a one-tick spike never triggers a raise. On is recommended.'],
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
       ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled (and past the grace period below), raise the bid toward the floor + your overpay to win hashrate, until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'],
       ['walkUpGraceSeconds', 'Walk-up grace (seconds)', 'number', 'How long delivered hashrate must stay below your minimum fill before the bidder starts walking the price up. Gives a freshly placed or just-repriced order time to attract miners before escalating. The timer resets after each floor-tracking raise; while the escalation ladder is engaged it re-arms only when the order drops back under the minimum fill (episode-based). 0 = walk up as soon as under-filled. e.g. 180.'],
@@ -1085,7 +1205,9 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['hashpriceSource', 'Hashprice source', 'select:none,mempool', 'Network-hashprice source for the cost-vs-hashprice tile and the estimated P&L. "mempool" uses mempool.space (mainnet); "none" disables those estimates.'],
       ['priceSource', 'BTC price source', 'text', 'BTC/USD source for display purposes (reserved for a future USD toggle).'],
       ['retentionDays', 'History retention (days)', 'number', 'How many days of per-tick metrics and order history to keep before pruning.'],
-      ['logRetentionDays', 'Log retention (days)', 'select:15,30,60,90', 'How many days of decision + error logs (the Logs tab) to keep before pruning.'] ] }
+      ['logRetentionDays', 'Log retention (days)', 'select:15,30,60,90', 'How many days of decision + error logs (the Logs tab) to keep before pruning.'],
+      ['captureOrderBook', 'Capture order book', 'checkbox', 'Record one snapshot of the alive competitor order book per successful tick (the Order book tab + its CSV export), including each row\'s debounce state — lets you replay a few days of live data to diagnose the NEXT TIER behavior. Costs roughly 40 MB/day at 30-second ticks (gzipped). Applies live; turning it off keeps the stored snapshots until retention prunes them.'],
+      ['bookRetentionDays', 'Book capture retention (days)', 'number', 'How many days of order-book snapshots to keep before pruning (about 40 MB/day at 30-second ticks, so 3 days ≈ 120 MB). Clamped to 1–30. Pruning runs on boot and daily.'] ] }
   ];
   // A config field is a BTC/EH/day *price* field (Overpay, Max price, Profit
   // buffer). These are capped to the order book's 0.0001 granularity: the input

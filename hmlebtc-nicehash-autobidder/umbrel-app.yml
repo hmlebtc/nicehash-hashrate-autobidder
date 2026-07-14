@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.54"
+version: "0.6.55"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,22 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.55 - order book capture + no more gaps in the NEXT TIER line.
+
+  New "Order book" tab: the bot now records a snapshot of the competitor
+  order book every tick (with each row's flicker-filter state) and can export
+  a few days of them to CSV - run it for a while, export, and see exactly
+  what the market did and why the bot reacted the way it did - or clear the
+  stored snapshots with one (confirmed) click. Toggle and retention (default
+  3 days, roughly 40 MB per day) are on the Config tab.
+
+  The cyan NEXT TIER also stops blinking: miner counts flicker in both
+  directions, and a zero-miner row that briefly claimed miners for a single
+  reading used to blank the tier for a couple of minutes. Zero rows now need
+  two consecutive readings with miners before they count as filled again,
+  and when the filled top genuinely reaches the purple marginal the tier
+  shows the marginal value instead of a gap.
+
   v0.6.54 - NEXT TIER no longer flaps on one-tick rig-count glitches.
 
   A live probe showed the cyan next-filled-tier jumping up and back four
