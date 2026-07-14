@@ -421,3 +421,99 @@ describe('computeMarketAnchor', () => {
     expect(a.anchor_price_btc).toBe(0.0004);
   });
 });
+
+describe('computeMarketAnchor - zero-confirmation debounce', () => {
+  // Probe-verified (2026-07-14): rig counts flicker to 0 for a single book
+  // read and brand-new orders spend 30-90s at rigs=0 while sellers migrate.
+  // A zero whose id is in `unconfirmedZeroIds` (streak < 2, tracked by the
+  // caller) is transparent to the contiguity scan - not a run-breaker, but
+  // never counted as filled either.
+  const block = (): CompetingOrder[] => [
+    { id: 'a', price_btc: 0.4885, limit_units: 5, rigs_count: 3000 },
+    { id: 'b', price_btc: 0.486, limit_units: 5, rigs_count: 450 },
+    { id: 'c', price_btc: 0.482, limit_units: 5, rigs_count: 46648 },
+    { id: 'w', price_btc: 0.48, limit_units: 5, rigs_count: 0 }, // confirmed zero wall
+    { id: 'm', price_btc: 0.4789, limit_units: 5, rigs_count: 7835 }, // marginal (purple)
+  ];
+
+  it('an unconfirmed zero inside the block does not break the run (flicker suppressed)', () => {
+    // 'b' flickers 450 -> 0 for one read: with its zero unconfirmed the run
+    // still extends through it down to 0.4820 - the tier does not spike.
+    const rows = block().map((o) => (o.id === 'b' ? { ...o, rigs_count: 0 } : o));
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['b']));
+    expect(a.filled_prices[1]).toBe(0.482);
+  });
+
+  it('the same zero CONFIRMED (not in the set) breaks the run strictly', () => {
+    const rows = block().map((o) => (o.id === 'b' ? { ...o, rigs_count: 0 } : o));
+    const a = computeMarketAnchor(rows, 20, 1, new Set());
+    expect(a.filled_prices[1]).toBe(0.4885); // strict: run ends above the zero row
+  });
+
+  it('a zero row WITHOUT an id stays strict even when other ids are unconfirmed', () => {
+    // Untrackable rows (no id in the book payload) can never be debounced.
+    const rows: CompetingOrder[] = [
+      { id: 'a', price_btc: 0.4885, limit_units: 5, rigs_count: 3000 },
+      { price_btc: 0.486, limit_units: 5, rigs_count: 0 }, // no id -> immediate breaker
+      { id: 'c', price_btc: 0.482, limit_units: 5, rigs_count: 46648 },
+      { id: 'm', price_btc: 0.4789, limit_units: 5, rigs_count: 7835 },
+    ];
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['b', 'other']));
+    expect(a.filled_prices[1]).toBe(0.4885);
+  });
+
+  it('an unconfirmed zero never counts as filled: marginal, stats and tiers stay a raw read', () => {
+    // 'x' sits below the marginal with an unconfirmed zero: it must not become
+    // the marginal, enter the median/avg, or add a miner tier.
+    const rows: CompetingOrder[] = [
+      { id: 'a', price_btc: 0.4885, limit_units: 5, rigs_count: 3000, accepted_speed_units: 1 },
+      { id: 'm', price_btc: 0.4789, limit_units: 5, rigs_count: 7835, accepted_speed_units: 1 },
+      { id: 'x', price_btc: 0.47, limit_units: 5, rigs_count: 0 },
+    ];
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['x']));
+    expect(a.anchor_price_btc).toBe(0.4789); // not dragged to 0.47
+    expect(a.median_price_btc).toBeCloseTo((0.4789 + 0.4885) / 2, 9);
+    // The top run reaches the marginal (0.4885 -> 0.4789 both filled), so the
+    // tier is null exactly as in the strict view - 0.47 never enters the ladder.
+    expect(a.filled_prices).toEqual([0.4789]);
+  });
+
+  it('an unconfirmed zero above the highest miner-bearing row is still dead noise (cannot start the run)', () => {
+    const rows: CompetingOrder[] = [
+      { id: 'n', price_btc: 0.49, limit_units: 5, rigs_count: 0 }, // above everything
+      ...block(),
+    ];
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['n']));
+    expect(a.filled_prices[1]).toBe(0.482); // run starts at 0.4885 as before
+  });
+
+  it('a run bottoming on an unconfirmed-only level rounds the exposed tier UP to the nearest confirmed miner tier', () => {
+    // Chosen semantics for filled_prices[1] when the debounced run's bottom
+    // level has no confirmed miners: the `p >= nextTier` filter over the
+    // miner-bearing tiers exposes the nearest CONFIRMED tier at-or-above it -
+    // the bot only ever acts on a price where miners are provably present.
+    const rows: CompetingOrder[] = [
+      { id: 'a', price_btc: 0.5, limit_units: 5, rigs_count: 1000 },
+      { id: 'u', price_btc: 0.49, limit_units: 5, rigs_count: 0 }, // unconfirmed zero (run bottom)
+      { id: 'w', price_btc: 0.485, limit_units: 5, rigs_count: 0 }, // confirmed zero (breaker)
+      { id: 'm', price_btc: 0.48, limit_units: 5, rigs_count: 5000 }, // marginal
+    ];
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['u']));
+    // Run = {0.50, 0.49(unconfirmed)}; bottom 0.49 has no confirmed miners ->
+    // exposed tier rounds up to 0.50.
+    expect(a.filled_prices).toEqual([0.48, 0.5]);
+  });
+
+  it('unconfirmed zeros all the way to the marginal collapse the tier to null (no fabricated tier)', () => {
+    // Every zero between the block and the marginal is unconfirmed (e.g. the
+    // whole wall flickered to zero on ONE read): the scan is transparent down
+    // to the marginal, so there is no provable next tier this read. NOTE: the
+    // caller (observe) never produces this on a daemon cold start - the first
+    // successful read after restart seeds zeros as confirmed precisely so the
+    // tier cannot collapse toward the marginal and walk the bid down.
+    const rows = block().map((o) => ({ ...o }));
+    const a = computeMarketAnchor(rows, 20, 1, new Set(['w']));
+    expect(a.anchor_price_btc).toBe(0.4789);
+    expect(a.filled_prices).toEqual([0.4789]);
+  });
+});

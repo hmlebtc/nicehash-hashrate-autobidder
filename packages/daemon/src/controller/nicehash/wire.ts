@@ -50,6 +50,7 @@ export function competingOrdersFromBook(
     if (entry.alive === false) continue;
     if (entry.id !== undefined && ownOrderIds.has(entry.id)) continue;
     competitors.push({
+      ...(entry.id !== undefined ? { id: entry.id } : {}),
       price_btc: parseDecimal(entry.price),
       limit_units: parseDecimal(entry.limit),
       accepted_speed_units: parseDecimal(entry.acceptedSpeed),

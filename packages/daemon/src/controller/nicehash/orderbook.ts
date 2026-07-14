@@ -38,6 +38,16 @@ export function computeMarketAnchor(
   competitors: readonly CompetingOrder[],
   totalSpeedUnits: number,
   targetUnits: number,
+  /**
+   * Order ids whose CURRENT rigs=0 reading is not yet confirmed (fewer than
+   * two consecutive book reads at zero - the caller tracks the streaks across
+   * ticks). Probe-verified (2026-07-14, 11 live samples): rig counts flicker
+   * to 0 for a single read on rows with hundreds of rigs, and brand-new orders
+   * spend 30-90s at rigs=0 while sellers migrate to them. An unconfirmed zero
+   * row is exempted from breaking the contiguity run BELOW; everything else
+   * (marginal, filled set, stats) stays a true read of the raw rigs data.
+   */
+  unconfirmedZeroIds: ReadonlySet<string> = new Set(),
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -127,28 +137,42 @@ export function computeMarketAnchor(
     filledByRigs.length > 0
       ? (o: CompetingOrder): boolean => (o.rigs_count ?? 0) > 0
       : (o: CompetingOrder): boolean => (o.accepted_speed_units ?? 0) > 0;
+  // Zero-confirmation debounce (rigs mode only - the streaks are rig-based):
+  // a rigs=0 row whose zero reading is not yet confirmed by two consecutive
+  // reads does NOT break the run. It never counts as filled either - it can't
+  // start the run, extend the marginal, or enter the stats/minerTiers; it is
+  // merely transparent to the contiguity scan. Rows without an id can't be
+  // tracked and stay strict (immediate breakers).
+  const isUnconfirmedZero = (o: CompetingOrder): boolean =>
+    filledByRigs.length > 0 &&
+    (o.rigs_count ?? 0) === 0 &&
+    o.id !== undefined &&
+    unconfirmedZeroIds.has(o.id);
   const levels = [...new Set(valid.map((o) => o.price_btc))].sort((a, b) => b - a); // descending
   let nextTier: number | null = null;
   let started = false;
   for (const level of levels) {
     const rows = valid.filter((o) => o.price_btc === level);
     const anyFilled = rows.some(isFilledRow);
-    const allFilled = rows.every(isFilledRow);
+    const allFilledOrUnconfirmed = rows.every((o) => isFilledRow(o) || isUnconfirmedZero(o));
     if (!started) {
       if (!anyFilled) continue; // dead noise above the highest miner-bearing row
       started = true;
-      if (!allFilled) break; // mixed top level: no clean run at all
+      if (!allFilledOrUnconfirmed) break; // mixed top level: no clean run at all
       nextTier = level;
       continue;
     }
-    if (!allFilled) break; // first zero-miner row ends the run
+    if (!allFilledOrUnconfirmed) break; // first CONFIRMED zero-miner row ends the run
     nextTier = level;
   }
   if (nextTier !== null && nextTier <= marginal) nextTier = null; // must sit above the marginal
 
   // Expose the marginal + the ladder from the next tier up. No cap-clamp:
   // filled_prices is a faithful read of the miner-bearing book; the bid is capped
-  // independently in decide().
+  // independently in decide(). When the run's bottom level holds only
+  // unconfirmed-zero rows (no confirmed miners), the >= filter rounds the
+  // EXPOSED tier up to the nearest CONFIRMED miner tier at-or-above it - the
+  // tier the bot acts on is always a price where miners are provably present.
   const filledPrices =
     nextTier !== null ? [marginal, ...minerTiers.filter((p) => p >= nextTier!)] : [marginal];
 
