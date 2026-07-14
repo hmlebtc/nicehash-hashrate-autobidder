@@ -875,17 +875,19 @@ describe('observe - next-tier smoothing (zero-rig debounce + upward hysteresis)'
     expect(hyst).toEqual({ primed: true, accepted: 0.482, pending: 0.4885, pendingCount: 1 });
   });
 
-  it('drops a held-back tier that went stale below the risen marginal (invariant: tier > marginal)', async () => {
-    // The accepted tier (0.4795) predates a marginal that has since risen to
-    // 0.4800. While a new upward move is pending, the exposed tier must not
-    // sit at-or-below the marginal - it is dropped and the anchor falls back
-    // to the marginal for the tick.
+  it('clamps a held-back floor that went stale below the risen marginal UP to the marginal', async () => {
+    // The accepted floor (0.4795) predates a marginal that has since risen to
+    // 0.4800. While a new upward move is pending, the exposed floor must not
+    // sit below the marginal (a bid under the purple wins nothing) - it is
+    // clamped UP to the marginal for the tick. Crucially the clamp direction
+    // is max(): a marginal that DIPS below the accepted floor (an island)
+    // never drags the floor down.
     const streaks = primedStreaks([['wall', 5]]);
     const hyst: TierHysteresisState = { primed: true, accepted: 0.4795, pending: null, pendingCount: 0 };
     const s = await observe(smoothingDeps(57, streaks, hyst));
-    // Raw tier 0.4820 is upward vs accepted 0.4795 -> held pending; the stale
-    // 0.4795 is below the 0.4800 marginal -> dropped for this tick.
-    expect(s.market?.filled_prices).toEqual([0.48]);
+    // Raw floor 0.4820 is upward vs accepted 0.4795 -> held pending; the stale
+    // 0.4795 is below the 0.4800 marginal -> exposed floor = the marginal.
+    expect(s.market?.filled_prices).toEqual([0.48, 0.48]);
     expect(hyst.pending).toBe(0.482);
   });
 });
@@ -1075,14 +1077,15 @@ describe('observe - symmetric debounce (operator gap scenario, 2026-07-14)', () 
 
     // Ticks 4-5 (genuine fill): z1/z2 read rigs>0 twice in a row. Tick 4 is
     // the held read (breaker + freeze); tick 5 confirms - the entries drop,
-    // the run genuinely reaches the marginal, and the null lands (downward is
-    // instant once confirmed; delayed exactly one extra read overall).
+    // the run genuinely reaches the marginal, and the floor lands AT the
+    // marginal (downward is instant once confirmed; delayed exactly one
+    // extra read overall). Never null, never below the marginal.
     const s4 = await observe(gapDeps(20, streaks, hyst));
     expect(s4.market?.filled_prices?.[1]).toBe(0.4789); // still held one read
     const s5 = await observe(gapDeps(20, streaks, hyst));
     expect(streaks.rowsByOrderId.has('z1')).toBe(false); // recovery confirmed
-    expect(s5.market?.filled_prices).toEqual([0.4788]); // genuine null: fill reaches the marginal
-    expect(hyst.accepted).toBeNull();
+    expect(s5.market?.filled_prices).toEqual([0.4788, 0.4788, 0.4789, 0.49]); // floor = marginal
+    expect(hyst.accepted).toBe(0.4788);
   });
 
   it('the order-book capture sink gets the full book with per-row debounce state (strict raw vs smoothed tier)', async () => {
@@ -1097,9 +1100,10 @@ describe('observe - symmetric debounce (operator gap scenario, 2026-07-14)', () 
     const hyst: TierHysteresisState = { primed: true, accepted: 0.4789, pending: null, pendingCount: 0 };
     const captures: import('../../state/repos/nicehash_book_snapshots.js').NiceHashBookSnapshot[] = [];
 
-    // Flicker tick (z rows read rigs=20): the STRICT tier collapses to null,
-    // the smoothed tier holds 0.4789 - the capture records BOTH, plus each
-    // row's live debounce state, at the tick's own timestamp.
+    // Flicker tick (z rows read rigs=20): the STRICT floor collapses to the
+    // marginal (pre-0.6.56 this was the null-tier case), the smoothed floor
+    // holds 0.4789 - the capture records BOTH, plus each row's live debounce
+    // state, at the tick's own timestamp.
     await observe({
       ...gapDeps(20, streaks, hyst),
       now: () => 42_000,
@@ -1109,7 +1113,7 @@ describe('observe - symmetric debounce (operator gap scenario, 2026-07-14)', () 
     const snap = captures[0]!;
     expect(snap.ts).toBe(42_000);
     expect(snap.marginal_price_btc).toBe(0.4788);
-    expect(snap.raw_tier_btc).toBeNull(); // strict view: flicker collapsed the run
+    expect(snap.raw_tier_btc).toBe(0.4788); // strict floor: flicker pulled the run to the marginal
     expect(snap.smoothed_tier_btc).toBe(0.4789); // what the bot actually acted on
     expect(snap.rows.map((r) => r.price_btc)).toEqual([0.49, 0.4789, 0.4788, 0.4788, 0.4788, 0.47]); // price-descending
     const byId = new Map(snap.rows.map((r) => [r.id, r]));
@@ -1131,5 +1135,145 @@ describe('observe - symmetric debounce (operator gap scenario, 2026-07-14)', () 
     };
     await observe(failing);
     expect(captures).toHaveLength(1); // no new capture
+  });
+});
+
+describe('observe - 17:18:44Z phantom-marginal replay (operator capture, 2026-07-14)', () => {
+  // The tick that walked the live bid out of the block: marginal 0.46 (an
+  // uncapped island with 1735 rigs receiving a dribble 0.019 below the
+  // block), dust islands at 0.4769, block bottom 0.4789 - and the hysteresis
+  // mid null->0.4789 up-confirmation, so the exposed tier was NULL and the
+  // old anchor fell back to the RAW marginal: `walk down to floor: 0.4789 ->
+  // 0.4769 (anchor 0.4600)`. Under the floor anchor the exposed value must
+  // stay at the block bottom on EVERY tick - 0.46 can never surface.
+  const row = (id: string, price: string, rigs: number, limit: string, speed = '0') => ({
+    id, price, limit, acceptedSpeed: speed, rigsCount: rigs, alive: true,
+  });
+  const islandBook = () => ({
+    stats: {
+      BTC: {
+        totalSpeed: '100',
+        displayMarketFactor: 'PH',
+        displayPriceFactor: 'EH',
+        orders: [
+          row('top', '0.4900', 5000, '5', '0.2'),
+          row('r4789', '0.4789', 120, '5', '0.01'),
+          row('big', '0.4788', 0, '5'), // confirmed zero: the run break
+          row('7595dfbe', '0.4787', 0, '0.001'), // dust wall
+          row('16ee71c4', '0.4781', 0, '0.01'), // non-dust confirmed zero
+          row('dust-isl', '0.4769', 4, '0.001'), // dust island (raw fill)
+          row('8bf7de86', '0.4600', 1735, '0', '0.0064'), // the uncapped island = raw marginal
+        ],
+      },
+    },
+  });
+  const islandDeps = (streaks: ZeroRigStreakState, hyst: TierHysteresisState) => ({
+    service: service({
+      getMyOrders: vi.fn(async () => ({ list: [] })) as unknown as NiceHashService['getMyOrders'],
+      getOrderBook: vi.fn(async () => islandBook()) as unknown as NiceHashService['getOrderBook'],
+    }),
+    ...base,
+    config: config({ dust_limit_units: 0.005 }),
+    knownOrderIds: new Set<string>(),
+    zeroRigStreakState: streaks,
+    tierHysteresisState: hyst,
+  });
+  const warmStreaks = (): ZeroRigStreakState => ({
+    primed: true,
+    rowsByOrderId: new Map([
+      ['big', { zeroReads: 5, nonzeroReads: 0 }],
+      ['16ee71c4', { zeroReads: 5, nonzeroReads: 0 }],
+    ]),
+  });
+
+  it('mid up-confirmation (the captured hysteresis state): the exposed anchor is the floor, never 0.46', async () => {
+    // The exact state from the capture: accepted null, 0.4789 pending with
+    // one agreeing tick. Pre-fix, the exposed tier was null and decide()
+    // anchored on the 0.46 marginal.
+    const streaks = warmStreaks();
+    const hyst: TierHysteresisState = { primed: true, accepted: null, pending: 0.4789, pendingCount: 1 };
+    for (let tick = 1; tick <= 5; tick++) {
+      const s = await observe(islandDeps(streaks, hyst));
+      expect(s.market?.anchor_price_btc).toBe(0.46); // honest purple
+      expect(s.market?.filled_prices?.[1]).toBe(0.4789); // the bid anchor: always the floor
+    }
+    expect(hyst.accepted).toBe(0.4789); // the pending up-move confirmed on tick 1
+  });
+
+  it('worst-case null window (accepted null, nothing pending): the CURRENT run bottom is exposed, never 0.46', async () => {
+    // Even before the up-confirmation completes, the exposure must base on
+    // the debounced run bottom - never fall through to the raw marginal.
+    const streaks = warmStreaks();
+    const hyst: TierHysteresisState = { primed: true, accepted: null, pending: null, pendingCount: 0 };
+    const s1 = await observe(islandDeps(streaks, hyst));
+    expect(s1.market?.filled_prices?.[1]).toBe(0.4789); // exposed while still unconfirmed
+    const s2 = await observe(islandDeps(streaks, hyst));
+    expect(s2.market?.filled_prices?.[1]).toBe(0.4789); // confirmed on the 2nd tick
+    expect(hyst.accepted).toBe(0.4789);
+  });
+});
+
+describe('observe - dust dither replay (466c4bd7, operator capture 2026-07-14)', () => {
+  // The 0.4788 marginal level carries the big filled row AND a limit-0.001
+  // dust row that GENUINELY toggles zero/filled on 1-2 minute timescales
+  // (2+ consecutive reads - it passes the rig debounce legitimately). Each
+  // flap moved the old tier null<->0.4789, dithering the bid +-0.0001 with a
+  // 10-minute decrease lock armed on every raise. With the dust filter the
+  // row is invisible and the floor pins at 0.4788.
+  const row = (id: string, price: string, rigs: number, limit: string) => ({
+    id, price, limit, acceptedSpeed: '0', rigsCount: rigs, alive: true,
+  });
+  const ditherBook = (togglerRigs: number) => ({
+    stats: {
+      BTC: {
+        totalSpeed: '100',
+        displayMarketFactor: 'PH',
+        displayPriceFactor: 'EH',
+        orders: [
+          row('top', '0.4900', 5000, '5'),
+          row('r4789', '0.4789', 120, '5'),
+          row('big', '0.4788', 41850, '5'),
+          row('466c4bd7', '0.4788', togglerRigs, '0.001'), // the dust toggler
+          row('tail', '0.4700', 0, '5'), // confirmed zero below the marginal
+        ],
+      },
+    },
+  });
+
+  // Drive 24 ticks with the toggler flipping every 3 reads (slow enough to
+  // pass the rig debounce, exactly like the live row) and collect the exposed
+  // floor per tick.
+  async function runDither(dustLimitUnits: number): Promise<(number | null | undefined)[]> {
+    const streaks = initialZeroRigStreaks();
+    const hyst = initialTierHysteresis();
+    const floors: (number | null | undefined)[] = [];
+    for (let tick = 0; tick < 24; tick++) {
+      const togglerRigs = tick % 6 < 3 ? 0 : 20;
+      const s = await observe({
+        service: service({
+          getMyOrders: vi.fn(async () => ({ list: [] })) as unknown as NiceHashService['getMyOrders'],
+          getOrderBook: vi.fn(async () => ditherBook(togglerRigs)) as unknown as NiceHashService['getOrderBook'],
+        }),
+        ...base,
+        config: config({ dust_limit_units: dustLimitUnits }),
+        knownOrderIds: new Set<string>(),
+        zeroRigStreakState: streaks,
+        tierHysteresisState: hyst,
+      });
+      floors.push(s.market?.filled_prices?.[1]);
+    }
+    return floors;
+  }
+
+  it('with the dust filter the floor is CONSTANT across 24 ticks of genuine dust toggling', async () => {
+    const floors = await runDither(0.005);
+    expect(new Set(floors)).toEqual(new Set([0.4788])); // pinned at the block bottom
+  });
+
+  it('with dustLimitUnits=0 the old flapping returns (the escape hatch is real)', async () => {
+    const floors = await runDither(0);
+    const distinct = new Set(floors);
+    expect(distinct.has(0.4788)).toBe(true);
+    expect(distinct.has(0.4789)).toBe(true); // the toggler moves the floor without the filter
   });
 });

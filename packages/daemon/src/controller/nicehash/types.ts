@@ -58,16 +58,22 @@ export interface MarketAnchor {
   /**
    * Ascending prices of competitor orders currently being filled (have miners),
    * i.e. the "fill ladder". `anchor_price_btc` is its first (cheapest) entry;
-   * `filled_prices[1]` is the NEXT FILLED TIER - the bottom of the contiguously
-   * miner-bearing run at the top of the book (every row above it filled) -
-   * omitted when that run reaches the marginal itself (the market genuinely
-   * clears at the marginal). Empty when nothing is being filled.
+   * `filled_prices[1]` is the BID-FLOOR ANCHOR - the bottom of the contiguous
+   * (debounced, dust-transparent) miner-bearing run at the top of the book,
+   * rounded up to the nearest non-dust confirmed miner tier. It EQUALS the
+   * marginal (a duplicate entry) when the fill genuinely reaches the bottom;
+   * it is only absent when nothing non-dust is filled at all. Never an island
+   * below a confirmed-zero break, by construction - the raw marginal ([0])
+   * has no such protection and must not anchor the bid while next-tier
+   * anchoring is on. Empty when nothing is being filled.
    *
-   * SMOOTHED in the daemon (observe): a zero-rig row needs two consecutive
-   * book reads to count as a run-breaker, and an upward tier move must hold
-   * for two consecutive ticks before it is exposed (downward moves apply
-   * instantly) - so one-tick rig-count flicker never flaps the tier. The one
-   * smoothed value is what decide(), the metrics and the dashboard all see.
+   * SMOOTHED in the daemon (observe): rig-count flicker is debounced BOTH
+   * ways (a zero needs two consecutive reads to break the run; a confirmed
+   * zero needs two consecutive miner-bearing reads to count filled again),
+   * dust rows (limit below the configured threshold) are transparent, and an
+   * upward floor move must hold for two consecutive ticks before it is
+   * exposed (downward moves apply instantly). The one smoothed value is what
+   * decide(), the metrics and the dashboard all see.
    */
   readonly filled_prices?: readonly number[];
   /**
@@ -200,18 +206,29 @@ export interface NiceHashControllerConfig {
   /** NiceHash minimum order amount (BTC), from algorithm metadata. */
   readonly min_order_amount_btc: number;
   /**
-   * Anchor on the *next filled tier* (`MarketAnchor.filled_prices[1]` - the
-   * bottom of the contiguously miner-bearing top of the book) instead of the
-   * marginal (cheapest filled, `filled_prices[0]`). The marginal is the
-   * theoretical price to beat, but on a lumpy book bidding a hair above it
-   * often wins nothing - the market is really clearing into the contiguous
-   * block far above. Tracking that block's bottom + overpay places the bid
-   * where fills provably happen (still clamped by the cap). Falls back to the
-   * marginal when the contiguous fill reaches the marginal (no separate tier).
-   * Default off (undefined) in the pure controller; the daemon defaults it on.
+   * Anchor on the *bid-floor anchor* (`MarketAnchor.filled_prices[1]` - the
+   * bottom of the contiguous, debounced, dust-transparent miner-bearing top
+   * of the book) instead of the raw marginal (cheapest filled,
+   * `filled_prices[0]`). The marginal is the theoretical price to beat, but
+   * on a lumpy book bidding a hair above it often wins nothing - the market
+   * is really clearing into the contiguous block far above, and the RAW
+   * marginal can dip onto an isolated island receiving a dribble (2026-07-14
+   * capture: a limit-0 island 0.019 below the block walked the live bid out
+   * of the block). Tracking the block's bottom + overpay places the bid
+   * where fills provably happen (still clamped by the cap). The floor EQUALS
+   * the marginal when the contiguous fill reaches it. Default off
+   * (undefined) in the pure controller; the daemon defaults it on.
    * #tracks NiceHash cyan line.
    */
   readonly anchor_next_filled_tier?: boolean;
+  /**
+   * Dust threshold (speed-display units): book rows with 0 < limit below this
+   * are transparent to the floor scan (their fill state is noise - a row that
+   * can absorb ~a thousandth of the target says nothing about whether a
+   * full-size order fills there). limit 0 = uncapped, never dust. 0 disables.
+   * The daemon defaults it to 0.005.
+   */
+  readonly dust_limit_units?: number;
   /**
    * Track-to-fill: treat the order as "filled" once delivered speed reaches this
    * percent of the (effective) target. Below it, the bidder walks the price up.

@@ -15,9 +15,9 @@ describe('computeMarketAnchor', () => {
     expect(a.anchor_price_btc).toBe(0.0004);
     expect(a.thin).toBe(false);
     // The whole book above the marginal is contiguously miner-bearing, so the
-    // top run reaches the marginal itself: there is NO separate next tier - a
-    // bid at the marginal wins (strict contiguous-top rule).
-    expect(a.filled_prices).toEqual([0.0004]);
+    // top run reaches the marginal itself: the bid-floor anchor ([1]) EQUALS
+    // the marginal - a bid at the marginal wins (run-bottom floor rule).
+    expect(a.filled_prices).toEqual([0.0004, 0.0004, 0.0005, 0.0006]);
   });
 
   it('anchors at the GLOBAL cheapest order with miners and the ladder is miner-bearing only', () => {
@@ -91,7 +91,7 @@ describe('computeMarketAnchor', () => {
     ];
     const a = computeMarketAnchor(competitors, 18, 1);
     expect(a.anchor_price_btc).toBe(0.46); // the miner-bearing block, not the speed-only 0.458
-    expect(a.filled_prices).toEqual([0.46]);
+    expect(a.filled_prices).toEqual([0.46, 0.46]); // floor = the (single-tier) block = marginal
   });
 
   it('anchors on the miner-bearing block, ignoring residual-speed stragglers below a wide gap', () => {
@@ -111,8 +111,8 @@ describe('computeMarketAnchor', () => {
     const a = computeMarketAnchor(competitors, 13, 1);
     expect(a.anchor_price_btc).toBe(0.4606); // NiceHash purple, not the 0.4556 straggler
     // 0.462 -> 0.4607 -> 0.4606 (the marginal) are contiguously miner-bearing:
-    // the top run reaches the marginal, so there is no separate next tier.
-    expect(a.filled_prices).toEqual([0.4606]);
+    // the top run reaches the marginal, so the floor anchor equals it.
+    expect(a.filled_prices).toEqual([0.4606, 0.4606, 0.4607, 0.462]);
   });
 
   it('counts orders by accepted-speed when no rig counts are reported anywhere', () => {
@@ -181,11 +181,11 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices).toEqual([0.4535, 0.456]);
   });
 
-  it('a book contiguously filled down to the marginal has NO separate next tier', () => {
+  it('a book contiguously filled down to the marginal has floor = marginal', () => {
     // Live book (2026-07-06): marginal 0.4556 (purple, 57k miners), then 0.4557,
     // 0.4559, 0.456, 0.4561, 0.4562 - every row miner-bearing. The contiguous
     // top run reaches the marginal itself: the market genuinely clears at the
-    // marginal, so a bid there wins and next tier is null ([marginal] ladder).
+    // marginal, so a bid there wins - the floor anchor ([1]) equals it.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4556, limit_units: 0.0187, rigs_count: 57182 }, // marginal (purple)
       { price_btc: 0.4557, limit_units: 0.00001, rigs_count: 16 },
@@ -196,7 +196,7 @@ describe('computeMarketAnchor', () => {
     ];
     const a = computeMarketAnchor(competitors, 14, 1);
     expect(a.anchor_price_btc).toBe(0.4556);
-    expect(a.filled_prices).toEqual([0.4556]);
+    expect(a.filled_prices).toEqual([0.4556, 0.4556, 0.4557, 0.4559, 0.456, 0.4561, 0.4562]);
   });
 
   it('skips a lone miner straggler and anchors the next tier on the contiguous top block', () => {
@@ -235,10 +235,10 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices[1]).toBe(0.4568); // bottom of the contiguous top, not the 0-miner rows
   });
 
-  it('a fully miner-bearing book (dup marginal rows included) has no next tier', () => {
+  it('a fully miner-bearing book (dup marginal rows included) has floor = marginal', () => {
     // Every row carries miners, so the contiguous top run reaches the marginal
-    // (0.4533, shared by two rows - the de-dupe must not fabricate a tier).
-    // Market clears at the marginal: next tier null, ladder = [marginal].
+    // (0.4533, shared by two rows - the de-dupe must not fabricate a HIGHER
+    // floor). Market clears at the marginal: floor anchor = marginal.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.4533, limit_units: 5, rigs_count: 30000 },
       { price_btc: 0.4533, limit_units: 5, rigs_count: 22831 }, // dup marginal
@@ -247,7 +247,7 @@ describe('computeMarketAnchor', () => {
     ];
     const a = computeMarketAnchor(competitors, 17.7, 1);
     expect(a.anchor_price_btc).toBe(0.4533);
-    expect(a.filled_prices).toEqual([0.4533]);
+    expect(a.filled_prices).toEqual([0.4533, 0.4533, 0.4553, 0.4555]);
   });
 
   it('reads the top block faithfully however far above any cap it sits (no clamp)', () => {
@@ -356,10 +356,10 @@ describe('computeMarketAnchor', () => {
     expect(a.filled_prices[1]).toBe(0.4831);
   });
 
-  it('no contiguous tier above the marginal -> null (ladder = [marginal])', () => {
-    // The highest miner-bearing row IS the marginal (everything above it is
-    // zero-miner): the run bottoms out at the marginal, so there is no next
-    // tier to anchor above it.
+  it('the highest miner-bearing row IS the marginal -> floor = marginal', () => {
+    // Everything above the marginal is zero-miner (dead noise): the run both
+    // starts and bottoms at the marginal, so the floor anchor equals it -
+    // never null, never anything below it.
     const competitors: CompetingOrder[] = [
       { price_btc: 0.48, limit_units: 5, rigs_count: 0 },
       { price_btc: 0.479, limit_units: 5, rigs_count: 0 },
@@ -367,7 +367,7 @@ describe('computeMarketAnchor', () => {
     ];
     const a = computeMarketAnchor(competitors, 20, 1);
     expect(a.anchor_price_btc).toBe(0.4788);
-    expect(a.filled_prices).toEqual([0.4788]);
+    expect(a.filled_prices).toEqual([0.4788, 0.4788]);
   });
 
   it('row-level strictness: a zero-miner row sharing a price with a miner-bearing row taints the level', () => {
@@ -473,9 +473,10 @@ describe('computeMarketAnchor - zero-confirmation debounce', () => {
     const a = computeMarketAnchor(rows, 20, 1, new Set(['x']));
     expect(a.anchor_price_btc).toBe(0.4789); // not dragged to 0.47
     expect(a.median_price_btc).toBeCloseTo((0.4789 + 0.4885) / 2, 9);
-    // The top run reaches the marginal (0.4885 -> 0.4789 both filled), so the
-    // tier is null exactly as in the strict view - 0.47 never enters the ladder.
-    expect(a.filled_prices).toEqual([0.4789]);
+    // The run extends through the transparent 0.47 zero, but the floor rounds
+    // back UP to the nearest confirmed miner tier - the marginal. 0.47 never
+    // enters the ladder or the floor.
+    expect(a.filled_prices).toEqual([0.4789, 0.4789, 0.4885]);
   });
 
   it('an unconfirmed zero above the highest miner-bearing row is still dead noise (cannot start the run)', () => {
@@ -529,16 +530,86 @@ describe('computeMarketAnchor - zero-confirmation debounce', () => {
     expect(a.filled_prices).toEqual([0.475, 0.5]); // scan: run = {0.50}, breaker at 0.485
   });
 
-  it('unconfirmed zeros all the way to the marginal collapse the tier to null (no fabricated tier)', () => {
+  it('unconfirmed zeros all the way to the marginal pull the floor down to the marginal (never below)', () => {
     // Every zero between the block and the marginal is unconfirmed (e.g. the
     // whole wall flickered to zero on ONE read): the scan is transparent down
-    // to the marginal, so there is no provable next tier this read. NOTE: the
+    // to the marginal, so the run bottoms there and the floor equals the
+    // marginal - no fabricated tier above it, nothing below it. NOTE: the
     // caller (observe) never produces this on a daemon cold start - the first
     // successful read after restart seeds zeros as confirmed precisely so the
-    // tier cannot collapse toward the marginal and walk the bid down.
+    // floor cannot collapse toward the marginal and walk the bid down.
     const rows = block().map((o) => ({ ...o }));
     const a = computeMarketAnchor(rows, 20, 1, new Set(['w']));
     expect(a.anchor_price_btc).toBe(0.4789);
-    expect(a.filled_prices).toEqual([0.4789]);
+    expect(a.filled_prices).toEqual([0.4789, 0.4789, 0.482, 0.486, 0.4885]);
+  });
+});
+
+describe('computeMarketAnchor - dust transparency (v0.6.56)', () => {
+  // Block 0.4885/0.4820 over a confirmed-zero wall at 0.4810; marginal 0.48.
+  const dustBook = (): CompetingOrder[] => [
+    { id: 'top', price_btc: 0.4885, limit_units: 5, rigs_count: 3000 },
+    { id: 'mid', price_btc: 0.482, limit_units: 5, rigs_count: 57 },
+    { id: 'wall', price_btc: 0.481, limit_units: 5, rigs_count: 0 },
+    { id: 'm', price_btc: 0.48, limit_units: 5, rigs_count: 46648 },
+  ];
+  const DUST = 0.005;
+  const anchor = (rows: CompetingOrder[], dust = DUST) =>
+    computeMarketAnchor(rows, 20, 1, new Set(), new Set(), dust);
+
+  it('a zero-miner dust row inside the block does not break the run', () => {
+    const rows = [...dustBook(), { id: 'd', price_btc: 0.4822, limit_units: 0.001, rigs_count: 0 }];
+    expect(anchor(rows).filled_prices[1]).toBe(0.482); // dust invisible: run reaches 0.4820
+    // Without the dust filter the same row is a strict breaker.
+    expect(computeMarketAnchor(rows, 20, 1).filled_prices[1]).toBe(0.4885);
+  });
+
+  it('a FILLED dust row below the wall never extends the run or becomes the floor - but IS the raw marginal', () => {
+    // The operator's 0.4769 dust island (limit 0.001, a few rigs): the purple
+    // display stays honest (raw marginal = 0.4769) while the floor stays at
+    // the block bottom.
+    const rows = [
+      ...dustBook(),
+      { id: 'd', price_btc: 0.4769, limit_units: 0.001, rigs_count: 5, accepted_speed_units: 0.0001 },
+    ];
+    const a = anchor(rows);
+    expect(a.anchor_price_btc).toBe(0.4769); // raw purple: honest
+    expect(a.filled_prices[0]).toBe(0.4769);
+    expect(a.filled_prices[1]).toBe(0.482); // floor: the block bottom, never the dust
+  });
+
+  it('limit == threshold is NOT dust; strictly below is', () => {
+    const at = [...dustBook(), { id: 'd', price_btc: 0.4822, limit_units: DUST, rigs_count: 0 }];
+    expect(anchor(at).filled_prices[1]).toBe(0.4885); // at the threshold: a real breaker
+    const below = [...dustBook(), { id: 'd', price_btc: 0.4822, limit_units: DUST - 0.0001, rigs_count: 0 }];
+    expect(anchor(below).filled_prices[1]).toBe(0.482); // strictly below: transparent
+  });
+
+  it('limit 0 means UNCAPPED and is never dust', () => {
+    const rows = [...dustBook(), { id: 'u', price_btc: 0.4822, limit_units: 0, rigs_count: 0 }];
+    expect(anchor(rows).filled_prices[1]).toBe(0.4885); // uncapped zero row is a real breaker
+  });
+
+  it('dustLimitUnits 0 disables the filter entirely (escape hatch)', () => {
+    const rows = [...dustBook(), { id: 'd', price_btc: 0.4822, limit_units: 0.001, rigs_count: 0 }];
+    expect(anchor(rows, 0).filled_prices[1]).toBe(0.4885); // dust row breaks again
+  });
+
+  it("the 17:18Z shape: floor pins at the block bottom while the purple dips to the uncapped island", () => {
+    // Operator capture, 2026-07-14 17:18:44Z: marginal 0.46 (8bf7de86,
+    // limit 0 = uncapped, 1735 rigs, an isolated island 0.019 below the
+    // block), dust islands and a dust wall in between, block bottom 0.4789.
+    const rows: CompetingOrder[] = [
+      { id: 'top', price_btc: 0.49, limit_units: 5, rigs_count: 5000 },
+      { id: 'r4789', price_btc: 0.4789, limit_units: 5, rigs_count: 120 },
+      { id: 'big', price_btc: 0.4788, limit_units: 5, rigs_count: 0 }, // confirmed zero: the break
+      { id: '7595dfbe', price_btc: 0.4787, limit_units: 0.001, rigs_count: 0 }, // dust wall
+      { id: '16ee71c4', price_btc: 0.4781, limit_units: 0.01, rigs_count: 0 }, // non-dust zero
+      { id: 'dust-isl', price_btc: 0.4769, limit_units: 0.001, rigs_count: 4 }, // dust island
+      { id: '8bf7de86', price_btc: 0.46, limit_units: 0, rigs_count: 1735, accepted_speed_units: 0.0064 },
+    ];
+    const a = anchor(rows);
+    expect(a.anchor_price_btc).toBe(0.46); // honest purple
+    expect(a.filled_prices[1]).toBe(0.4789); // the floor never follows the island
   });
 });

@@ -45,9 +45,14 @@ export interface NiceHashBookSnapshot {
   /** Book read time (= the tick's `tick_at`, joinable with the metrics rows). */
   readonly ts: number;
   readonly marginal_price_btc: number | null;
-  /** Strict next tier straight from the raw book (no smoothing). */
+  /**
+   * Strict bid-floor straight from the raw book (no debounce, no hysteresis,
+   * no dust filter); equals the marginal when the raw fill reaches it.
+   * Snapshots recorded before v0.6.56 carried the nullable strict next tier
+   * instead (null = fill reached the marginal).
+   */
   readonly raw_tier_btc: number | null;
-  /** The exposed (debounce + hysteresis) tier the bot acted on. */
+  /** The exposed (debounced + hysteresis, dust-transparent) floor anchor the bot acted on. */
   readonly smoothed_tier_btc: number | null;
   /** Alive competitor rows, price-descending. */
   readonly rows: readonly NiceHashBookRowCapture[];

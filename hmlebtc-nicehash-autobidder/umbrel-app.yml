@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.55"
+version: "0.6.56"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,20 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.56 - the bid floor sticks to the real block, immune to dust and islands.
+
+  The first order-book captures caught two subtle pricing bugs. One: for a
+  moment the bot priced from the raw "cheapest fill" marker while that marker
+  sat on an isolated order far below the real block - the bid briefly walked
+  out of the block and had to re-climb. The bid now always anchors on the
+  bottom of the actually-filled block; the purple marginal remains on display
+  but no longer steers the bid (turn "Anchor on next filled tier" off to get
+  the old behavior). Two: tiny orders (speed limit under the new dust
+  threshold, default 0.005) genuinely flip between filled and empty every
+  minute or two, and every flip nudged the bid up or down 0.0001 - each nudge
+  arming NiceHash's 10-minute price-decrease lock. Such dust rows are now
+  ignored when computing the bid floor, so the bid stays put.
+
   v0.6.55 - order book capture + no more gaps in the NEXT TIER line.
 
   New "Order book" tab: the bot now records a snapshot of the competitor

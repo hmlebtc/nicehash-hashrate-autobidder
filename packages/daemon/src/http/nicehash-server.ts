@@ -229,10 +229,11 @@ function statusView(result: NiceHashTickResult | null, deps: NiceHashHttpDeps): 
     tick_seconds: tickSeconds,
     build: deps.buildNumber,
     config: configView,
-    // Only the fields the dashboard needs: the marginal (purple) + the next
-    // filled tier (cyan, `filled_prices[1]` - the bottom of the contiguously
-    // miner-bearing top of the book; null when the fill reaches the marginal)
-    // for the tiles and chart; the rest of the ladder is omitted.
+    // Only the fields the dashboard needs: the raw marginal (purple) + the
+    // bid-floor anchor (cyan, `filled_prices[1]` - the bottom of the
+    // contiguous filled block; EQUALS the marginal when the fill reaches it,
+    // null only when nothing non-dust is filled) for the tiles and chart; the
+    // rest of the ladder is omitted.
     market: s.market
       ? {
           anchor_price_btc: s.market.anchor_price_btc,

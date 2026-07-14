@@ -49,12 +49,20 @@ export interface NiceHashSettings {
   readonly maxPremiumOverHashpriceBtc: number;
   // --- Track-to-fill ---
   /**
-   * Anchor on the next filled tier (second rung of the fill ladder) instead of
-   * the marginal (cheapest filled). Places the bid where the market is actually
-   * allocating hashrate on a thin/lumpy book. Falls back to the marginal when
-   * there is no distinct second tier. Default true.
+   * Anchor on the bid-floor anchor (the bottom of the contiguous filled block,
+   * `filled_prices[1]`) instead of the raw marginal (cheapest filled). Places
+   * the bid where the market is actually allocating hashrate on a thin/lumpy
+   * book, immune to marginal dips onto islands. The floor equals the marginal
+   * when the fill reaches it. Default true.
    */
   readonly anchorNextFilledTier: boolean;
+  /**
+   * Ignore book rows with 0 < limit below this (speed-display units) in the
+   * floor scan - their fill state is noise (a limit-0.001 row toggling
+   * zero/filled dithered the live bid +-0.0001 endlessly, 2026-07-14
+   * capture). limit 0 = uncapped, never dust. 0 disables. Default 0.005.
+   */
+  readonly dustLimitUnits: number;
   /** Treat the order as filled once delivered ≥ this % of target. Default 80. */
   readonly minFillPct: number;
   /**
@@ -190,6 +198,7 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
     anchorNextFilledTier: b(env, 'NICEHASH_ANCHOR_NEXT_FILLED_TIER', true),
+    dustLimitUnits: n(env, 'NICEHASH_DUST_LIMIT_UNITS', 0.005),
     minFillPct: n(env, 'NICEHASH_MIN_FILL_PCT', 80),
     walkUpEnabled: b(env, 'NICEHASH_WALK_UP', true),
     walkUpGraceSeconds: n(env, 'NICEHASH_WALK_UP_GRACE_SECONDS', 180),
@@ -250,6 +259,7 @@ export function toControllerConfig(
     refill_when_runway_hours: settings.refillWhenRunwayHours,
     min_order_amount_btc: parseDecimal(algo.minimalOrderAmount, 0.001),
     anchor_next_filled_tier: settings.anchorNextFilledTier,
+    dust_limit_units: settings.dustLimitUnits,
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
     min_fill_pct: settings.minFillPct,
@@ -335,6 +345,9 @@ export function mergeSettings(
     cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
     anchorNextFilledTier: bool('anchorNextFilledTier'),
+    // Clamp to >= 0 (0 disables); a cleared field coerces to 0, which is the
+    // documented "off" value, so no floor beyond non-negativity.
+    dustLimitUnits: Math.max(0, num('dustLimitUnits')),
     minFillPct: num('minFillPct'),
     walkUpEnabled: bool('walkUpEnabled'),
     walkUpGraceSeconds: num('walkUpGraceSeconds'),

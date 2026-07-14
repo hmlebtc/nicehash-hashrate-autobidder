@@ -250,7 +250,12 @@ export interface NiceHashTickMetricsTable {
   api_ok: 0 | 1;
   balance_btc: number | null;
   anchor_price_btc: number | null;
-  /** Next filled tier above the marginal (2nd-cheapest order with miners). */
+  /**
+   * The bid-floor anchor (bottom of the contiguous filled block, smoothed;
+   * equals the marginal when the fill reaches it). Rows recorded before
+   * v0.6.56 carried the nullable next-filled tier instead (null = fill
+   * reached the marginal).
+   */
   next_filled_price_btc: number | null;
   /** Median price among filled orders (the middle order receiving hashrate). */
   market_median_price_btc: number | null;

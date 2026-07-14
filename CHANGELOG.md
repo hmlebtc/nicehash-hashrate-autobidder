@@ -2,6 +2,23 @@
 
 ## 2026-07-14
 
+### `[Fix]` Bid floor anchors to the filled block, immune to dust and islands (v0.6.56)
+
+Two defects found in the operator's first order-book capture (2h, 220
+snapshots). 1) At 17:18:44Z the bid walked 0.002 below the block: the tier
+was mid-confirmation (null) and the anchor fell back to the RAW marginal -
+an uncapped island with 1735 rigs receiving a dribble at 0.46, 0.019 below
+the block. The anchor is now ONE protected quantity: the bottom of the
+debounced filled run (it equals the marginal when the fill reaches it, and
+never follows islands below a confirmed-zero break); with next-tier
+anchoring on, the bid never prices from the raw marginal. 2) A limit-0.001
+row at the marginal level genuinely toggled zero/filled every 1-2 minutes,
+flapping the floor +-0.0001 endlessly (each raise arming the 10-minute
+decrease lock). Book rows with a positive speed limit below the new "Ignore
+book rows with limit below" setting (default 0.005; limit 0 = uncapped,
+never dust) are now invisible to the floor scan - the purple marginal and
+market stats still count them honestly.
+
 ### `[Feature]` Order book capture tab + CSV export (v0.6.55)
 
 New "Order book" dashboard tab: the daemon records one gzipped snapshot of
