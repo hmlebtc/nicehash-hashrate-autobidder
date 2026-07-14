@@ -451,6 +451,13 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     // competitor set - never let that poison the streaks (or prime the state).
     let unconfirmedZeroIds: ReadonlySet<string> = new Set<string>();
     let unconfirmedNonzeroIds: ReadonlySet<string> = new Set<string>();
+    // Dust rows (0 < limit < threshold; limit 0 = uncapped, never dust) are
+    // fully transparent to the run scan, so they need no debounce tracking -
+    // skipped below, which also prunes any stale entry for a row that shrank
+    // into dust.
+    const dustLimit = Math.max(0, config.dust_limit_units ?? 0);
+    const isDustRow = (c: CompetingOrder): boolean =>
+      dustLimit > 0 && c.limit_units > 0 && c.limit_units < dustLimit;
     const streaks = ordersOk ? deps.zeroRigStreakState : undefined;
     if (streaks) {
       const map = streaks.rowsByOrderId;
@@ -460,6 +467,7 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       const uNonzero = new Set<string>();
       for (const c of competitors) {
         if (c.id === undefined) continue; // untrackable: stays strict
+        if (isDustRow(c)) continue; // dust: invisible to the scan, nothing to track
         present.add(c.id);
         const row = map.get(c.id);
         if ((c.rigs_count ?? 0) > 0) {
@@ -493,18 +501,19 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       config.target_speed_units,
       unconfirmedZeroIds,
       unconfirmedNonzeroIds,
+      dustLimit,
     );
 
     // Recovery ambiguity: when recovering rows are the only thing between two
-    // different tier readings (the tier WITH the recovery breakers differs
-    // from the tier WITHOUT them), this tick's reading is a flicker in
+    // different floor readings (the floor WITH the recovery breakers differs
+    // from the floor WITHOUT them), this tick's reading is a flicker in
     // progress - it must neither advance the upward hysteresis (a recovery
     // tick would manufacture the 2nd "consecutive" elevated read and land the
-    // very spike v0.6.54 suppressed) nor drop the tier (the gap the operator
-    // saw). The hysteresis freezes and the previously accepted tier stays
+    // very spike v0.6.54 suppressed) nor drop the floor (the gap the operator
+    // saw). The hysteresis freezes and the previously accepted floor stays
     // exposed; once the views agree again (flicker resolved either way),
     // normal hysteresis resumes on the agreed value.
-    const rawTierHold = market.filled_prices?.[1] ?? null;
+    const rawFloorHold = market.filled_prices?.[1] ?? null;
     let recoveryAmbiguous = false;
     if (unconfirmedNonzeroIds.size > 0) {
       const fresh = computeMarketAnchor(
@@ -512,47 +521,56 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
         totalSpeedUnits,
         config.target_speed_units,
         unconfirmedZeroIds,
+        new Set<string>(),
+        dustLimit,
       );
-      recoveryAmbiguous = (fresh.filled_prices?.[1] ?? null) !== rawTierHold;
+      recoveryAmbiguous = (fresh.filled_prices?.[1] ?? null) !== rawFloorHold;
     }
 
-    // Upward tier hysteresis: the tier decide()/metrics/dashboard consume only
-    // rises after the (debounced) raw tier has held at-or-above the new value
-    // for TIER_UP_CONFIRM_TICKS consecutive successful ticks; falls apply
-    // instantly. One value everywhere: the smoothed tier is rewritten into
-    // filled_prices, so there is no separate raw-vs-smoothed view downstream.
-    // Frozen (neither advanced nor reset) when the my-orders read failed: the
-    // market snapshot is discarded below, so that tick never counts toward -
-    // or against - an upward confirmation.
+    // Upward floor hysteresis: the floor anchor decide()/metrics/dashboard
+    // consume only rises after the (debounced) raw floor has held at-or-above
+    // the new value for TIER_UP_CONFIRM_TICKS consecutive successful ticks;
+    // falls apply instantly. One value everywhere: the smoothed floor is
+    // rewritten into filled_prices, so there is no separate raw-vs-smoothed
+    // view downstream. Frozen (neither advanced nor reset) when the my-orders
+    // read failed: the market snapshot is discarded below, so that tick never
+    // counts toward - or against - an upward confirmation.
     const hyst = ordersOk ? deps.tierHysteresisState : undefined;
     if (hyst) {
       let tier: number | null;
       if (recoveryAmbiguous && hyst.primed) {
         tier = hyst.accepted; // freeze: no advance, no reset, expose as-is
       } else {
-        const step = applyTierHysteresis(hyst, rawTierHold);
+        const step = applyTierHysteresis(hyst, rawFloorHold);
         Object.assign(hyst, step.next);
         tier = step.tier;
       }
-      // A held-back accepted tier can go stale against a marginal that has
-      // since risen to meet it. The raw scan guarantees tier > marginal, so
-      // the exposed (smoothed) tier must keep that invariant too - otherwise
-      // drop it for this tick and let the anchor fall back to the marginal.
+      // Exposure invariant (the anti-island rule, operator capture 2026-07-14
+      // 17:18Z): while the market read succeeded, the exposed anchor must
+      // never fall below the debounced run bottom via a fallback. Base value:
+      // the accepted floor; when the hysteresis has no accepted value yet
+      // (null->value confirmation window after an empty-book spell), expose
+      // the CURRENT debounced run bottom rather than anything rawer - biasing
+      // up before confirmation is the safe direction. Finally clamp UP to the
+      // raw marginal: a stale accepted floor below a risen marginal would bid
+      // under the purple (win nothing), while a marginal that DIPS (an
+      // island/dust fill below the block) never drags the floor down because
+      // max() keeps the higher value.
       const anchor = market.anchor_price_btc;
-      const exposed = tier !== null && anchor !== null && tier > anchor ? tier : null;
-      if (exposed !== rawTierHold && anchor !== null) {
-        market = {
-          ...market,
-          filled_prices: exposed !== null ? [anchor, exposed] : [anchor],
-        };
+      if (anchor !== null) {
+        const base = tier !== null ? tier : rawFloorHold;
+        const exposed = base !== null && base > anchor ? base : anchor;
+        if (exposed !== rawFloorHold) {
+          market = { ...market, filled_prices: [anchor, exposed] };
+        }
       }
     }
 
     // Order-book capture (the "Order book" tab + CSV export): hand the full
     // alive competitor book to the sink, each row stamped with its current
-    // debounce state, alongside the STRICT tier (straight from the raw book,
-    // no smoothing - what v0.6.53 would have shown) and the exposed smoothed
-    // tier. Same ordersOk guard as the smoothing state: on an orders-blind
+    // debounce state, alongside the STRICT floor (straight from the raw book -
+    // no debounce, no hysteresis, no dust filter) and the exposed smoothed
+    // floor. Same ordersOk guard as the smoothing state: on an orders-blind
     // tick the debounce state was frozen and the market is discarded, so a
     // snapshot would misrepresent what the bot saw.
     const capture = ordersOk ? deps.onBookCapture : undefined;
@@ -658,8 +676,8 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
       !(config.max_overpay_vs_hashprice_btc_per_unit_day !== null && hashprice === null);
 
     if (canPrice) {
-      // Same floor decide() tracks: (next tier | marginal) + overpay, and the
-      // same effective cap. room = the headroom the ladder may climb into.
+      // Same floor decide() tracks: (floor anchor | marginal) + overpay, and
+      // the same effective cap. room = the headroom the ladder may climb into.
       const cap = effectiveCapBtc(config, hashprice);
       const marginal = market!.anchor_price_btc!;
       const ladder = market!.filled_prices ?? [];

@@ -60,6 +60,19 @@ export function computeMarketAnchor(
    * rigs data (the row IS rigs>0 raw).
    */
   unconfirmedNonzeroIds: ReadonlySet<string> = new Set(),
+  /**
+   * Dust threshold (speed-display units): rows with 0 < limit_units < this
+   * are fully TRANSPARENT to the run scan - they never break it, never
+   * extend it, never start it. A row that can absorb at most ~a thousandth
+   * of the target says nothing about whether a full-size order fills at that
+   * price; its fill state is pure noise for the floor (operator capture,
+   * 2026-07-14: a limit-0.001 row at the marginal level genuinely toggled
+   * zero/filled every 1-2 min and dithered the bid +-0.0001 endlessly).
+   * limit_units === 0 means UNCAPPED on NiceHash and is never dust. Dust
+   * rows still count in the RAW marginal / stats / minerTiers (the purple
+   * display stays honest). 0 disables.
+   */
+  dustLimitUnits = 0,
 ): MarketAnchor {
   const valid = competitors.filter(
     (o) =>
@@ -121,34 +134,46 @@ export function computeMarketAnchor(
   // actually winning hashrate; `minerTiers[0]` is the marginal.
   const minerTiers = [...new Set(filled.map((o) => o.price_btc))].sort((a, b) => a - b);
 
-  // The next filled tier (STRICT contiguous-top-of-book rule, replacing the old
-  // solid-block gap heuristic): the LOWEST price such that every order ROW above
-  // it is filled. Sellers fill strictly by price priority, so the block that is
-  // genuinely, provably consuming hashrate is the contiguous miner-bearing run
-  // at the TOP of the book:
+  // The BID-FLOOR anchor (run-bottom rule, v0.6.56 - generalizes the strict
+  // next-filled-tier scan): the lowest price level of the contiguous
+  // (debounced, dust-transparent) filled run at the TOP of the book. Sellers
+  // fill strictly by price priority, so that run is the block the market
+  // provably clears into - and its bottom is the one price the bid must stay
+  // at-or-above to be IN the block:
   //
-  //   - Scan price levels descending. Zero-miner rows priced ABOVE the highest
+  //   - Scan price levels descending (dust rows removed first - see the
+  //     dustLimitUnits param). Zero-miner rows priced ABOVE the highest
   //     miner-bearing row are dead noise (price priority makes a genuinely
   //     unfilled order above a filled one impossible) - ignored.
   //   - From the highest miner-bearing row, walk down while every row is
-  //     miner-bearing; stop before the first zero-miner row. Row-level
-  //     strictness: ANY zero-miner row breaks the run, including one sharing a
-  //     price with a miner-bearing row (a mixed price level taints the level -
-  //     the guaranteed-filled region ends above it).
-  //   - Next tier = the last (lowest) price of that run; it must sit strictly
-  //     ABOVE the marginal, else there is no next tier (null).
+  //     miner-bearing (or an unconfirmed zero); stop before the first
+  //     confirmed zero-miner row. Row-level strictness: ANY confirmed zero
+  //     row breaks the run, including one sharing a price with a miner-bearing
+  //     row (a mixed price level taints the level - the guaranteed-filled
+  //     region ends above it).
+  //   - The FLOOR = the run's bottom, rounded UP to the nearest non-dust
+  //     confirmed miner tier. When the run stops above the cheapest fill this
+  //     is the classic "next filled tier"; when the fill genuinely reaches the
+  //     bottom of the book it EQUALS the marginal (no more null-collapse -
+  //     the old "tier <= marginal -> null" rule made downstream code fall
+  //     back to the RAW marginal, and a raw marginal has no island/debounce
+  //     protection: a limit-0 island at 0.46 receiving a dribble walked the
+  //     live bid 0.002 below the block, operator capture 2026-07-14 17:18Z).
   //
-  // Miner tiers BELOW the run (e.g. an isolated 0.4791 island under a wall of
-  // zero-miner rows) are real fills but not the block the market clears into -
-  // anchoring there had the bid tracking the island while the actual clearing
-  // block sat far above (2026-07 live case: island 0.4791 vs block 0.4820).
-  // Strictness trade-off: the API under-reports miners on some genuinely filled
-  // rows (the v0.6.38 finding), so a zero-miner row inside the real block pushes
-  // the tier UP to the run above it - the cap still bounds the worst case.
+  // Miner tiers BELOW the run (islands under a confirmed-zero wall, e.g. that
+  // 0.46 island, or the earlier 0.4791-island case) are real fills but not
+  // the block the market clears into - by construction they can never be the
+  // run bottom. Strictness trade-off unchanged: a confirmed zero row inside
+  // the real block pushes the floor UP to the run above it - the cap still
+  // bounds the worst case.
   const isFilledRow =
     filledByRigs.length > 0
       ? (o: CompetingOrder): boolean => (o.rigs_count ?? 0) > 0
       : (o: CompetingOrder): boolean => (o.accepted_speed_units ?? 0) > 0;
+  // Dust: transparent to the scan (removed from the level walk entirely) but
+  // a true part of the raw filled set above. limit 0 = uncapped, never dust.
+  const isDust = (o: CompetingOrder): boolean =>
+    dustLimitUnits > 0 && o.limit_units > 0 && o.limit_units < dustLimitUnits;
   // Zero-confirmation debounce (rigs mode only - the streaks are rig-based):
   // a rigs=0 row whose zero reading is not yet confirmed by two consecutive
   // reads does NOT break the run. It never counts as filled either - it can't
@@ -172,33 +197,49 @@ export function computeMarketAnchor(
     o.id !== undefined &&
     unconfirmedNonzeroIds.has(o.id);
   const isScanFilled = (o: CompetingOrder): boolean => isFilledRow(o) && !isRecoveringNonzero(o);
-  const levels = [...new Set(valid.map((o) => o.price_btc))].sort((a, b) => b - a); // descending
-  let nextTier: number | null = null;
+  const scanRows = valid.filter((o) => !isDust(o)); // dust never breaks/extends/starts the run
+  const levels = [...new Set(scanRows.map((o) => o.price_btc))].sort((a, b) => b - a); // descending
+  let runBottom: number | null = null;
   let started = false;
   for (const level of levels) {
-    const rows = valid.filter((o) => o.price_btc === level);
+    const rows = scanRows.filter((o) => o.price_btc === level);
     const anyFilled = rows.some(isScanFilled);
     const allFilledOrUnconfirmed = rows.every((o) => isScanFilled(o) || isUnconfirmedZero(o));
     if (!started) {
       if (!anyFilled) continue; // dead noise above the highest miner-bearing row
       started = true;
-      if (!allFilledOrUnconfirmed) break; // mixed top level: no clean run at all
-      nextTier = level;
+      // The run starts at the highest miner-bearing level even when that
+      // level is tainted by a confirmed zero row: the market provably clears
+      // at least partially HERE, and there is nothing cleaner above. (The old
+      // null-collapse made this case fall back to the raw marginal - one
+      // tainted read could drop the bid onto an island. Upward moves are
+      // still held by the hysteresis for two ticks.)
+      runBottom = level;
+      if (!allFilledOrUnconfirmed) break;
       continue;
     }
     if (!allFilledOrUnconfirmed) break; // first CONFIRMED zero-miner row ends the run
-    nextTier = level;
+    runBottom = level;
   }
-  if (nextTier !== null && nextTier <= marginal) nextTier = null; // must sit above the marginal
+  // The floor = the run bottom rounded UP to the nearest NON-DUST confirmed
+  // miner tier (the run bottom itself when it carries confirmed miners; the
+  // tier above it when it holds only unconfirmed zeros - the price the bot
+  // acts on is always one where full-size miners are provably present). The
+  // run may extend below the marginal through transparent rows; the rounding
+  // then lands back on the cheapest real fill. Null only when nothing
+  // non-dust is filled at all (no run to anchor in).
+  const nonDustTiers = [
+    ...new Set(filled.filter((o) => !isDust(o)).map((o) => o.price_btc)),
+  ].sort((a, b) => a - b);
+  const floor = runBottom !== null ? (nonDustTiers.find((p) => p >= runBottom!) ?? null) : null;
 
-  // Expose the marginal + the ladder from the next tier up. No cap-clamp:
-  // filled_prices is a faithful read of the miner-bearing book; the bid is capped
-  // independently in decide(). When the run's bottom level holds only
-  // unconfirmed-zero rows (no confirmed miners), the >= filter rounds the
-  // EXPOSED tier up to the nearest CONFIRMED miner tier at-or-above it - the
-  // tier the bot acts on is always a price where miners are provably present.
+  // Expose the marginal + the ladder from the floor up: filled_prices[1] IS
+  // the floor anchor (it may EQUAL the marginal when the fill reaches the
+  // bottom - dup entry, consumers read [0]/[1] only). No cap-clamp:
+  // filled_prices is a faithful read of the miner-bearing book; the bid is
+  // capped independently in decide().
   const filledPrices =
-    nextTier !== null ? [marginal, ...minerTiers.filter((p) => p >= nextTier!)] : [marginal];
+    floor !== null ? [marginal, ...minerTiers.filter((p) => p >= floor!)] : [marginal];
 
   return {
     anchor_price_btc: marginal,

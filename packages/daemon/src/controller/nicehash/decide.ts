@@ -97,13 +97,15 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     cappedByDynamic = true;
   }
 
-  // The tracking anchor. By default the marginal (cheapest competitor still
-  // winning hashrate = filled_prices[0], NiceHash's purple). Optionally the
-  // *next filled tier* (filled_prices[1], the cyan line) - the bottom of the
-  // contiguously miner-bearing top of the book, where the market provably
-  // clears, so a bid at marginal+overpay wins nothing but next-tier+overpay
-  // does. Falls back to the marginal when the contiguous fill reaches the
-  // marginal itself. Either way the ceiling caps the worst case.
+  // The tracking anchor. By default the raw marginal (cheapest competitor
+  // still winning hashrate = filled_prices[0], NiceHash's purple). With
+  // next-tier anchoring on, the *bid-floor anchor* (filled_prices[1], the
+  // cyan line) - the bottom of the contiguous (debounced, dust-transparent)
+  // filled block, where the market provably clears; it EQUALS the marginal
+  // when the fill reaches it, and unlike the raw marginal it can never dip
+  // onto an island below the block. [1] is only absent when nothing non-dust
+  // is filled (then the marginal is all there is). The ceiling caps the
+  // worst case either way.
   const marginal = state.market.anchor_price_btc; // non-null per guard above
   const ladder = state.market.filled_prices ?? [];
   const nextTier = ladder.length > 1 ? ladder[1]! : null;

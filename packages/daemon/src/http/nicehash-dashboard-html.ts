@@ -903,15 +903,18 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
     $('orderRunwayLimitSub').textContent = primary ? 'if delivered at full limit' : 'no active order';
     $('anchor').textContent = s.market ? fmtPrice(s.market.anchor_price_btc) : '—';
     $('anchorUnit').textContent = priceUnit() + ' · marginal fill (NiceHash purple)';
-    // Null tier = the filled top reaches the marginal (the market clears AT
-    // the purple price). Presentation only: show the marginal value instead of
-    // a dash so the tile (like the cyan chart line) never blanks out - the
-    // API/status field itself stays an honest null.
+    // The cyan value is the bid-floor anchor (bottom of the filled block).
+    // When it equals the purple marginal the filled top reaches the marginal -
+    // say so in the subtitle. A null floor only occurs on old stored rows /
+    // degenerate books; render the marginal then (presentation only - the
+    // API/status field itself stays an honest null).
     var nextTier = s.market && s.market.next_filled_price_btc != null ? s.market.next_filled_price_btc : null;
     var tierMarginal = s.market && s.market.anchor_price_btc != null ? s.market.anchor_price_btc : null;
     if (nextTier != null) {
       $('nextTier').textContent = fmtPrice(nextTier);
-      $('nextTierUnit').textContent = priceUnit() + ' · next filled tier (cyan)';
+      $('nextTierUnit').textContent = priceUnit() + (tierMarginal != null && nextTier === tierMarginal
+        ? ' · = marginal (filled top reaches the purple)'
+        : ' · next filled tier (cyan)');
     } else if (tierMarginal != null) {
       $('nextTier').textContent = fmtPrice(tierMarginal);
       $('nextTierUnit').textContent = priceUnit() + ' · = marginal (filled top reaches the purple)';
@@ -1180,7 +1183,8 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['refillAmountBtc', 'Refill amount (BTC, 0=off)', 'number', 'Top-up added to a live order when its escrow runs low. 0 = never refill (let the order drain and re-create).'],
       ['refillWhenRunwayHours', 'Refill when runway < (h)', 'number', 'Trigger a refill once the order\'s remaining runway drops below this many hours.'] ] },
     { group: 'Track-to-fill', items: [
-      ['anchorNextFilledTier', 'Anchor on next filled tier', 'checkbox', 'Track the next filled tier (the cyan line — the bottom of the contiguously filled top of the book, with no zero-miner orders above it) instead of the marginal (purple, the cheapest fill). On a lumpy book a bid a hair above the marginal often wins nothing because the market is really clearing into the block far above; anchoring at that block\'s bottom + your overpay puts the bid where fills provably land (still clamped by the cap). Falls back to the marginal when the filled top reaches the marginal itself — the cyan line and the Next tier tile then show the marginal value instead of a gap. The tier is flicker-smoothed BOTH ways: a zero-miner row only breaks the block after two consecutive book reads at zero (rig counts flicker, and brand-new orders sit at 0 miners for a minute or two while sellers migrate), a row that was confirmed zero needs two consecutive reads with miners before it counts as filled again (so a one-read blip can\'t collapse the tier to the marginal), and an upward tier move must hold for two consecutive ticks before the bid — and the chart — follow it; confirmed downward moves apply with at most one read of delay, and a one-tick spike never triggers a raise. On is recommended.'],
+      ['anchorNextFilledTier', 'Anchor on next filled tier', 'checkbox', 'Anchor the bid on the FLOOR of the filled block (the cyan line — the bottom of the contiguously filled top of the book, with no zero-miner orders above it) instead of the raw marginal (purple, the cheapest fill anywhere). On a lumpy book a bid a hair above the marginal often wins nothing because the market is really clearing into the block far above — and the raw marginal can dip onto an isolated island receiving a dribble far below the block (a live capture showed it 0.019 below, which briefly walked the bid out of the block); the floor anchor never follows such islands. When the filled top genuinely reaches the marginal the floor equals it (the tile says "= marginal"). The floor is flicker-smoothed BOTH ways: a zero-miner row only breaks the block after two consecutive book reads at zero (rig counts flicker, and brand-new orders sit at 0 miners for a minute or two while sellers migrate), a row that was confirmed zero needs two consecutive reads with miners before it counts as filled again, dust rows (see below) are ignored, and an upward floor move must hold for two consecutive ticks before the bid — and the chart — follow it; confirmed downward moves apply with at most one read of delay, and a one-tick spike never triggers a raise. On is recommended.'],
+      ['dustLimitUnits', 'Ignore book rows with limit below (PH/s)', 'number', 'Order-book rows whose speed limit is positive but below this are DUST: a row that can absorb ~a thousandth of your target says nothing about whether a full-size order fills at that price, yet its fill state genuinely toggles minute-to-minute and would dither the bid floor ±0.0001 endlessly (each raise arms NiceHash\'s 10-minute decrease lock). Dust rows are invisible to the floor scan but still count for the purple marginal and the market stats. A limit of 0 means UNCAPPED on NiceHash and is never dust. 0 disables. Default 0.005.'],
       ['minFillPct', 'Minimum fill (% of target)', 'number', 'Treat the order as filled once delivered hashrate reaches this % of your target. Below it, the bidder walks the price up to win more. e.g. 80.'],
       ['walkUpEnabled', 'Walk up to fill', 'checkbox', 'When under-filled (and past the grace period below), raise the bid toward the floor + your overpay to win hashrate, until filled or a price cap binds. While filled it holds the cheaper bid (never chases the floor up) and only walks down. Off = pure floor-tracking (no escalation).'],
       ['walkUpGraceSeconds', 'Walk-up grace (seconds)', 'number', 'How long delivered hashrate must stay below your minimum fill before the bidder starts walking the price up. Gives a freshly placed or just-repriced order time to attract miners before escalating. The timer resets after each floor-tracking raise; while the escalation ladder is engaged it re-arms only when the order drops back under the minimum fill (episode-based). 0 = walk up as soon as under-filled. e.g. 180.'],

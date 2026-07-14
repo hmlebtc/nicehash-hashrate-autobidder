@@ -641,6 +641,35 @@ describe('decide - anchor on the next filled tier', () => {
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
     expect(p.price_btc).toBeCloseTo(0.00051, 9); // marginal 0.0005 + overpay
   });
+
+  it('toggle ON: prices from the floor anchor even when the raw marginal dips onto an island', () => {
+    // The 2026-07-14 17:18Z capture shape: raw marginal 0.46 (a limit-0
+    // island receiving a dribble far below the block), floor anchor 0.4789
+    // (the block bottom). The bid must price from the floor - never the island.
+    const out = decide(
+      state({
+        owned_orders: [],
+        market: market({ anchor_price_btc: 0.46, filled_prices: [0.46, 0.4789] }),
+        config: config({ anchor_next_filled_tier: true, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.4789 + 0.00001, 9);
+  });
+
+  it('toggle OFF: the raw marginal anchors the bid, island dips and all (the escape hatch)', () => {
+    const out = decide(
+      state({
+        owned_orders: [],
+        market: market({ anchor_price_btc: 0.46, filled_prices: [0.46, 0.4789] }),
+        config: config({ anchor_next_filled_tier: false, max_price_btc_per_unit_day: 1 }),
+      }),
+    );
+    const p = out[0]!;
+    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
+    expect(p.price_btc).toBeCloseTo(0.46 + 0.00001, 9);
+  });
 });
 
 describe('decide - escalation ladder toward the cap', () => {

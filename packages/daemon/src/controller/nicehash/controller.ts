@@ -422,7 +422,8 @@ function buildMetricsRow(
     api_ok: state.market ? 1 : 0,
     balance_btc: state.balance_btc,
     anchor_price_btc: state.market?.anchor_price_btc ?? null,
-    // The next filled tier above the marginal (2nd-cheapest order with miners).
+    // The bid-floor anchor (bottom of the contiguous filled block; equals the
+    // marginal when the fill reaches it - the smoothed value the bot acts on).
     next_filled_price_btc: state.market?.filled_prices?.[1] ?? null,
     // Market price stats over the filled orders (MARKET chart).
     market_median_price_btc: state.market?.median_price_btc ?? null,
