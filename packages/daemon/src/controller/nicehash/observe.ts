@@ -12,11 +12,12 @@
 
 import { parseDecimal } from '@hashrate-autopilot/nicehash-client';
 
+import { computeMarketAnchor } from './orderbook.js';
 import { effectiveCapBtc } from './types.js';
 import type { MarketAnchor, NiceHashControllerConfig, NiceHashState, RunMode } from './types.js';
 import {
   availableBtcFromBalance,
-  marketAnchorFromBook,
+  competingOrdersFromBook,
   ownOrderFillsFromBook,
   reconcileOrders,
 } from './wire.js';
@@ -45,6 +46,92 @@ export const DEFAULT_PRICE_DECREASE_COOLDOWN_MS = 10 * 60_000;
 export interface EscalationEntry {
   readonly offsetBtc: number;
   readonly lastStepAt: number;
+}
+
+/** How many consecutive zero-rig book reads confirm a row as a run-breaker. */
+export const ZERO_RIG_CONFIRM_READS = 2;
+/** How many consecutive ticks an upward tier move must hold before exposure. */
+export const TIER_UP_CONFIRM_TICKS = 2;
+
+/**
+ * Cross-tick zero-rig-confirmation state, owned by the controller. The map
+ * counts consecutive successful book reads at rigs=0 per competitor order id;
+ * `primed` distinguishes a genuine cold start from a book that simply has no
+ * zero rows. On the FIRST successful read after a restart every zero row is
+ * seeded as already-CONFIRMED, so that read reproduces the strict
+ * (pre-smoothing) tier exactly - treating restart zeros as unconfirmed would
+ * collapse the tier toward the marginal for one tick and could trigger a
+ * spurious walk-down out of the filled block. From the second read onward,
+ * newly-sighted zero rows get the normal one-read transparency.
+ */
+export interface ZeroRigStreakState {
+  primed: boolean;
+  readonly streakByOrderId: Map<string, number>;
+}
+
+/** A fresh (unprimed) zero-rig streak state - the controller's initial value. */
+export function initialZeroRigStreaks(): ZeroRigStreakState {
+  return { primed: false, streakByOrderId: new Map() };
+}
+
+/**
+ * Cross-tick state for the next-tier upward hysteresis, owned by the
+ * controller (in memory; a restart just re-primes from the first successful
+ * read). `accepted` is the tier everything downstream sees; an upward raw move
+ * sits in `pending` until it has held for {@link TIER_UP_CONFIRM_TICKS}
+ * consecutive successful ticks. Downward moves apply instantly.
+ */
+export interface TierHysteresisState {
+  primed: boolean;
+  accepted: number | null;
+  pending: number | null;
+  pendingCount: number;
+}
+
+/** A fresh (unprimed) hysteresis state - the controller's initial value. */
+export function initialTierHysteresis(): TierHysteresisState {
+  return { primed: false, accepted: null, pending: null, pendingCount: 0 };
+}
+
+/**
+ * One hysteresis step for the (already zero-debounced) raw next tier of a
+ * SUCCESSFUL book read - never call this for a failed read (the state must
+ * freeze then). Pure: returns the next state and the tier to expose.
+ *
+ *   - Cold start: the first successful read is accepted as-is.
+ *   - Equal or DOWNWARD (including value -> null): accepted instantly; a
+ *     falling tier is the cost-safe direction and must never lag.
+ *   - UPWARD (including null -> value): held in `pending`; accepted only after
+ *     the raw tier has agreed at-or-above the pending value for
+ *     {@link TIER_UP_CONFIRM_TICKS} consecutive ticks. A raw value that is
+ *     still above `accepted` but below `pending` re-arms the pending at the
+ *     lower value (conservative).
+ */
+export function applyTierHysteresis(
+  state: TierHysteresisState,
+  rawTier: number | null,
+): { readonly next: TierHysteresisState; readonly tier: number | null } {
+  if (!state.primed) {
+    return { next: { primed: true, accepted: rawTier, pending: null, pendingCount: 0 }, tier: rawTier };
+  }
+  const accepted = state.accepted;
+  const isUp = rawTier !== null && (accepted === null || rawTier > accepted);
+  if (!isUp) {
+    // Equal or downward (value -> null included): accept instantly.
+    return { next: { primed: true, accepted: rawTier, pending: null, pendingCount: 0 }, tier: rawTier };
+  }
+  if (state.pending !== null && rawTier >= state.pending) {
+    const count = state.pendingCount + 1;
+    if (count >= TIER_UP_CONFIRM_TICKS) {
+      return {
+        next: { primed: true, accepted: state.pending, pending: null, pendingCount: 0 },
+        tier: state.pending,
+      };
+    }
+    return { next: { ...state, pendingCount: count }, tier: accepted };
+  }
+  // New (or lowered) upward candidate: first tick of agreement.
+  return { next: { primed: true, accepted, pending: rawTier, pendingCount: 1 }, tier: accepted };
 }
 
 /**
@@ -185,6 +272,27 @@ export interface NiceHashObserveDeps {
    */
   readonly editAvailableAtByOrderId?: Map<string, number>;
   /**
+   * Mutable per-BOOK-row zero-rig streak state, keyed by competitor order id,
+   * owned by the controller across ticks. On every SUCCESSFUL book read (never
+   * on a failed one) observe() bumps the streak of each alive rigs=0 row,
+   * resets it on rigs>0, and prunes ids that left the book. Rows whose streak
+   * is still below {@link ZERO_RIG_CONFIRM_READS} are passed to
+   * `computeMarketAnchor` as unconfirmed zeros - transparent to the next-tier
+   * contiguity scan. The first successful read after restart seeds zeros as
+   * already-confirmed (strict), see {@link ZeroRigStreakState}. Probe-verified
+   * remedy for one-read rig-count flicker and 30-90s new-order
+   * miner-migration windows.
+   */
+  readonly zeroRigStreakState?: ZeroRigStreakState;
+  /**
+   * Mutable upward-hysteresis state for the exposed next tier, owned by the
+   * controller across ticks. Advanced via {@link applyTierHysteresis} only on
+   * successful book reads; frozen otherwise. The accepted (smoothed) tier is
+   * the ONE value everywhere: rewritten into `market.filled_prices`, so
+   * decide(), the metrics rows and the dashboard all see the same number.
+   */
+  readonly tierHysteresisState?: TierHysteresisState;
+  /**
    * Minimum time between price decreases on a single order (ms) - the SAME
    * value the tick pipeline hands the gate. The escalation ladder's decay
    * paces on max(escalation interval, this), so state decay never outruns the
@@ -282,7 +390,78 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
   let marketError: string | null = null;
   try {
     const book = await service.getOrderBook(config.algorithm, deps.currency);
-    market = marketAnchorFromBook(book, config.target_speed_units, ownedIds, deps.currency);
+    const { competitors, totalSpeedUnits } = competingOrdersFromBook(book, deps.currency, ownedIds);
+
+    // Zero-rig confirmation streaks: bump/reset/prune per alive competitor row
+    // on this SUCCESSFUL book read (a failed read never reaches this code, so
+    // streaks freeze exactly like the other cross-tick maps). Rows still below
+    // ZERO_RIG_CONFIRM_READS consecutive zero reads are handed to the anchor
+    // computation as unconfirmed - they don't break the next-tier run yet.
+    // Cold start (first successful read after restart, `primed` false): every
+    // zero row is seeded as already-confirmed so this read reproduces the
+    // strict tier exactly - unconfirmed-everything would collapse the tier
+    // toward the marginal and could walk the bid down out of the filled block.
+    // Also frozen when the my-orders read failed (ordersOk discipline, like
+    // every other cross-tick map): the market is discarded below anyway, and
+    // with `owned` unknown a pool-adopted own order may leak into the
+    // competitor set - never let that poison the streaks (or prime the state).
+    let unconfirmedZeroIds: ReadonlySet<string> = new Set<string>();
+    const streaks = ordersOk ? deps.zeroRigStreakState : undefined;
+    if (streaks) {
+      const map = streaks.streakByOrderId;
+      const seed = streaks.primed ? 1 : ZERO_RIG_CONFIRM_READS;
+      const present = new Set<string>();
+      const unconfirmed = new Set<string>();
+      for (const c of competitors) {
+        if (c.id === undefined) continue; // untrackable: stays strict
+        present.add(c.id);
+        if ((c.rigs_count ?? 0) > 0) {
+          map.delete(c.id); // any rigs>0 read resets the streak (downward-friendly)
+        } else {
+          const prev = map.get(c.id);
+          const n = prev !== undefined ? prev + 1 : seed;
+          map.set(c.id, n);
+          if (n < ZERO_RIG_CONFIRM_READS) unconfirmed.add(c.id);
+        }
+      }
+      for (const id of [...map.keys()]) if (!present.has(id)) map.delete(id);
+      streaks.primed = true;
+      unconfirmedZeroIds = unconfirmed;
+    }
+
+    market = computeMarketAnchor(
+      competitors,
+      totalSpeedUnits,
+      config.target_speed_units,
+      unconfirmedZeroIds,
+    );
+
+    // Upward tier hysteresis: the tier decide()/metrics/dashboard consume only
+    // rises after the (debounced) raw tier has held at-or-above the new value
+    // for TIER_UP_CONFIRM_TICKS consecutive successful ticks; falls apply
+    // instantly. One value everywhere: the smoothed tier is rewritten into
+    // filled_prices, so there is no separate raw-vs-smoothed view downstream.
+    // Frozen (neither advanced nor reset) when the my-orders read failed: the
+    // market snapshot is discarded below, so that tick never counts toward -
+    // or against - an upward confirmation.
+    const hyst = ordersOk ? deps.tierHysteresisState : undefined;
+    if (hyst) {
+      const rawTier = market.filled_prices?.[1] ?? null;
+      const { next, tier } = applyTierHysteresis(hyst, rawTier);
+      Object.assign(hyst, next);
+      // A held-back accepted tier can go stale against a marginal that has
+      // since risen to meet it. The raw scan guarantees tier > marginal, so
+      // the exposed (smoothed) tier must keep that invariant too - otherwise
+      // drop it for this tick and let the anchor fall back to the marginal.
+      const anchor = market.anchor_price_btc;
+      const exposed = tier !== null && anchor !== null && tier > anchor ? tier : null;
+      if (exposed !== rawTier && anchor !== null) {
+        market = {
+          ...market,
+          filled_prices: exposed !== null ? [anchor, exposed] : [anchor],
+        };
+      }
+    }
 
     // The myOrders LIST and per-order detail both under-report delivered speed
     // (often 0 even while filling). Our order's own row in the order book carries

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-07-14
+
+### `[Fix]` Next-tier spike smoothing (debounce + hysteresis)
+
+A live probe (11 book reads over 5 minutes) confirmed NEXT TIER flapped
+0.4789 -> 0.4885 and back four times: per-order rig counts flicker to zero
+for a single read, and brand-new orders sit at 0 miners for 30-90 seconds
+while sellers migrate to them. A zero-miner row now needs two consecutive
+book reads at zero before it breaks the contiguous-fill run, and an upward
+tier move must hold for two consecutive ticks before the bot (and the
+dashboard) follow it - downward moves still apply instantly. One-tick
+spikes no longer trigger raises that waste the 10-minute decrease window;
+the smoothed tier is the one value used everywhere.
+
 ## 2026-07-13
 
 ### `[Fix]` Next filled tier = bottom of the contiguously filled top of the book

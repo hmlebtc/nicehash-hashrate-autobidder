@@ -13,6 +13,13 @@ export type RunMode = 'DRY_RUN' | 'LIVE' | 'PAUSED';
 
 /** A competing BUY order resting in the NiceHash order book. */
 export interface CompetingOrder {
+  /**
+   * NiceHash order id, when the book reports one. Keys the cross-tick
+   * zero-rig-confirmation debounce (a row's rigs=0 reading must repeat on two
+   * consecutive book reads before it breaks the next-tier run); rows without
+   * an id cannot be tracked and stay strict.
+   */
+  readonly id?: string;
   /** Price in BTC per price-display-unit per day (EH/day for SHA256 family). */
   readonly price_btc: number;
   /** Speed cap in speed-display units (PH/s). 0 means uncapped. */
@@ -55,6 +62,12 @@ export interface MarketAnchor {
    * miner-bearing run at the top of the book (every row above it filled) -
    * omitted when that run reaches the marginal itself (the market genuinely
    * clears at the marginal). Empty when nothing is being filled.
+   *
+   * SMOOTHED in the daemon (observe): a zero-rig row needs two consecutive
+   * book reads to count as a run-breaker, and an upward tier move must hold
+   * for two consecutive ticks before it is exposed (downward moves apply
+   * instantly) - so one-tick rig-count flicker never flaps the tier. The one
+   * smoothed value is what decide(), the metrics and the dashboard all see.
    */
   readonly filled_prices?: readonly number[];
   /**

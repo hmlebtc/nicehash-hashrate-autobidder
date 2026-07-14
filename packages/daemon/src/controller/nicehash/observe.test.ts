@@ -2,8 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NiceHashService } from '../../services/nicehash-service.js';
 import { decide } from './decide.js';
-import { observe } from './observe.js';
+import {
+  applyTierHysteresis,
+  initialTierHysteresis,
+  initialZeroRigStreaks,
+  observe,
+  TIER_UP_CONFIRM_TICKS,
+  ZERO_RIG_CONFIRM_READS,
+  type TierHysteresisState,
+  type ZeroRigStreakState,
+} from './observe.js';
+import { computeMarketAnchor } from './orderbook.js';
 import type { NiceHashControllerConfig } from './types.js';
+import { competingOrdersFromBook } from './wire.js';
 
 function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControllerConfig {
   return {
@@ -609,5 +620,349 @@ describe('observe - state maps survive a failed my-orders read', () => {
     const up = proposals.find((p) => p.kind === 'EDIT_PRICE');
     if (up?.kind !== 'EDIT_PRICE') throw new Error('expected an upward EDIT_PRICE');
     expect(up.new_price_btc).toBeCloseTo(0.01021 + 0.0041, 9);
+  });
+});
+
+describe('applyTierHysteresis', () => {
+  const primed = (accepted: number | null): TierHysteresisState => ({
+    primed: true,
+    accepted,
+    pending: null,
+    pendingCount: 0,
+  });
+
+  it('cold start: the first successful read is accepted as-is (value or null)', () => {
+    expect(applyTierHysteresis(initialTierHysteresis(), 0.482).tier).toBe(0.482);
+    expect(applyTierHysteresis(initialTierHysteresis(), null).tier).toBeNull();
+    expect(applyTierHysteresis(initialTierHysteresis(), 0.482).next.primed).toBe(true);
+  });
+
+  it(`an upward move needs ${TIER_UP_CONFIRM_TICKS} consecutive agreeing ticks`, () => {
+    const t1 = applyTierHysteresis(primed(0.4789), 0.4885);
+    expect(t1.tier).toBe(0.4789); // held back on the first sighting
+    const t2 = applyTierHysteresis(t1.next, 0.4885);
+    expect(t2.tier).toBe(0.4885); // second consecutive tick confirms
+    expect(t2.next.accepted).toBe(0.4885);
+  });
+
+  it('a downward move applies instantly (never lag a genuine drop)', () => {
+    const t = applyTierHysteresis(primed(0.4885), 0.4789);
+    expect(t.tier).toBe(0.4789);
+    expect(t.next.accepted).toBe(0.4789);
+  });
+
+  it('value -> null is downward: instant', () => {
+    const t = applyTierHysteresis(primed(0.4885), null);
+    expect(t.tier).toBeNull();
+    expect(t.next.accepted).toBeNull();
+  });
+
+  it('null -> value is upward: needs confirmation (anchor falls back to marginal meanwhile)', () => {
+    const t1 = applyTierHysteresis(primed(null), 0.482);
+    expect(t1.tier).toBeNull();
+    const t2 = applyTierHysteresis(t1.next, 0.482);
+    expect(t2.tier).toBe(0.482);
+  });
+
+  it('a dip during confirmation cancels the pending move (spike never lands)', () => {
+    const t1 = applyTierHysteresis(primed(0.4789), 0.4885); // spike, pending
+    const t2 = applyTierHysteresis(t1.next, 0.4789); // back down: instant, pending dropped
+    expect(t2.tier).toBe(0.4789);
+    const t3 = applyTierHysteresis(t2.next, 0.4885); // a fresh spike starts over
+    expect(t3.tier).toBe(0.4789);
+  });
+
+  it('confirms at the PENDING value when the raw tier overshoots above it', () => {
+    // Pending 0.4813; the next read spikes to 0.4885 (>= pending): that
+    // confirms the pending 0.4813, not the overshoot - conservative.
+    const t1 = applyTierHysteresis(primed(null), 0.4813);
+    const t2 = applyTierHysteresis(t1.next, 0.4885);
+    expect(t2.tier).toBe(0.4813);
+    expect(t2.next.accepted).toBe(0.4813);
+  });
+
+  it('re-arms at a LOWER upward candidate instead of confirming the higher one', () => {
+    const t1 = applyTierHysteresis(primed(0.4789), 0.4885); // pending 0.4885
+    const t2 = applyTierHysteresis(t1.next, 0.482); // still above accepted, below pending
+    expect(t2.tier).toBe(0.4789); // re-armed, not confirmed
+    const t3 = applyTierHysteresis(t2.next, 0.482);
+    expect(t3.tier).toBe(0.482); // the lower candidate confirms
+  });
+});
+
+describe('observe - next-tier smoothing (zero-rig debounce + upward hysteresis)', () => {
+  // A compact book: top block 0.4885/0.4820, a persistent zero wall at 0.4810
+  // (the run-breaker that pins the tier at 0.4820), marginal at 0.4800.
+  // `mid` (0.4820) is the row whose rigs we flicker per tick.
+  const smoothingBook = (midRigs: number) => ({
+    stats: {
+      BTC: {
+        totalSpeed: '100',
+        displayMarketFactor: 'PH',
+        displayPriceFactor: 'EH',
+        orders: [
+          { id: 'top', price: '0.4885', limit: '5', acceptedSpeed: '0.1', rigsCount: 3000, alive: true },
+          { id: 'mid', price: '0.4820', limit: '5', acceptedSpeed: '0', rigsCount: midRigs, alive: true },
+          { id: 'wall', price: '0.4810', limit: '5', acceptedSpeed: '0', rigsCount: 0, alive: true },
+          { id: 'marg', price: '0.4800', limit: '5', acceptedSpeed: '0.5', rigsCount: 46648, alive: true },
+        ],
+      },
+    },
+  });
+
+  // A settled (primed) streak state: 'wall' has been zero for many reads.
+  const primedStreaks = (entries: readonly (readonly [string, number])[]): ZeroRigStreakState => ({
+    primed: true,
+    streakByOrderId: new Map(entries),
+  });
+
+  const smoothingDeps = (midRigs: number, streaks: ZeroRigStreakState, hyst: TierHysteresisState) => ({
+    service: service({
+      getMyOrders: vi.fn(async () => ({ list: [] })) as unknown as NiceHashService['getMyOrders'],
+      getOrderBook: vi.fn(async () => smoothingBook(midRigs)) as unknown as NiceHashService['getOrderBook'],
+    }),
+    ...base,
+    knownOrderIds: new Set<string>(),
+    zeroRigStreakState: streaks,
+    tierHysteresisState: hyst,
+  });
+
+  it('cold start: the first successful read reproduces the strict tier exactly (no null collapse)', async () => {
+    // Restart: streaks unprimed, hysteresis unprimed. The wall (a persistent
+    // zero-rig row above the block) must be seeded as already-CONFIRMED on the
+    // first read, so the exposed tier === the pre-smoothing strict tier
+    // (0.4820) - NOT collapsed to null / the marginal, which would let
+    // decide() walk the bid down out of the filled block on every release
+    // restart.
+    const streaks = initialZeroRigStreaks();
+    const hyst = initialTierHysteresis();
+    const s1 = await observe(smoothingDeps(57, streaks, hyst));
+    expect(s1.market?.filled_prices).toEqual([0.48, 0.482, 0.4885]); // strict tier, first read
+    expect(streaks.primed).toBe(true);
+    expect(streaks.streakByOrderId.get('wall')).toBe(ZERO_RIG_CONFIRM_READS); // seeded confirmed
+    expect(hyst.accepted).toBe(0.482);
+
+    // Second read: a brand-new zero row would now get the normal one-read
+    // transparency - the wall itself keeps counting.
+    const s2 = await observe(smoothingDeps(57, streaks, hyst));
+    expect(s2.market?.filled_prices).toEqual([0.48, 0.482, 0.4885]);
+    expect(streaks.streakByOrderId.get('wall')).toBe(ZERO_RIG_CONFIRM_READS + 1);
+  });
+
+  it('full lifecycle: one-read flicker suppressed, persistent zero confirmed, recovery instant', async () => {
+    // Pre-warmed wall streak (long-confirmed zero) so the tier starts settled.
+    const streaks = primedStreaks([['wall', 5]]);
+    const hyst = initialTierHysteresis();
+
+    // Tick 1: mid filled -> tier 0.4820; cold-start hysteresis accepts as-is.
+    // Smoothed == raw, so the faithful full ladder passes through untouched
+    // (consumers only read filled_prices[0]/[1]).
+    const s1 = await observe(smoothingDeps(57, streaks, hyst));
+    expect(s1.market?.filled_prices).toEqual([0.48, 0.482, 0.4885]);
+    expect(streaks.streakByOrderId.get('wall')).toBe(6); // zero streak keeps counting
+    expect(streaks.streakByOrderId.has('mid')).toBe(false); // rigs>0: no streak
+
+    // Tick 2: mid (the tier row ITSELF) flickers to rigs=0 for ONE read ->
+    // streak 1, unconfirmed -> transparent to the scan; the run bottom (0.4820)
+    // now has no confirmed miners, so the debounced raw tier rounds up to
+    // 0.4885 - and the HYSTERESIS holds that upward move pending: the exposed
+    // tier stays 0.4820. (A flicker on a row ABOVE the tier is absorbed by the
+    // debounce alone - see the probe replay, sample 7.)
+    const s2 = await observe(smoothingDeps(0, streaks, hyst));
+    expect(s2.market?.filled_prices).toEqual([0.48, 0.482]);
+    expect(streaks.streakByOrderId.get('mid')).toBe(1);
+
+    // Tick 3: mid recovers (rigs>0) -> streak reset, raw tier back at 0.4820,
+    // the pending upward move is cancelled: the one-read flicker never surfaced.
+    const s3 = await observe(smoothingDeps(57, streaks, hyst));
+    expect(s3.market?.filled_prices).toEqual([0.48, 0.482, 0.4885]);
+    expect(streaks.streakByOrderId.has('mid')).toBe(false);
+
+    // Ticks 4-5: mid goes 0 and STAYS 0 -> streak reaches the confirm count;
+    // the raw tier holds 0.4885 for 2 consecutive ticks -> the move is real
+    // and lands on tick 5.
+    const s4 = await observe(smoothingDeps(0, streaks, hyst));
+    expect(s4.market?.filled_prices).toEqual([0.48, 0.482]); // still held
+    const s5 = await observe(smoothingDeps(0, streaks, hyst));
+    expect(streaks.streakByOrderId.get('mid')).toBe(ZERO_RIG_CONFIRM_READS);
+    expect(s5.market?.filled_prices).toEqual([0.48, 0.4885]); // confirmed up-move
+
+    // Tick 6: mid recovers -> the downward move applies instantly.
+    const s6 = await observe(smoothingDeps(57, streaks, hyst));
+    expect(s6.market?.filled_prices).toEqual([0.48, 0.482, 0.4885]);
+    expect(hyst.accepted).toBe(0.482);
+  });
+
+  it('prunes streak entries for rows that left the book', async () => {
+    const streaks = primedStreaks([
+      ['wall', 5],
+      ['ghost', 3], // no longer in the book
+    ]);
+    await observe(smoothingDeps(57, streaks, initialTierHysteresis()));
+    expect(streaks.streakByOrderId.has('ghost')).toBe(false);
+    expect(streaks.streakByOrderId.get('wall')).toBe(6);
+  });
+
+  it('a failed BOOK read freezes both the streak state and the hysteresis state', async () => {
+    const streaks = initialZeroRigStreaks(); // restart, first read fails
+    const hyst: TierHysteresisState = { primed: true, accepted: 0.482, pending: 0.4885, pendingCount: 1 };
+    const svc = service({
+      getMyOrders: vi.fn(async () => ({ list: [] })) as unknown as NiceHashService['getMyOrders'],
+      getOrderBook: vi.fn(async () => {
+        throw new Error('book boom');
+      }) as unknown as NiceHashService['getOrderBook'],
+    });
+    const s = await observe({
+      service: svc,
+      ...base,
+      knownOrderIds: new Set<string>(),
+      zeroRigStreakState: streaks,
+      tierHysteresisState: hyst,
+    });
+    expect(s.market).toBeNull();
+    expect(streaks.primed).toBe(false); // the NEXT successful read still gets the strict cold-start seeding
+    expect(streaks.streakByOrderId.size).toBe(0);
+    expect(hyst).toEqual({ primed: true, accepted: 0.482, pending: 0.4885, pendingCount: 1 });
+  });
+
+  it('a failed MY-ORDERS read also freezes them (the market snapshot is discarded)', async () => {
+    const streaks = primedStreaks([['wall', 5]]);
+    const hyst: TierHysteresisState = { primed: true, accepted: 0.482, pending: 0.4885, pendingCount: 1 };
+    const svc = service({
+      getMyOrders: vi.fn(async () => {
+        throw new Error('502 blip');
+      }) as unknown as NiceHashService['getMyOrders'],
+      getOrderBook: vi.fn(async () => smoothingBook(0)) as unknown as NiceHashService['getOrderBook'],
+    });
+    const s = await observe({
+      service: svc,
+      ...base,
+      knownOrderIds: new Set<string>(),
+      zeroRigStreakState: streaks,
+      tierHysteresisState: hyst,
+    });
+    expect(s.market).toBeNull(); // refuse to act blind
+    expect(streaks.streakByOrderId).toEqual(new Map([['wall', 5]])); // not bumped, not pruned
+    expect(hyst).toEqual({ primed: true, accepted: 0.482, pending: 0.4885, pendingCount: 1 });
+  });
+
+  it('drops a held-back tier that went stale below the risen marginal (invariant: tier > marginal)', async () => {
+    // The accepted tier (0.4795) predates a marginal that has since risen to
+    // 0.4800. While a new upward move is pending, the exposed tier must not
+    // sit at-or-below the marginal - it is dropped and the anchor falls back
+    // to the marginal for the tick.
+    const streaks = primedStreaks([['wall', 5]]);
+    const hyst: TierHysteresisState = { primed: true, accepted: 0.4795, pending: null, pendingCount: 0 };
+    const s = await observe(smoothingDeps(57, streaks, hyst));
+    // Raw tier 0.4820 is upward vs accepted 0.4795 -> held pending; the stale
+    // 0.4795 is below the 0.4800 marginal -> dropped for this tick.
+    expect(s.market?.filled_prices).toEqual([0.48]);
+    expect(hyst.pending).toBe(0.482);
+  });
+});
+
+describe('observe - probe replay (2026-07-14, 11 live samples, SHA256ASICBOOST/BTC)', () => {
+  // Reconstruction of the operator's live probe: marginal 0.4768 constant,
+  // strict tier flapping [0.4813, 0.4885, 0.4885, 0.4789, 0.4789, 0.4789,
+  // 0.4885, 0.4885, 0.4789, 0.4789, 0.4789] - 4 flaps in 5 minutes. Row-level
+  // causes, by order id (from the probe's row diffs):
+  //   - d0143f55 @ 0.4857: rigs=0 in samples 2-3 (tier -> 0.4885), then
+  //     410 -> 396 -> 706 as sellers migrated to it.
+  //   - 6c7fb050 @ 0.4860: brand-new order, appears in sample 7 at rigs=0,
+  //     still 0 in sample 8 (tier -> 0.4885), then 469 -> 453 -> 799.
+  //   - six orders @ 0.4800: rigs 0 -> 16..21 in lockstep (speed 0 both sides).
+  //   - 5762a364 @ 0.4788: 0 -> 8468, later 573 -> 0 with speed frozen at
+  //     0.38046409 on both sides - stale reporting; shares its level with a
+  //     persistent zero row, which is what pins the strict tier at 0.4789.
+  const SIX = ['59391719', 'ef950278', 'af57c365', '91df5e00', '0c46ba17', '6e5f7d0e'];
+  // rigs per sample (index 0 = sample 1)
+  const D0143F55 = [350, 0, 0, 410, 396, 706, 700, 700, 700, 700, 700];
+  const C6C7FB050 = [-1, -1, -1, -1, -1, -1, 0, 0, 469, 453, 799]; // -1 = not in the book yet
+  const S5762A364 = [0, 0, 0, 8468, 6000, 6100, 5900, 573, 0, 0, 0];
+
+  const row = (id: string, price: string, rigs: number, speed = '0') => ({
+    id,
+    price,
+    limit: '5',
+    acceptedSpeed: speed,
+    rigsCount: rigs,
+    alive: true,
+  });
+
+  const probeBook = (sample: number) => {
+    const i = sample - 1;
+    return {
+      stats: {
+        BTC: {
+          totalSpeed: '100',
+          displayMarketFactor: 'PH',
+          displayPriceFactor: 'EH',
+          orders: [
+            row('top1', '0.4900', 5000, '0.2'),
+            row('top2', '0.4885', 3000, '0.1'),
+            ...(C6C7FB050[i]! >= 0 ? [row('6c7fb050', '0.4860', C6C7FB050[i]!)] : []),
+            row('d0143f55', '0.4857', D0143F55[i]!),
+            row('r4822', '0.4822', 40),
+            row('r4813', '0.4813', 60),
+            ...SIX.map((id, k) => row(id, '0.4800', sample <= 3 ? 0 : 16 + k)),
+            row('r4789', '0.4789', 120),
+            row('5762a364', '0.4788', S5762A364[i]!, '0.38046409'),
+            row('z4788', '0.4788', 0), // persistent zero row sharing the level
+            row('m4768', '0.4768', 41850, '0.9'), // the marginal (purple)
+            row('tail1', '0.4700', 0), // unfilled tail below the marginal
+            row('tail2', '0.4650', 0),
+          ],
+        },
+      },
+    };
+  };
+
+  it('raw strict tier reproduces the probe flaps; the smoothed tier holds 0.4789 from sample 4 with zero upward flaps', async () => {
+    const streaks = initialZeroRigStreaks(); // cold start, exactly as a daemon restart would see it
+    const hyst = initialTierHysteresis();
+    const rawTiers: (number | null)[] = [];
+    const smoothedTiers: (number | null)[] = [];
+
+    for (let sample = 1; sample <= 11; sample++) {
+      const book = probeBook(sample);
+
+      // The strict (unsmoothed) view of the same book - what v0.6.53 showed.
+      const { competitors, totalSpeedUnits } = competingOrdersFromBook(book, 'BTC', new Set());
+      const raw = computeMarketAnchor(competitors, totalSpeedUnits, 4);
+      expect(raw.anchor_price_btc).toBe(0.4768); // marginal constant throughout
+      rawTiers.push(raw.filled_prices?.[1] ?? null);
+
+      // The live pipeline: observe() with the controller-owned smoothing state.
+      const s = await observe({
+        service: service({
+          getMyOrders: vi.fn(async () => ({ list: [] })) as unknown as NiceHashService['getMyOrders'],
+          getOrderBook: vi.fn(async () => book) as unknown as NiceHashService['getOrderBook'],
+        }),
+        ...base,
+        knownOrderIds: new Set<string>(),
+        zeroRigStreakState: streaks,
+        tierHysteresisState: hyst,
+      });
+      expect(s.market?.anchor_price_btc).toBe(0.4768);
+      smoothedTiers.push(s.market?.filled_prices?.[1] ?? null);
+    }
+
+    // The strict tier flapped exactly as the operator saw live: 4 flaps.
+    expect(rawTiers).toEqual([
+      0.4813, 0.4885, 0.4885, 0.4789, 0.4789, 0.4789, 0.4885, 0.4885, 0.4789, 0.4789, 0.4789,
+    ]);
+
+    // The smoothed tier: sample 1 exposes the TRUE strict tier immediately
+    // (cold-start zeros are seeded as confirmed - a restart must never
+    // collapse the tier toward the marginal and walk the bid down), holds
+    // 0.4813 through the samples 2-3 spike (d0143f55's fresh zero is
+    // transparent at s2; the s3-confirmed break is held by the hysteresis),
+    // then follows the genuine drop to 0.4789 at sample 4 and NEVER moves up
+    // again - both 0.4885 spike episodes vanish (sample 7 absorbed by the
+    // zero-debounce, sample 8 by the upward hysteresis).
+    expect(smoothedTiers).toEqual([
+      0.4813, 0.4813, 0.4813, 0.4789, 0.4789, 0.4789, 0.4789, 0.4789, 0.4789, 0.4789, 0.4789,
+    ]);
+    for (const t of smoothedTiers.slice(3)) expect(t).toBe(0.4789); // zero upward flaps from sample 4
   });
 });

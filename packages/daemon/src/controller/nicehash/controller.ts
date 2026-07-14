@@ -31,7 +31,14 @@ import type {
   NiceHashLogInput,
 } from '../../state/repos/nicehash_decision_log.js';
 import type { NiceHashService } from '../../services/nicehash-service.js';
-import { DEFAULT_PRICE_DECREASE_COOLDOWN_MS, type EscalationEntry } from './observe.js';
+import {
+  DEFAULT_PRICE_DECREASE_COOLDOWN_MS,
+  initialTierHysteresis,
+  initialZeroRigStreaks,
+  type EscalationEntry,
+  type TierHysteresisState,
+  type ZeroRigStreakState,
+} from './observe.js';
 import { tick as runTick, type NiceHashTickResult, type TickOutcome } from './tick.js';
 import { isActionableOrder, type NiceHashState, type RunMode } from './types.js';
 import type { NiceHashControllerConfig } from './types.js';
@@ -114,6 +121,33 @@ export class NiceHashController {
    */
   private readonly editAvailableAt = new Map<string, number>();
 
+  /**
+   * Per-COMPETITOR zero-rig confirmation streaks (order id -> consecutive
+   * successful book reads at rigs=0), kept in memory across ticks. observe()
+   * bumps/resets/prunes it on every successful book read and freezes it on
+   * failed reads, exactly like the other cross-tick maps. Rows whose zero is
+   * not yet confirmed twice don't break the next-tier contiguity run
+   * (probe-verified single-read rig-count flicker + new-order migration
+   * windows). Resets on restart, and the FIRST successful read after restart
+   * seeds every zero row as already-confirmed: that read reproduces the
+   * strict (pre-smoothing) tier exactly. Treating restart zeros as
+   * unconfirmed would collapse the tier toward the marginal for one tick -
+   * enough for decide() to walk the bid down out of the filled block and
+   * lose the fill over a routine release restart.
+   */
+  private readonly zeroRigStreaks: ZeroRigStreakState = initialZeroRigStreaks();
+
+  /**
+   * Upward hysteresis state for the exposed NEXT TIER, kept in memory across
+   * ticks. observe() advances it only on successful book reads (frozen
+   * otherwise); upward tier moves must hold for two consecutive ticks before
+   * decide()/metrics/dashboard see them, downward moves apply instantly.
+   * Resets on restart: the first successful read re-primes it with the
+   * strict tier (see the streak seeding above), so a restart never moves
+   * the anchor.
+   */
+  private readonly tierHysteresis: TierHysteresisState = initialTierHysteresis();
+
   constructor(private readonly deps: NiceHashControllerDeps) {}
 
   async tick(): Promise<NiceHashTickResult> {
@@ -142,6 +176,8 @@ export class NiceHashController {
       escalationByOrderId: this.escalationByOrder,
       decreaseAvailableAtByOrderId: this.decreaseAvailableAt,
       editAvailableAtByOrderId: this.editAvailableAt,
+      zeroRigStreakState: this.zeroRigStreaks,
+      tierHysteresisState: this.tierHysteresis,
       runMode: this.deps.runMode(),
       hashprice,
       ...(this.deps.orderType ? { orderType: this.deps.orderType } : {}),
