@@ -21,8 +21,6 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     min_order_amount_btc: 0.001,
     min_speed_limit_units: 0.01,
     price_down_step_btc: 0.0000001,
-    cheap_threshold_pct: 0,
-    cheap_target_speed_units: 0,
     dynamic_cap_enabled: false,
     ...over,
   };
@@ -202,16 +200,6 @@ describe('decide - create', () => {
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
     // No hashprice -> dynamic cap inactive -> hard cap (1) doesn't bind -> anchor+overpay.
     expect(p.price_btc).toBeCloseTo(0.00091, 9);
-  });
-
-  it('engages cheap mode to scale the speed target up', () => {
-    const out = decide(
-      state({ config: config({ cheap_threshold_pct: 90, cheap_target_speed_units: 50 }) }),
-    );
-    const p = out[0]!;
-    if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
-    // ourBid 0.00051 < 0.0008*0.9=0.00072 -> cheap mode on -> limit 50
-    expect(p.limit_units).toBe(50);
   });
 
   it('treats a terminal-status owned order as no live order (re-creates)', () => {

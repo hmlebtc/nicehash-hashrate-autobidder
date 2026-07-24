@@ -40,11 +40,6 @@ export interface NiceHashSettings {
   readonly poolUser: string;
   readonly poolPassword: string;
   // --- Strategy (parity expansion) ---
-  readonly cheapModeEnabled: boolean;
-  /** Target speed while cheap mode is engaged (display units). */
-  readonly cheapModeTargetUnits: number;
-  /** Engage cheap mode when our bid < this % of hashprice. */
-  readonly cheapThresholdPct: number;
   /** Dynamic ceiling = hashprice + this (BTC/unit/day); 0 disables. */
   readonly maxPremiumOverHashpriceBtc: number;
   // --- Track-to-fill ---
@@ -193,9 +188,6 @@ export function settingsFromEnv(env: Env = process.env): NiceHashSettings {
     poolPort: n(env, 'NICEHASH_POOL_PORT', 3333),
     poolUser: s(env, 'NICEHASH_POOL_USER', ''),
     poolPassword: s(env, 'NICEHASH_POOL_PASS', 'x'),
-    cheapModeEnabled: b(env, 'NICEHASH_CHEAP_ENABLED', false),
-    cheapModeTargetUnits: n(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
-    cheapThresholdPct: n(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
     maxPremiumOverHashpriceBtc: n(env, 'NICEHASH_MAX_PREMIUM_VS_HASHPRICE', 0),
     anchorNextFilledTier: b(env, 'NICEHASH_ANCHOR_NEXT_FILLED_TIER', true),
     dustLimitUnits: n(env, 'NICEHASH_DUST_LIMIT_UNITS', 0.005),
@@ -267,9 +259,6 @@ export function toControllerConfig(
     walk_up_grace_seconds: settings.walkUpGraceSeconds,
     escalation_step_btc: settings.escalationStepBtc,
     escalation_interval_seconds: settings.escalationIntervalSeconds,
-    // Cheap mode only engages when enabled AND its target exceeds the normal one.
-    cheap_threshold_pct: settings.cheapModeEnabled ? settings.cheapThresholdPct : 0,
-    cheap_target_speed_units: settings.cheapModeEnabled ? settings.cheapModeTargetUnits : 0,
     nicehash_fee_pct: settings.niceHashFeePct,
     pool_fee_pct: settings.poolFeePct,
     dynamic_cap_enabled: settings.dynamicCapEnabled,
@@ -340,9 +329,6 @@ export function mergeSettings(
     poolPort: num('poolPort'),
     poolUser: str('poolUser'),
     poolPassword: str('poolPassword'),
-    cheapModeEnabled: bool('cheapModeEnabled'),
-    cheapModeTargetUnits: num('cheapModeTargetUnits'),
-    cheapThresholdPct: num('cheapThresholdPct'),
     maxPremiumOverHashpriceBtc: num('maxPremiumOverHashpriceBtc'),
     anchorNextFilledTier: bool('anchorNextFilledTier'),
     // Clamp to >= 0 (0 disables); a cleared field coerces to 0, which is the

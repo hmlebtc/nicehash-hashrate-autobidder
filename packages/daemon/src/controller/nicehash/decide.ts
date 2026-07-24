@@ -15,9 +15,11 @@
  *     `execute()`.
  *
  * Preserved from upstream: unknown-order -> PAUSE, keep-one-order (cancel
- * extras), cheap-mode opportunistic scale-up. The bid re-prices on any move of
+ * extras). The bid re-prices on any move of
  * at least one price step (the upstream "% of overpay" edit deadband was
  * removed). The price-decrease cooldown / down-step clamp live in `gate.ts`.
+ * (The legacy cheap-mode scale-up was removed in v0.6.57 - superseded by the
+ * escalation ladder + dynamic cap.)
  */
 
 import { dynamicCapPrice, isActionableOrder, type NiceHashState, type Proposal } from './types.js';
@@ -114,24 +116,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const targetPrice = Math.min(desired, effectiveCap);
   const cappedByCeiling = desired > effectiveCap;
 
-  // Cheap-mode opportunistic scale-up: when our bid is below cheap_threshold_pct%
-  // of hashprice, grow the target speed. Controls speed only; pricing stays on
-  // the anchor-tracking path.
-  let effectiveTarget = config.target_speed_units;
-  let cheapActive = false;
-  if (
-    config.cheap_threshold_pct > 0 &&
-    config.cheap_target_speed_units > config.target_speed_units &&
-    hashprice !== null &&
-    hashprice > 0
-  ) {
-    const ourBid = anchor + config.overpay_btc_per_unit_day;
-    if (ourBid < hashprice * (config.cheap_threshold_pct / 100)) {
-      cheapActive = true;
-      effectiveTarget = config.cheap_target_speed_units;
-    }
-  }
-  const limitUnits = Math.max(config.min_speed_limit_units, effectiveTarget);
+  const limitUnits = Math.max(config.min_speed_limit_units, config.target_speed_units);
 
   // Re-price whenever the target moves by at least one NiceHash price step - the
   // smallest change the API will actually execute (sub-step edits quantize to a
@@ -173,7 +158,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
         amount_btc: amountBtc,
         limit_units: limitUnits,
         pool_id: config.pool_id,
-        reason: `create at ${fmtPrice(targetPrice)}${priceSuffix}${cheapActive ? ` · cheap mode ${effectiveTarget} units` : ''}`,
+        reason: `create at ${fmtPrice(targetPrice)}${priceSuffix}`,
       },
     ];
   }
@@ -235,7 +220,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   //   - With walk-up disabled, just track the floor both ways.
   const minFillPct = config.min_fill_pct ?? 100;
   const walkUpEnabled = config.walk_up_enabled ?? false;
-  const fillThreshold = (effectiveTarget * minFillPct) / 100;
+  const fillThreshold = (config.target_speed_units * minFillPct) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
 
   // Walk-up grace: only chase the price up once the order has been continuously
@@ -341,14 +326,14 @@ export function decide(state: NiceHashState): readonly Proposal[] {
     });
   }
 
-  // Limit edit when the (possibly cheap-mode) target speed changed.
+  // Limit edit when the target speed changed.
   if (Math.abs(primary.limit_units - limitUnits) > 1e-9) {
     proposals.push({
       kind: 'EDIT_LIMIT',
       order_id: primary.order_id,
       new_limit_units: limitUnits,
       old_limit_units: primary.limit_units,
-      reason: `target speed change: ${primary.limit_units} -> ${limitUnits} units${cheapActive ? ' (cheap mode)' : ''}`,
+      reason: `target speed change: ${primary.limit_units} -> ${limitUnits} units`,
     });
   }
 

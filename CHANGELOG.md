@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-07-24
+
+### `[UI]` Remove legacy cheap mode (v0.6.57)
+
+The cheap-mode opportunistic scale-up (inherited from the upstream Braiins
+autopilot) is gone - the escalation ladder plus the dynamic price cap
+superseded it, and it has been disabled by default since the port. The
+Config tab loses the Cheap mode group; stored settings rows that still
+carry the old keys load fine (the legacy keys are silently dropped and the
+row is re-persisted clean).
+
 ## 2026-07-14
 
 ### `[Fix]` Bid floor anchors to the filled block, immune to dust and islands (v0.6.56)

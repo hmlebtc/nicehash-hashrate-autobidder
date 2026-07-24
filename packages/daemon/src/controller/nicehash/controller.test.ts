@@ -27,8 +27,6 @@ function config(): NiceHashControllerConfig {
     min_speed_limit_units: 0.1,
     price_down_step_btc: 0.0001,
     min_fill_pct: 80,
-    cheap_threshold_pct: 0,
-    cheap_target_speed_units: 0,
   };
 }
 

@@ -32,8 +32,6 @@ function config(over: Partial<NiceHashControllerConfig> = {}): NiceHashControlle
     min_order_amount_btc: 0.001,
     min_speed_limit_units: 0.1,
     price_down_step_btc: 0.0001,
-    cheap_threshold_pct: 0,
-    cheap_target_speed_units: 0,
     ...over,
   };
 }
