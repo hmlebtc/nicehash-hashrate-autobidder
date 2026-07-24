@@ -50,8 +50,6 @@ function config(): NiceHashControllerConfig {
     walk_up_grace_seconds: 180,
     escalation_step_btc: 0.0002,
     escalation_interval_seconds: 60,
-    cheap_threshold_pct: 0,
-    cheap_target_speed_units: 0,
   };
 }
 

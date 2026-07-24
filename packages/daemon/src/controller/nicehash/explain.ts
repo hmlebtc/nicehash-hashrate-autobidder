@@ -129,18 +129,7 @@ export function explainTick(args: {
   const anchor = config.anchor_next_filled_tier && nextTier !== null ? nextTier : marginal;
   const desired = anchor + config.overpay_btc_per_unit_day;
 
-  // Cheap-mode-adjusted target, exactly as decide() measures the fill.
-  let effectiveTarget = config.target_speed_units;
-  if (
-    config.cheap_threshold_pct > 0 &&
-    config.cheap_target_speed_units > config.target_speed_units &&
-    hashprice !== null &&
-    hashprice > 0 &&
-    anchor + config.overpay_btc_per_unit_day < hashprice * (config.cheap_threshold_pct / 100)
-  ) {
-    effectiveTarget = config.cheap_target_speed_units;
-  }
-  const fillThreshold = (effectiveTarget * (config.min_fill_pct ?? 100)) / 100;
+  const fillThreshold = (config.target_speed_units * (config.min_fill_pct ?? 100)) / 100;
   const underFilled = primary.accepted_speed_units < fillThreshold;
 
   const graceMs = Math.max(0, (config.walk_up_grace_seconds ?? 0) * 1000);

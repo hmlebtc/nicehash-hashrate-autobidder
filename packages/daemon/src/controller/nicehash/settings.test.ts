@@ -31,7 +31,6 @@ describe('settingsFromEnv', () => {
     expect(s.runMode).toBe('DRY_RUN');
     expect(s.tickSeconds).toBe(60);
     // parity-expansion defaults
-    expect(s.cheapModeEnabled).toBe(false);
     expect(s.maxPremiumOverHashpriceBtc).toBe(0);
     expect(s.anchorNextFilledTier).toBe(true);
     expect(s.bootMode).toBe('RESUME');
@@ -122,11 +121,32 @@ describe('mergeSettings', () => {
     expect(merged).not.toHaveProperty('bogusKey');
   });
 
+  it('drops the legacy cheap-mode keys from a pre-0.6.57 stored settings row', () => {
+    // Boot path back-compat: main-nicehash merges the STORED row over the env
+    // defaults (mergeSettings(settingsFromEnv(), stored)), so a row persisted
+    // by an older version - which still carries the removed cheap-mode keys -
+    // must load cleanly with the legacy keys dropped and every surviving
+    // value intact. The normalized row is then re-persisted, self-cleaning
+    // the store.
+    const legacyStoredRow = {
+      ...base(),
+      targetSpeedUnits: 123,
+      cheapModeEnabled: true,
+      cheapModeTargetUnits: 50,
+      cheapThresholdPct: 95,
+    } as Record<string, unknown>;
+    const merged = mergeSettings(base(), legacyStoredRow);
+    expect(merged).not.toHaveProperty('cheapModeEnabled');
+    expect(merged).not.toHaveProperty('cheapModeTargetUnits');
+    expect(merged).not.toHaveProperty('cheapThresholdPct');
+    expect(merged.targetSpeedUnits).toBe(123); // real fields still merge
+  });
+
   it('coerces booleans, boot mode, and hashprice source', () => {
-    expect(mergeSettings(base(), { cheapModeEnabled: true }).cheapModeEnabled).toBe(true);
-    expect(mergeSettings(base(), { cheapModeEnabled: 'true' }).cheapModeEnabled).toBe(true);
-    expect(mergeSettings(base(), { cheapModeEnabled: '1' }).cheapModeEnabled).toBe(true);
-    expect(mergeSettings(base(), { cheapModeEnabled: 'false' }).cheapModeEnabled).toBe(false);
+    expect(mergeSettings(base(), { walkUpEnabled: true }).walkUpEnabled).toBe(true);
+    expect(mergeSettings(base(), { walkUpEnabled: 'true' }).walkUpEnabled).toBe(true);
+    expect(mergeSettings(base(), { walkUpEnabled: '1' }).walkUpEnabled).toBe(true);
+    expect(mergeSettings(base(), { walkUpEnabled: 'false' }).walkUpEnabled).toBe(false);
     expect(mergeSettings(base(), { bootMode: 'LIVE' }).bootMode).toBe('LIVE');
     expect(mergeSettings(base(), { bootMode: 'BOGUS' }).bootMode).toBe('RESUME');
     expect(mergeSettings(base(), { hashpriceSource: 'mempool' }).hashpriceSource).toBe('mempool');
@@ -214,23 +234,6 @@ describe('toControllerConfig', () => {
     expect(off.max_overpay_vs_hashprice_btc_per_unit_day).toBeNull();
     const on = toControllerConfig({ ...base(), maxPremiumOverHashpriceBtc: 0.002 }, algo, 'p');
     expect(on.max_overpay_vs_hashprice_btc_per_unit_day).toBe(0.002);
-  });
-
-  it('wires cheap mode only when enabled', () => {
-    const disabled = toControllerConfig(
-      { ...base(), cheapModeEnabled: false, cheapThresholdPct: 95, cheapModeTargetUnits: 10 },
-      algo,
-      'p',
-    );
-    expect(disabled.cheap_threshold_pct).toBe(0);
-    expect(disabled.cheap_target_speed_units).toBe(0);
-    const enabled = toControllerConfig(
-      { ...base(), cheapModeEnabled: true, cheapThresholdPct: 95, cheapModeTargetUnits: 10 },
-      algo,
-      'p',
-    );
-    expect(enabled.cheap_threshold_pct).toBe(95);
-    expect(enabled.cheap_target_speed_units).toBe(10);
   });
 
   it('carries the fees + dynamic-cap settings into the controller config', () => {

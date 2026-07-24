@@ -278,7 +278,7 @@ async function main(): Promise<void> {
   // --- Live config reload (no restart needed for routine tuning) -------------
   // Each tick we re-read the saved settings and rebuild the controller config,
   // so edits on the dashboard (overpay, caps, fees, dynamic cap, target,
-  // min-fill, walk-up, cheap mode, refill, pool worker, …) take effect on the
+  // min-fill, walk-up, refill, pool worker, …) take effect on the
   // next decision. Pool stratum changes re-register the pool; a hashprice-source
   // change rebuilds the oracle. Connection-level fields (API key/secret/org,
   // base URL, algorithm/market) keep the boot client and still need a restart.

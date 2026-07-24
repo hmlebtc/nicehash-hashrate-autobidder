@@ -292,10 +292,6 @@ export interface NiceHashControllerConfig {
    * roughly 40 MB/day at 30-second ticks (gzipped). Live-editable.
    */
   readonly capture_order_book?: boolean;
-  /** Cheap-mode scale-up: engage when our bid < this % of hashprice. 0 disables. */
-  readonly cheap_threshold_pct: number;
-  /** Target speed while cheap mode is engaged (display units). */
-  readonly cheap_target_speed_units: number;
   /** NiceHash marketplace fee, percent. Feeds the dynamic cap + P&L. Default 0. */
   readonly nicehash_fee_pct?: number;
   /** Mining-pool fee, percent. Feeds the dynamic cap + P&L. Default 0. */

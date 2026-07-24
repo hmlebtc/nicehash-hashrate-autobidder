@@ -106,8 +106,6 @@ export function buildControllerConfig(
     anchor_next_filled_tier: bool(env, 'NICEHASH_ANCHOR_NEXT_FILLED_TIER', true),
     min_speed_limit_units: parseDecimal(algo.minSpeedLimit, 0.1),
     price_down_step_btc: Math.abs(parseDecimal(algo.priceDownStep, 0.0001)),
-    cheap_threshold_pct: num(env, 'NICEHASH_CHEAP_THRESHOLD_PCT', 0),
-    cheap_target_speed_units: num(env, 'NICEHASH_CHEAP_TARGET_SPEED', 0),
   };
   const ownOrderIds = new Set(
     str(env, 'NICEHASH_OWN_ORDER_IDS', '')

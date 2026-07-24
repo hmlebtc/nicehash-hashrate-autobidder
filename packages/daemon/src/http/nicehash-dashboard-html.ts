@@ -8,7 +8,7 @@
  *               charts, our orders, profit & loss, and the next action.
  *   - History : the order-mutation audit trail with action / order / Δ-price
  *               filters.
- *   - Config  : credentials, connection, strategy, cheap mode, pool, and
+ *   - Config  : credentials, connection, strategy, pool, and
  *               daemon/data settings, plus a connectivity test.
  *
  * Kept as a string constant so it works identically under tsx and a dist build
@@ -1190,10 +1190,6 @@ export const NICEHASH_DASHBOARD_HTML = String.raw`<!doctype html>
       ['walkUpGraceSeconds', 'Walk-up grace (seconds)', 'number', 'How long delivered hashrate must stay below your minimum fill before the bidder starts walking the price up. Gives a freshly placed or just-repriced order time to attract miners before escalating. The timer resets after each floor-tracking raise; while the escalation ladder is engaged it re-arms only when the order drops back under the minimum fill (episode-based). 0 = walk up as soon as under-filled. e.g. 180.'],
       ['escalationStepBtc', 'Escalation step (BTC/EH/day)', 'number', 'When the bid already sits at its normal floor (anchor + overpay) but stays under-filled past the walk-up grace, it escalates above the floor by this much per escalation interval, never exceeding the dynamic cap. After sustained fills it steps back down by the full NiceHash decrease limit (price_down_step, ~0.002) per ~10-min window until it sits just above the next filled tier (the floor); if a full step overshoots what miners accept, the fast re-climb recovers within a minute or two. Note: escalation stops at the cap — if the market pays above your cap, a persistent partial fill means the market clears above your break-even, not a bug. Minimum 0.0001. e.g. 0.0002.'],
       ['escalationIntervalSeconds', 'Escalation interval (seconds)', 'number', 'How often the escalation ladder climbs one step while under-filled. The walk-up grace gates entry into escalation and re-entry after fills drop; climbs within an under-filled episode pace on this interval alone. Stepping back down while filled is paced by the NiceHash decrease cooldown (~10 min) instead when that is longer, and each down-move takes the full NiceHash decrease limit (~0.002), so the ladder never decays faster - or shallower - than the price can actually follow. Lower = reaches the cap sooner but overpays sooner too; higher = more patient. Minimum 5. e.g. 60.'] ] },
-    { group: 'Cheap mode', items: [
-      ['cheapModeEnabled', 'Enable cheap mode', 'checkbox', 'When our bid sits far below the network hashprice, opportunistically scale the target up to grab cheap hashrate.'],
-      ['cheapModeTargetUnits', 'Cheap-mode target (PH/s)', 'number', 'Target speed to scale up to while cheap mode is engaged. Must exceed the normal target to have an effect.'],
-      ['cheapThresholdPct', 'Cheap threshold (% of hashprice)', 'number', 'Engage cheap mode when our bid is below this percentage of the network hashprice (e.g. 95).'] ] },
     { group: 'Dynamic price cap', items: [
       ['dynamicCapEnabled', 'Enable dynamic cap', 'checkbox', 'When on, the bid is capped at the fee-adjusted, buffered hashprice (the formula below), so the bid plus both fees never eats into your profit buffer. The fixed Max price still applies as an absolute backstop (effective cap = the lower of the two). Needs a hashprice source; if hashprice is unavailable the bot falls back to the Max price. Off = pricing uses overpay + Max price only.'],
       ['niceHashFeePct', 'NiceHash fee (%)', 'number', 'NiceHash marketplace fee charged on each order (typically ~3%). Subtracted from hashprice in the dynamic cap and the fee-aware P&L.'],
