@@ -246,7 +246,10 @@ describe('NiceHashController - escalation ladder across ticks', () => {
     const r2 = await controller.tick();
     const e2 = r2.proposals.find((p) => p.kind === 'EDIT_PRICE');
     if (e2?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 2');
-    expect(e2.new_price_btc).toBeCloseTo(0.01021 + 0.0002, 9);
+    // v0.6.59 slew: the raise moves one escalation step FROM THE CURRENT
+    // price (the mocked row stays at 0.0102, a hair under the 0.01021 floor,
+    // so cur+step lands at 0.0104 rather than floor+step).
+    expect(e2.new_price_btc).toBeCloseTo(0.0102 + 0.0002, 9);
     expect(r2.outcomes.find((o) => o.proposal === e2)?.outcome).toBe('EXECUTED');
 
     // Tick 3, one INTERVAL (60s < grace 180s) later, still under-filled: the
@@ -257,7 +260,11 @@ describe('NiceHashController - escalation ladder across ticks', () => {
     const r3 = await controller.tick();
     const e3 = r3.proposals.find((p) => p.kind === 'EDIT_PRICE');
     if (e3?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE in tick 3');
-    expect(e3.new_price_btc).toBeCloseTo(0.01021 + 0.0004, 9);
+    // The episode-continuation POINT: a raise proposal exists at all (the
+    // grace was not reset by tick 2's raise) and the pacing clock (stamped by
+    // tick 2's executed raise, interval 60s == the elapsed 60s) allows it.
+    // The mocked price is still 0.0102, so the paced edit is again cur+step.
+    expect(e3.new_price_btc).toBeCloseTo(0.0102 + 0.0002, 9);
   });
 
   it('a plain floor-tracking raise (ladder not engaged) still resets the grace clock', async () => {

@@ -132,6 +132,20 @@ export class NiceHashController {
   private readonly editAvailableAt = new Map<string, number>();
 
   /**
+   * Per-order last-executed-RAISE clock (epoch ms), kept in memory across
+   * ticks. Stamped in persist() on every EXECUTED upward price edit -
+   * floor-chase, escalation step, or cap reposition alike - and stamped onto
+   * snapshots by observe() as `last_raise_at`. decide() paces all raises on
+   * the escalation interval against it (one raise per interval, each at most
+   * one escalation step), so a confirmed floor spike climbs step by step
+   * instead of teleporting the bid to the cap (operator instruction,
+   * 2026-08-10: "never jumps to the dynamic cap anymore, just walk up
+   * slowly"). In-memory: a restart forgives at most one immediate raise,
+   * which is still slew-limited to a single step.
+   */
+  private readonly lastRaiseAt = new Map<string, number>();
+
+  /**
    * Per-COMPETITOR rig-count debounce state (order id -> zero/nonzero
    * confirmation counters), kept in memory across ticks. observe() advances
    * it on every successful book read and freezes it on failed reads, exactly
@@ -169,6 +183,12 @@ export class NiceHashController {
     // restart (the daemon rebuilds it from the saved settings).
     const config =
       typeof this.deps.config === 'function' ? this.deps.config() : this.deps.config;
+    // Captured BEFORE the tick runs: the raise-pacing clock stamps this (not
+    // the execution-completion time) so `tick_at(next) - stamp >= interval`
+    // holds when interval == tickSeconds - stamping after a slow API call
+    // would silently halve the raise cadence by one execution-latency each
+    // interval boundary.
+    const tickStartedAt = now();
     const [knownOrderIds, lastPriceDecreaseById, lastPriceChangeById] = await Promise.all([
       this.deps.ledger.getIds(),
       this.deps.ledger.lastPriceDecreaseMap(),
@@ -194,6 +214,7 @@ export class NiceHashController {
       escalationByOrderId: this.escalationByOrder,
       decreaseAvailableAtByOrderId: this.decreaseAvailableAt,
       editAvailableAtByOrderId: this.editAvailableAt,
+      lastRaiseAtByOrderId: this.lastRaiseAt,
       zeroRigStreakState: this.zeroRigStreaks,
       tierHysteresisState: this.tierHysteresis,
       runMode: this.deps.runMode(),
@@ -210,7 +231,7 @@ export class NiceHashController {
           }
         : {}),
       now,
-      onExecuted: (outcome) => this.persist(outcome, now),
+      onExecuted: (outcome) => this.persist(outcome, now, tickStartedAt),
     });
 
     // Bring ledger rows in line with what NiceHash reported this tick.
@@ -269,7 +290,11 @@ export class NiceHashController {
     return result;
   }
 
-  private async persist(outcome: TickOutcome, now: () => number): Promise<void> {
+  private async persist(
+    outcome: TickOutcome,
+    now: () => number,
+    tickStartedAt: number,
+  ): Promise<void> {
     const p = outcome.proposal;
     const cooldownMs = this.deps.priceDecreaseCooldownMs ?? DEFAULT_PRICE_DECREASE_COOLDOWN_MS;
 
@@ -331,6 +356,11 @@ export class NiceHashController {
         if (p.new_price_btc < p.old_price_btc) {
           await this.deps.ledger.setLastPriceDecrease(p.order_id, now(), p.new_price_btc);
         } else if (p.new_price_btc > p.old_price_btc) {
+          // Any executed RAISE stamps the unified raise-pacing clock: decide()
+          // allows at most one raise per escalation interval against it, so
+          // floor-chase and ladder raises share one cadence (v0.6.59). Stamped
+          // with the tick's START time - see the tickStartedAt note in tick().
+          this.lastRaiseAt.set(p.order_id, tickStartedAt);
           // Upward move: no decrease cooldown. A plain floor-tracking raise
           // resets the walk-up grace window so the new (higher) price gets the
           // full grace to attract miners before we climb again. While the
