@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-08-10
+
+### `[Fix]` Reposition-to-cap now waits for under-fill + grace (v0.6.58)
+
+The operator's Aug 10 exports showed 64 "walk up to floor (clamped to
+dynamic cap)" raises in 24 hours: whenever the smoothed floor crossed the
+cap - every occurrence a 1-3-tick mid-block stall spike that legitimately
+passed the two-read debounce - the bid jumped to the cap instantly,
+bypassing both the under-filled check and the walk-up grace, while the
+order was FILLED (97% fill uptime). Each raise armed a fresh 10-minute
+decrease lock: pure overpay. The reposition to the cap is now gated like
+every other raise (under-fill + grace, ~2 minutes) and lands in one step;
+a genuinely unaffordable market fills nothing, so the reposition still
+happens - deliberately instead of on every spike. Pure floor-tracking
+(walk-up off) is unchanged.
+
 ## 2026-07-24
 
 ### `[UI]` Remove legacy cheap mode (v0.6.57)

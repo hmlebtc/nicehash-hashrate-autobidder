@@ -249,16 +249,20 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   const escalationOffset = Math.min(escalationRaw, escalationRoom);
   const trackTarget = Math.min(desired + escalationOffset, effectiveCap);
 
-  // When the whole market is priced above our affordability cap (the marginal -
-  // the cheapest order actually winning hashrate - sits above the effective cap),
-  // we cannot win any hashrate at a price we'd pay. The bid should then simply sit
-  // AT the cap, ready if the market dips to it. That climb is NOT fill-chasing -
-  // there is no reachable marginal to chase - so it must bypass the walk-up grace
-  // and under-filled pacing (which exist to pace chasing a *reachable* rising
-  // marginal). Without this, an order whose fill whipsaws in and out keeps
-  // resetting the grace timer and never climbs the final step to the cap, sitting
-  // one step below its own ceiling. (We can't be over-filled in this state anyway:
-  // a bid <= cap < marginal wins nothing, so forcing the climb never overpays.)
+  // ALL raises wait for under-fill + grace - including the reposition to the
+  // cap when the market pays above it. (The old rule forced an immediate climb
+  // to the cap whenever the marginal crossed it, bypassing both the
+  // under-filled check and the grace. The operator's 2026-08-10 capture showed
+  // 64 such raises in 24h: every one coincided with a 1-3-tick floor spike to
+  // 0.488-0.495 - a mid-block stall that legitimately passed the two-read
+  // debounce - while the order was FILLED at ~0.4789 with 97% fill uptime.
+  // Pure overpay, and each raise armed a fresh 10-min decrease lock.) When a
+  // raise IS due and the floor sits above the cap, `trackTarget` below is
+  // already clamped to the cap, so the bid repositions there in ONE step once
+  // under-fill + grace allow (~2 min) - the ladder never needs to climb to
+  // it. A genuinely unaffordable market fills nothing, so under-fill is
+  // immediate and the episode-based grace passes once and stays passed - the
+  // reposition still happens, just deliberately instead of on every spike.
   //
   // The grace is EPISODE-based for the escalation ladder: `under_filled_since`
   // marks the start of the current under-filled episode (the controller does
@@ -266,8 +270,7 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // `gracePassed` stays true and the ladder climbs on its interval alone; when
   // a filled spell drops back under-filled the clock re-stamps, and this same
   // grace gates the RE-entry before the ladder resumes climbing.
-  const marketAboveCap = marginal > effectiveCap;
-  const wantWalkUp = marketAboveCap || (walkUpEnabled ? underFilled && gracePassed : true);
+  const wantWalkUp = walkUpEnabled ? underFilled && gracePassed : true;
 
   // Reason suffix for tracked-price edits. When escalated, say so - the plain
   // "(anchor + overpay)" would misdescribe a target sitting above the floor.
