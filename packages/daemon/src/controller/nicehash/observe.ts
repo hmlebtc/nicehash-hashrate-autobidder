@@ -302,6 +302,14 @@ export interface NiceHashObserveDeps {
    */
   readonly editAvailableAtByOrderId?: Map<string, number>;
   /**
+   * Mutable per-order last-executed-raise stamps (epoch ms), owned by the
+   * controller across ticks (armed in persist() on every EXECUTED upward
+   * price edit). Stamped onto snapshots as `last_raise_at` so decide() can
+   * pace ALL raises on the escalation interval - one raise per interval,
+   * each at most one escalation step. Pruned only on successful reads.
+   */
+  readonly lastRaiseAtByOrderId?: Map<string, number>;
+  /**
    * Mutable per-BOOK-row rig-count debounce state, keyed by competitor order
    * id, owned by the controller across ticks. On every SUCCESSFUL book read
    * (never on a failed one) observe() advances each alive row's
@@ -755,6 +763,20 @@ export async function observe(deps: NiceHashObserveDeps): Promise<NiceHashState>
     owned = owned.map((o) => ({
       ...o,
       edit_available_at: editMap.get(o.order_id) ?? null,
+    }));
+  }
+
+  // Raise-pacing clock: stamp each owned order with when its price was last
+  // RAISED (armed by the controller on executed upward edits). decide() paces
+  // all raises on the escalation interval against it. Same lifecycle as the
+  // clocks above - pruned only on a successful orders read.
+  const raiseMap = deps.lastRaiseAtByOrderId;
+  if (raiseMap && ordersOk) {
+    const raiseOwnedIds = new Set(owned.map((o) => o.order_id));
+    for (const id of [...raiseMap.keys()]) if (!raiseOwnedIds.has(id)) raiseMap.delete(id);
+    owned = owned.map((o) => ({
+      ...o,
+      last_raise_at: raiseMap.get(o.order_id) ?? null,
     }));
   }
 

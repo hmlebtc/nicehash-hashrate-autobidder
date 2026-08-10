@@ -617,7 +617,10 @@ describe('observe - state maps survive a failed my-orders read', () => {
     }
     const up = proposals.find((p) => p.kind === 'EDIT_PRICE');
     if (up?.kind !== 'EDIT_PRICE') throw new Error('expected an upward EDIT_PRICE');
-    expect(up.new_price_btc).toBeCloseTo(0.01021 + 0.0041, 9);
+    // v0.6.59 pacing: the raise toward the retained escalated target moves one
+    // step per edit - the essential guard (never DOWN from state loss, target
+    // preserved) is unchanged.
+    expect(up.new_price_btc).toBeCloseTo(0.0106 + 0.0002, 9);
   });
 });
 

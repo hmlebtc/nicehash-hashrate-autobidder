@@ -468,9 +468,11 @@ describe('decide - track to fill', () => {
     expect(e.new_price_btc).toBeLessThan(0.45423);
   });
 
-  it('caps the walk-up at the price ceiling', () => {
+  it('caps the walk-up at the price ceiling - reached step by step, never in one jump', () => {
     // Floor would be anchor 0.001 + overpay 0.00001 = 0.00101, but the cap is
-    // 0.00095, so we climb only to the cap.
+    // 0.00095, so the climb targets the cap - PACED (v0.6.59): each edit moves
+    // at most one escalation step (default 0.0002), so from 0.0005 the first
+    // edit lands at 0.0007, en route to the cap over successive intervals.
     const out = decide(
       state({
         market: market({ anchor_price_btc: 0.001, filled_prices: [0.001] }),
@@ -480,7 +482,9 @@ describe('decide - track to fill', () => {
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.00095, 9);
+    expect(e.new_price_btc).toBeCloseTo(0.0007, 9); // one step, not the cap
+    expect(e.reason).toContain('paced');
+    expect(e.reason).toContain('target 0.00095000'); // the cap-clamped target it walks toward
   });
 
   it('steps the bid down toward the floor by at most one price-down step when filled', () => {
@@ -679,12 +683,14 @@ describe('decide - anchor on the next filled tier', () => {
       const out = decide(tickState(f, 10, null)); // filled throughout
       expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
     }
-    // The SAME spike while under-filled past the grace: one step to the cap.
+    // The SAME spike while under-filled past the grace: the climb toward the
+    // cap starts - PACED to one escalation step (v0.6.59), never a jump.
     const out = decide(tickState(0.4948, 0, 1700000000000 - 300_000));
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(cap, 9);
+    expect(e.new_price_btc).toBeCloseTo(0.4789 + 0.0002, 9); // one step, not the cap
     expect(e.reason).toContain('walk up to floor');
+    expect(e.reason).toContain('paced');
   });
 
   it('anchors on the marginal when the toggle is off (default in the pure controller)', () => {
@@ -727,6 +733,153 @@ describe('decide - anchor on the next filled tier', () => {
     const p = out[0]!;
     if (p.kind !== 'CREATE_ORDER') throw new Error('expected CREATE_ORDER');
     expect(p.price_btc).toBeCloseTo(0.46 + 0.00001, 9);
+  });
+});
+
+describe('decide - raise pacing (v0.6.59: never jump to the cap)', () => {
+  // The 2026-08-10 23:22Z incident: ladder mid-episode at 0.4798 (floor
+  // 0.4789 + offset), a confirmed floor spike to 0.4948 pushed desired above
+  // the cap (0.4809, ~0.0018 over the floor) and ONE edit teleported +0.0011
+  // straight to the cap; ~15 such jumps of +0.0006..+0.0020 in 24h. Operator:
+  // "never jumps to the dynamic cap anymore, just walk up slowly until we
+  // reach to the dynamic cap."
+  const CAP = 0.4809;
+  const STEP = 0.0003;
+  const T0 = 1_700_000_000_000;
+  const pacedState = (over: {
+    cur: number;
+    tier?: number;
+    lastRaiseAt?: number | null;
+    offset?: number;
+    accepted?: number;
+    tickAt?: number;
+    intervalSeconds?: number;
+  }) =>
+    state({
+      tick_at: over.tickAt ?? T0,
+      market: {
+        anchor_price_btc: 0.4788,
+        total_speed_units: 100,
+        thin: false,
+        filled_prices: [0.4788, over.tier ?? 0.4948], // the spiked floor
+      },
+      owned_orders: [
+        ownedOrder({
+          price_btc: over.cur,
+          accepted_speed_units: over.accepted ?? 0,
+          under_filled_since: T0 - 30 * 60_000, // episode live, grace long passed
+          escalation_offset_btc: over.offset ?? 0.0009,
+          last_raise_at: over.lastRaiseAt ?? null,
+        }),
+      ],
+      config: config({
+        anchor_next_filled_tier: true,
+        walk_up_enabled: true,
+        min_fill_pct: 80,
+        walk_up_grace_seconds: 120,
+        overpay_btc_per_unit_day: 0.0001,
+        max_price_btc_per_unit_day: CAP,
+        escalation_step_btc: STEP,
+        escalation_interval_seconds: over.intervalSeconds ?? 30,
+        price_down_step_btc: 0.002,
+      }),
+    });
+  const raiseOf = (out: ReturnType<typeof decide>) => {
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    return e?.kind === 'EDIT_PRICE' ? e : null;
+  };
+
+  it("incident replay: the spike climbs +step per interval to the cap - no edit ever exceeds one step", () => {
+    // Mid-episode at 0.4798, floor spikes to 0.4948 -> target = cap 0.4809.
+    let cur = 0.4798;
+    let lastRaiseAt: number | null = null; // interval elapsed - a raise is due
+    const edits: number[] = [];
+    for (let tick = 0; tick < 6; tick++) {
+      const out = decide(
+        pacedState({ cur, lastRaiseAt, tickAt: T0 + tick * 30_000 }),
+      );
+      const e = raiseOf(out);
+      if (!e) break;
+      expect(e.new_price_btc - cur).toBeLessThanOrEqual(STEP + 1e-12); // slew limit
+      expect(e.new_price_btc).toBeLessThanOrEqual(CAP + 1e-12);
+      edits.push(e.new_price_btc);
+      lastRaiseAt = T0 + tick * 30_000; // executed raise stamps the clock
+      cur = e.new_price_btc;
+    }
+    // 0.4798 -> 0.4801 (ONE step, exactly the operator's expectation) -> then
+    // +0.0003 per interval, landing exactly at the cap - and stopping.
+    expect(edits[0]).toBeCloseTo(0.4801, 9);
+    expect(edits).toHaveLength(4);
+    expect(edits[1]).toBeCloseTo(0.4804, 9);
+    expect(edits[2]).toBeCloseTo(0.4807, 9);
+    expect(edits[3]).toBeCloseTo(CAP, 9);
+    // The first paced edit says what it is doing and where it is going.
+    const first = raiseOf(decide(pacedState({ cur: 0.4798, lastRaiseAt: null })));
+    expect(first?.reason).toContain('paced +0.00030000/interval');
+    expect(first?.reason).toContain('target 0.48090000');
+  });
+
+  it('rate limit: one raise per escalation interval (interval 60s, tick 30s -> alternate ticks only)', () => {
+    // 30s after the last executed raise with a 60s interval: held.
+    const held = decide(
+      pacedState({ cur: 0.4801, lastRaiseAt: T0 - 30_000, intervalSeconds: 60 }),
+    );
+    expect(raiseOf(held)).toBeNull();
+    // 60s after: the next step fires.
+    const due = decide(
+      pacedState({ cur: 0.4801, lastRaiseAt: T0 - 60_000, intervalSeconds: 60 }),
+    );
+    expect(raiseOf(due)?.new_price_btc).toBeCloseTo(0.4804, 9);
+  });
+
+  it('hand-off: the spike ends mid-climb -> the existing walk-down machinery takes over', () => {
+    // Climbed to 0.4804 chasing the spike; the floor drops back to 0.4789.
+    // Above the cap the room was 0, so the offset is room-clamped: the target
+    // returns to floor + (clamped) offset and the normal FULL-STEP walk-down
+    // path fires - no special spike-decay code.
+    const out = decide(
+      pacedState({ cur: 0.4804, tier: 0.4789, offset: 0, lastRaiseAt: T0 - 5_000 }),
+    );
+    const e = raiseOf(out);
+    if (!e) throw new Error('expected the walk-down EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.479, 9); // floor 0.4789 + overpay 0.0001
+    expect(e.reason).toContain('walk down to floor');
+  });
+
+  it('a FILLED order never starts the paced climb (v0.6.58 gate intact)', () => {
+    const out = decide(pacedState({ cur: 0.4798, accepted: 10, lastRaiseAt: null }));
+    expect(raiseOf(out)).toBeNull();
+  });
+
+  it('walk-up OFF: pure floor-tracking stays unpaced and un-slewed', () => {
+    // Floor jumps 0.0011 above the bid: with walk-up off the tracker moves
+    // there in one edit, exactly as before (pacing is walk-up machinery only).
+    const out = decide(
+      state({
+        tick_at: T0,
+        market: {
+          anchor_price_btc: 0.4788,
+          total_speed_units: 100,
+          thin: false,
+          filled_prices: [0.4788, 0.48], // floor 0.48 -> desired 0.4801
+        },
+        owned_orders: [
+          ownedOrder({ price_btc: 0.479, accepted_speed_units: 10, last_raise_at: T0 - 1000 }),
+        ],
+        config: config({
+          anchor_next_filled_tier: true,
+          walk_up_enabled: false,
+          overpay_btc_per_unit_day: 0.0001,
+          max_price_btc_per_unit_day: CAP,
+          escalation_step_btc: STEP,
+          escalation_interval_seconds: 30,
+        }),
+      }),
+    );
+    const e = raiseOf(out);
+    if (!e) throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.4801, 9); // full move, one edit
+    expect(e.reason).not.toContain('paced');
   });
 });
 
@@ -844,13 +997,17 @@ describe('decide - escalation ladder toward the cap', () => {
     });
     expect(clamped?.offsetBtc).toBeCloseTo(0.0001, 10);
 
-    // A raw offset past the room clamps the target at the cap, never above.
+    // A raw offset past the room clamps the TARGET at the cap, never above -
+    // and the edit itself is paced (v0.6.59): one step from 0.4788, walking
+    // toward the cap-clamped target instead of jumping to it.
     const out3 = decide(
       escState({ owned_orders: [escOrder({ escalation_offset_btc: 0.0050 })] }),
     );
     const e3 = out3.find((p) => p.kind === 'EDIT_PRICE');
     if (e3?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e3.new_price_btc).toBeCloseTo(0.4825, 9);
+    expect(e3.new_price_btc).toBeCloseTo(0.479, 9); // one step (0.4788 + 0.0002)
+    expect(e3.new_price_btc).toBeLessThanOrEqual(0.4825 + 1e-12);
+    expect(e3.reason).toContain('target 0.4825'); // the cap-clamped destination
   });
 
   it('holds between intervals: the ladder does not move and the bid stays put', () => {
@@ -990,7 +1147,9 @@ describe('decide - escalation ladder toward the cap', () => {
     );
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.4825, 9);
+    // Paced: one step (0.4818 + 0.0002) toward the cap-clamped target 0.4825;
+    // the invariant under test - never above the cap - holds at every step.
+    expect(e.new_price_btc).toBeCloseTo(0.482, 9);
     expect(e.new_price_btc).toBeLessThanOrEqual(0.4825 + 1e-12);
   });
 
@@ -1050,7 +1209,7 @@ describe('decide - escalation ladder toward the cap', () => {
     const ee = escalated.find((p) => p.kind === 'EDIT_PRICE');
     if (ce?.kind !== 'EDIT_PRICE' || ee?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
     expect(ee.new_price_btc).toBeCloseTo(ce.new_price_btc, 12);
-    expect(ee.new_price_btc).toBeCloseTo(0.4825, 9);
+    expect(ee.new_price_btc).toBeCloseTo(0.479, 9); // one paced step (v0.6.59), offset irrelevant
   });
 
   it('episode-based grace: gates entry AND re-entry after a filled spell, never steps within an episode', () => {

@@ -161,6 +161,17 @@ export interface OwnedOrderSnapshot {
    * unknown.
    */
   readonly edit_available_at?: number | null;
+  /**
+   * Epoch ms of the last EXECUTED price RAISE on this order (any trigger:
+   * floor-chase, escalation step, cap reposition), from the controller's
+   * in-memory clock. decide() paces ALL raises on the escalation interval
+   * against this stamp - one raise edit per interval, each at most one
+   * escalation step (the slew limit) - so a floor spike can never teleport
+   * the bid to the cap in a single edit. Null/undefined = no raise seen this
+   * process lifetime (a restart allows at most one immediate - still
+   * slew-limited - raise; episode entry is grace-gated anyway).
+   */
+  readonly last_raise_at?: number | null;
   /** NiceHash status code, e.g. ACTIVE / DEAD / CANCELLED / COMPLETED. */
   readonly status: string;
   /** The order's pool worker (stratum username); null when the API omits it. */

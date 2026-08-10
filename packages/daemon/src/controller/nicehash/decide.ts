@@ -272,6 +272,27 @@ export function decide(state: NiceHashState): readonly Proposal[] {
   // grace gates the RE-entry before the ladder resumes climbing.
   const wantWalkUp = walkUpEnabled ? underFilled && gracePassed : true;
 
+  // Raise pacing (v0.6.59; operator instruction: "never jumps to the dynamic
+  // cap anymore, just walk up slowly until we reach the dynamic cap"). With
+  // walk-up on, EVERY raise - floor-chase, ladder step, or cap reposition -
+  // is (a) SLEW-LIMITED to one escalation step per edit and (b) RATE-LIMITED
+  // to one edit per escalation interval, against the controller's unified
+  // last-raise clock (`last_raise_at`, stamped on every executed raise). The
+  // ladder's own offset already grows one step per interval, so its raises
+  // are naturally in cadence; what this closes is the floor-driven jump: at
+  // 23:22Z (2026-08-10, post-0.6.58) a mid-episode confirmed floor spike
+  // pushed `desired` above the cap and trackTarget snapped to it - ONE edit
+  // teleported +0.0011 to the cap; the 24h export held ~15 such jumps of
+  // +0.0006..+0.0020. Now the same spike climbs +step per interval and the
+  // walk-down machinery takes over the moment the floor drops back. Pure
+  // floor-tracking (walk-up off) stays unpaced, as before.
+  const raiseStepBtc = Math.max(0.0001, config.escalation_step_btc ?? 0.0002);
+  const raiseIntervalMs =
+    Math.max(5, Math.round(config.escalation_interval_seconds ?? 60)) * 1000;
+  const lastRaiseAt = primary.last_raise_at ?? null;
+  const raisePaced =
+    walkUpEnabled && lastRaiseAt !== null && state.tick_at - lastRaiseAt < raiseIntervalMs;
+
   // Reason suffix for tracked-price edits. When escalated, say so - the plain
   // "(anchor + overpay)" would misdescribe a target sitting above the floor.
   const escalationSuffix = ` (escalating +${escalationOffset.toFixed(8)} above floor ${fmtPrice(desired)} · headroom to cap +${(effectiveCap - trackTarget).toFixed(8)})`;
@@ -311,12 +332,19 @@ export function decide(state: NiceHashState): readonly Proposal[] {
         : escalationOffset > 0
           ? 'walk down (de-escalating)'
           : 'walk down to floor';
-  } else if (trackTarget - cur >= minRepriceStep - stepEps && wantWalkUp) {
-    // Below the target: climb to it when under-filled and the grace has elapsed
-    // (or always, if walk-up is off). When filled we skip this - hold the cheaper
-    // bid, don't chase up.
-    editTo = Math.min(effectiveCap, trackTarget);
+  } else if (trackTarget - cur >= minRepriceStep - stepEps && wantWalkUp && !raisePaced) {
+    // Below the target: climb toward it when under-filled and the grace has
+    // elapsed (or always, if walk-up is off). When filled we skip this - hold
+    // the cheaper bid, don't chase up. With walk-up on the edit is
+    // slew-limited to one escalation step (trackTarget is already <= the
+    // effective cap); pure floor-tracking still moves in one step.
+    editTo = walkUpEnabled
+      ? Math.min(trackTarget, cur + raiseStepBtc)
+      : Math.min(effectiveCap, trackTarget);
     mode = escalationOffset > 0 ? 'walk up (escalating)' : 'walk up to floor';
+    if (walkUpEnabled && trackTarget - editTo > 1e-12) {
+      mode += ` (paced +${raiseStepBtc.toFixed(8)}/interval, target ${fmtPrice(trackTarget)})`;
+    }
   }
 
   if (Math.abs(editTo - cur) > 1e-12) {

@@ -32,9 +32,9 @@ export type HoldReasonKind =
   | 'DECREASE_COOLDOWN' // intended walk-down held by NiceHash's decrease cooldown
   | 'EDIT_SETTLE_WAIT' // any edit held by NiceHash's change-settle lock (5110)
   | 'GRACE_WAIT' // under-filled; walk-up/escalation grace still running
-  | 'ESCALATION_STEP_WAIT' // ladder engaged; next step waits on the interval
+  | 'ESCALATION_STEP_WAIT' // a paced raise is due; the next step waits on the escalation interval
   | 'AT_CAP_UNDERFILLED' // bid at the cap, still under-filled - market clears above break-even
-  | 'MARKET_ABOVE_CAP' // market pays above the cap while FILLED below it - repositions to the cap only on under-fill + grace
+  | 'MARKET_ABOVE_CAP' // market pays above the cap while FILLED below it - climbs toward the cap stepwise on under-fill + grace
   | 'FILLED_ESCALATED' // filled at an escalated price - probe-down pending
   | 'AT_TARGET'; // in-band at the (possibly escalated) target
 
@@ -160,9 +160,27 @@ export function explainTick(args: {
   }
 
   if (underFilled && walkUpEnabled && gracePassed) {
-    // Target pinned at the cap and no room to climb: paying more is not an
-    // option the operator allowed - a persistent partial fill here means the
-    // market clears above break-even.
+    // A raise toward the (cap-clamped) target is due but the unified
+    // raise-pacing clock has not elapsed (v0.6.59: one raise per escalation
+    // interval, one step per raise): the story is the NEXT paced step - its
+    // target price and the interval countdown - never the far cap.
+    const trackTarget = Math.min(desired + escalationOffset, effectiveCap);
+    const lastRaise = primary.last_raise_at ?? null;
+    if (
+      trackTarget - primary.price_btc >= PRICE_STEP_BTC - 1e-9 &&
+      lastRaise !== null &&
+      state.tick_at - lastRaise < intervalMs
+    ) {
+      return {
+        kind: 'ESCALATION_STEP_WAIT',
+        until: lastRaise + intervalMs,
+        step_btc: stepBtc,
+        to_btc: Math.min(trackTarget, primary.price_btc + stepBtc),
+      };
+    }
+    // Target pinned at the cap and the bid already there: paying more is not
+    // an option the operator allowed - a persistent partial fill here means
+    // the market clears above break-even.
     if (desired + escalationRaw >= effectiveCap - 1e-9) {
       return { kind: 'AT_CAP_UNDERFILLED', until: null };
     }
@@ -178,9 +196,10 @@ export function explainTick(args: {
   }
 
   // Market pays above the cap while the order is FILLED below it: no raise is
-  // due (raises - including the reposition to the cap - wait for under-fill +
-  // grace), so this is a hold: the bid stays where it fills cheaply and only
-  // repositions to the cap if the fill drops.
+  // due (raises - including the paced climb toward the cap - wait for
+  // under-fill + grace), so this is a hold: the bid stays where it fills
+  // cheaply and only climbs toward the cap, one step per interval, if the
+  // fill drops.
   if (!underFilled && desired > effectiveCap) {
     return { kind: 'MARKET_ABOVE_CAP', until: null };
   }
@@ -233,11 +252,13 @@ export function formatHoldReason(
         ? `under-filled — walk-up/escalation opens in ${rem} (grace)`
         : 'under-filled — waiting out the walk-up grace';
     case 'ESCALATION_STEP_WAIT':
-      return `escalating — next step (+${fmtGrid(hold.step_btc ?? 0)}) in ${rem ?? '?'}`;
+      return hold.to_btc != null
+        ? `walking up — next step to ${fmtGrid(hold.to_btc)} (+${fmtGrid(hold.step_btc ?? 0)}) in ${rem ?? '?'}`
+        : `escalating — next step (+${fmtGrid(hold.step_btc ?? 0)}) in ${rem ?? '?'}`;
     case 'AT_CAP_UNDERFILLED':
       return 'at dynamic cap — market clears above break-even; holding';
     case 'MARKET_ABOVE_CAP':
-      return 'market pays above the cap — filled below it; will reposition to the cap if the fill drops';
+      return 'market pays above the cap — filled below it; will climb toward the cap step by step if the fill drops';
     case 'FILLED_ESCALATED':
       return `filled at escalated price — next probe down in ~${rem ?? '?'}`;
     case 'AT_TARGET':

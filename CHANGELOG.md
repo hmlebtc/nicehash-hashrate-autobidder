@@ -2,6 +2,23 @@
 
 ## 2026-08-10
 
+### `[Fix]` Raises never jump - every walk-up is paced at the escalation step (v0.6.59)
+
+Post-0.6.58 exports still showed jump raises: mid-episode a confirmed floor
+spike pushed the tracked target to the cap and a single "walk up to floor"
+edit teleported there (+0.0011 at 23:22Z; ~15 jumps of +0.0006..+0.0020 in
+24h). Every raise - floor-chase, ladder step, or the climb toward the cap -
+is now slew-limited to ONE escalation step per edit and rate-limited to one
+raise per escalation interval, on a unified per-order last-raise clock. The
+status line shows the next paced step and its countdown instead of the cap;
+walk-downs, the decrease cooldown, and pure floor-tracking (walk-up off)
+are untouched.
+
+### `[UI]` Order book tab: Export CSV moved next to its snapshots input (v0.6.59)
+
+Button order is now Reload - Clear data - snapshots - Export CSV, so the
+export button sits beside the snapshot-count field it uses.
+
 ### `[Fix]` Reposition-to-cap now waits for under-fill + grace (v0.6.58)
 
 The operator's Aug 10 exports showed 64 "walk up to floor (clamped to
