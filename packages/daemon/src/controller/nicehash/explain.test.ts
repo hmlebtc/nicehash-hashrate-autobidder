@@ -151,7 +151,9 @@ describe('explainTick - hold reasons', () => {
     expect(hold?.until).toBeNull();
   });
 
-  it('MARKET_ABOVE_CAP: whole book above the cap, bid parked at the cap', () => {
+  it('MARKET_ABOVE_CAP: FILLED below the cap while the market pays above it - a hold, not an imminent raise', () => {
+    // v0.6.58: the reposition to the cap waits for under-fill + grace like
+    // every other raise, so a filled order below the cap simply holds.
     const s = state({
       market: {
         anchor_price_btc: 0.49,
@@ -159,11 +161,30 @@ describe('explainTick - hold reasons', () => {
         thin: false,
         filled_prices: [0.49],
       },
-      owned_orders: [order({ price_btc: 0.4825 })], // already at the cap
+      owned_orders: [order({ price_btc: 0.4788, accepted_speed_units: 10 })], // filled, below the cap
     });
     const { proposals, hold } = explain(s);
-    expect(proposals).toEqual([]);
+    expect(proposals).toEqual([]); // decide() agrees: no raise while filled
     expect(hold?.kind).toBe('MARKET_ABOVE_CAP');
+    expect(hold?.until).toBeNull(); // no countdown - it opens on under-fill, not time
+  });
+
+  it('market above the cap + under-filled with the grace running: the GRACE_WAIT countdown shows (gate-aligned)', () => {
+    const s = state({
+      market: {
+        anchor_price_btc: 0.49,
+        total_speed_units: 100,
+        thin: false,
+        filled_prices: [0.49],
+      },
+      owned_orders: [
+        order({ price_btc: 0.4788, under_filled_since: NOW - 60_000 }), // 1 min into a 3-min grace
+      ],
+    });
+    const { proposals, hold } = explain(s);
+    expect(proposals).toEqual([]); // the reposition is grace-gated now
+    expect(hold?.kind).toBe('GRACE_WAIT');
+    expect(hold?.until).toBe(NOW - 60_000 + 180_000); // counts down to the reposition
   });
 
   it('FILLED_ESCALATED: filled at an escalated price counts down to the next probe (decay vs cooldown, later wins)', () => {
@@ -249,7 +270,7 @@ describe('formatHoldReason - live countdown', () => {
       'at dynamic cap — market clears above break-even; holding',
     );
     expect(formatHoldReason({ kind: 'MARKET_ABOVE_CAP', until: null }, NOW)).toBe(
-      'market above cap — holding at the cap, ready if it dips',
+      'market pays above the cap — filled below it; will reposition to the cap if the fill drops',
     );
     expect(formatHoldReason({ kind: 'FILLED_ESCALATED', until: NOW + 305_000 }, NOW)).toBe(
       'filled at escalated price — next probe down in ~5:05',

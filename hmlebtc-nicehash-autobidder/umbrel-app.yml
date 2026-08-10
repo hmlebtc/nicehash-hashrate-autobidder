@@ -6,7 +6,7 @@ manifestVersion: 1
 id: hmlebtc-nicehash-autobidder
 category: bitcoin
 name: NiceHash Hashrate Autobidder
-version: "0.6.57"
+version: "0.6.58"
 tagline: Automatically rent NiceHash hash-power and point it at your pool
 icon: https://raw.githubusercontent.com/hmlebtc/nicehash-hashrate-autobidder/main/assets/icon-512.png
 # Umbrel renders the description literally - each paragraph is one physical
@@ -41,6 +41,19 @@ defaultPassword: ""
 submitter: hmlebtc
 submission: https://github.com/hmlebtc/nicehash-hashrate-autobidder
 releaseNotes: |
+  v0.6.58 - no more spike-driven jumps to the price cap.
+
+  When the market briefly looked more expensive than your cap - usually a
+  one-or-two-tick stall in the order book that passed the flicker filters -
+  the bot instantly repositioned the bid to the cap, even while the order
+  was happily filling at a much lower price. The operator's data showed 64
+  such jumps in a day, each locking the price for NiceHash's 10-minute
+  decrease window before stepping back down. Repositioning to the cap now
+  follows the same rule as every other raise: it only happens after the
+  order has actually been under-filled past the walk-up grace, and then in
+  a single step. A market that truly pays above your cap fills nothing, so
+  the bid still gets there - a couple of minutes later, on purpose.
+
   v0.6.57 - the legacy cheap mode is gone.
 
   Cheap mode (opportunistically raising the target speed when the market

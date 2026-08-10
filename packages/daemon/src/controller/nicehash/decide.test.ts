@@ -579,42 +579,112 @@ describe('decide - anchor on the next filled tier', () => {
     expect(e.new_price_btc).toBeCloseTo(0.00071 - 0.0000001, 10); // one step down toward 0.00061
   });
 
-  it('walks up to the cap when the whole market is above it, even with the grace unelapsed', () => {
-    // Live case (2026-07-06): marginal 0.4620 sits far above the affordability cap
-    // (0.4560), so the bid can't win hashrate at any price we'd pay - it should just
-    // sit at the cap. But with walk-up-to-fill on and a grace period that keeps
-    // resetting as the fill whipsaws in and out, the bid was stuck a step below the
-    // cap. The cap is a ceiling, not a fill-chase target, so the climb to it is not
-    // grace-gated when the market is above the cap.
+  // --- Reposition-to-cap gating (v0.6.58): ALL raises wait for under-fill +
+  // grace, including the climb to the cap when the market pays above it. The
+  // operator's 2026-08-10 capture showed 64 ungated cap-repositions in 24h,
+  // every one a 1-3-tick confirmed floor spike while the order was FILLED.
+  const aboveCapState = (over: {
+    accepted?: number;
+    underFilledSince?: number | null;
+    walkUp?: boolean;
+    graceSeconds?: number;
+  }) =>
+    state({
+      tick_at: 1700000000000,
+      market: {
+        anchor_price_btc: 0.462,
+        total_speed_units: 100,
+        thin: false,
+        filled_prices: [0.462, 0.4621], // floor above the 0.456 cap
+      },
+      owned_orders: [
+        ownedOrder({
+          price_btc: 0.4558,
+          accepted_speed_units: over.accepted ?? 0,
+          under_filled_since: over.underFilledSince ?? null,
+        }),
+      ],
+      config: config({
+        anchor_next_filled_tier: true,
+        walk_up_enabled: over.walkUp ?? true,
+        min_fill_pct: 80,
+        walk_up_grace_seconds: over.graceSeconds ?? 600,
+        max_price_btc_per_unit_day: 0.456, // affordability cap, below the market
+        price_down_step_btc: 0.0001,
+      }),
+    });
+
+  it('FILLED with the floor above the cap: HOLDS - no reposition raise', () => {
+    const out = decide(aboveCapState({ accepted: 10 })); // filled (>= 80% of 10)
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('under-filled with the grace NOT elapsed: still holds (the grace gates the reposition too)', () => {
     const out = decide(
+      aboveCapState({ accepted: 0, underFilledSince: 1700000000000 - 1000 }), // 1s into a 10-min grace
+    );
+    expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+  });
+
+  it('under-filled past the grace: repositions to the cap in ONE step', () => {
+    const out = decide(
+      aboveCapState({ accepted: 0, underFilledSince: 1700000000000 - 700_000 }), // grace elapsed
+    );
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.456, 9); // one step, clamped to the cap
+  });
+
+  it('walk-up OFF (pure floor-tracking): the raise to the cap fires immediately, as today', () => {
+    const out = decide(aboveCapState({ accepted: 10, walkUp: false })); // even filled
+    const e = out.find((p) => p.kind === 'EDIT_PRICE');
+    if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
+    expect(e.new_price_btc).toBeCloseTo(0.456, 9);
+  });
+
+  it("operator replay (2026-08-10): a 2-tick confirmed floor spike over the cap never moves a FILLED bid", () => {
+    // 24h of live data: smoothed floor 0.4788-0.4798, cap only ~0.0018 above,
+    // 64 spike-driven cap raises while fill uptime sat at 97.2%. Sequence:
+    // many ticks at floor 0.4788, a 2-tick confirmed spike to 0.4948, back.
+    // The filled bid must not move on ANY tick.
+    const cap = 0.4807;
+    const tickState = (floorTier: number, accepted: number, underSince: number | null) =>
       state({
         tick_at: 1700000000000,
         market: {
-          anchor_price_btc: 0.462,
+          anchor_price_btc: 0.4788,
           total_speed_units: 100,
           thin: false,
-          filled_prices: [0.462, 0.4621],
+          filled_prices: [0.4788, floorTier],
         },
         owned_orders: [
           ownedOrder({
-            price_btc: 0.4558,
-            accepted_speed_units: 0,
-            under_filled_since: 1700000000000 - 1000, // just under-filled; grace not elapsed
+            price_btc: 0.4789, // floor 0.4788 + overpay 0.0001
+            accepted_speed_units: accepted,
+            under_filled_since: underSince,
           }),
         ],
         config: config({
           anchor_next_filled_tier: true,
           walk_up_enabled: true,
           min_fill_pct: 80,
-          walk_up_grace_seconds: 600, // 10-min grace that has NOT elapsed
-          max_price_btc_per_unit_day: 0.456, // affordability cap, below the market
-          price_down_step_btc: 0.0001,
+          walk_up_grace_seconds: 120,
+          overpay_btc_per_unit_day: 0.0001,
+          max_price_btc_per_unit_day: cap,
+          price_down_step_btc: 0.002,
         }),
-      }),
-    );
+      });
+    const floors = [0.4788, 0.4788, 0.4788, 0.4948, 0.4948, 0.4788, 0.4788];
+    for (const f of floors) {
+      const out = decide(tickState(f, 10, null)); // filled throughout
+      expect(out.find((p) => p.kind === 'EDIT_PRICE')).toBeUndefined();
+    }
+    // The SAME spike while under-filled past the grace: one step to the cap.
+    const out = decide(tickState(0.4948, 0, 1700000000000 - 300_000));
     const e = out.find((p) => p.kind === 'EDIT_PRICE');
     if (e?.kind !== 'EDIT_PRICE') throw new Error('expected EDIT_PRICE');
-    expect(e.new_price_btc).toBeCloseTo(0.456, 9); // climbed to the cap despite the grace
+    expect(e.new_price_btc).toBeCloseTo(cap, 9);
+    expect(e.reason).toContain('walk up to floor');
   });
 
   it('anchors on the marginal when the toggle is off (default in the pure controller)', () => {

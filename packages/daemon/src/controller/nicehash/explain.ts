@@ -34,7 +34,7 @@ export type HoldReasonKind =
   | 'GRACE_WAIT' // under-filled; walk-up/escalation grace still running
   | 'ESCALATION_STEP_WAIT' // ladder engaged; next step waits on the interval
   | 'AT_CAP_UNDERFILLED' // bid at the cap, still under-filled - market clears above break-even
-  | 'MARKET_ABOVE_CAP' // whole book above the cap - parked at the cap, ready if it dips
+  | 'MARKET_ABOVE_CAP' // market pays above the cap while FILLED below it - repositions to the cap only on under-fill + grace
   | 'FILLED_ESCALATED' // filled at an escalated price - probe-down pending
   | 'AT_TARGET'; // in-band at the (possibly escalated) target
 
@@ -150,11 +150,10 @@ export function explainTick(args: {
   const decayIntervalMs = Math.max(intervalMs, cooldownMs);
   const lastStepAt = primary.escalation_last_step_at ?? null;
 
-  // Whole book above the cap: the existing forcing has already parked the bid
-  // at the cap (or a proposal would exist) - not a fill-chasing wait.
-  if (marginal > effectiveCap) {
-    return { kind: 'MARKET_ABOVE_CAP', until: null };
-  }
+  // (No early market-above-cap return: since v0.6.58 the reposition to the
+  // cap is gated like every other raise - under-fill + grace - so the hold
+  // story below mirrors the gate exactly: grace countdown while under-filled,
+  // a filled-below-the-cap hold otherwise.)
 
   if (underFilled && walkUpEnabled && !gracePassed) {
     return { kind: 'GRACE_WAIT', until: graceUntil };
@@ -176,6 +175,14 @@ export function explainTick(args: {
         step_btc: stepBtc,
       };
     }
+  }
+
+  // Market pays above the cap while the order is FILLED below it: no raise is
+  // due (raises - including the reposition to the cap - wait for under-fill +
+  // grace), so this is a hold: the bid stays where it fills cheaply and only
+  // repositions to the cap if the fill drops.
+  if (!underFilled && desired > effectiveCap) {
+    return { kind: 'MARKET_ABOVE_CAP', until: null };
   }
 
   if (!underFilled && escalationOffset > PRICE_STEP_BTC / 2) {
@@ -230,7 +237,7 @@ export function formatHoldReason(
     case 'AT_CAP_UNDERFILLED':
       return 'at dynamic cap — market clears above break-even; holding';
     case 'MARKET_ABOVE_CAP':
-      return 'market above cap — holding at the cap, ready if it dips';
+      return 'market pays above the cap — filled below it; will reposition to the cap if the fill drops';
     case 'FILLED_ESCALATED':
       return `filled at escalated price — next probe down in ~${rem ?? '?'}`;
     case 'AT_TARGET':
